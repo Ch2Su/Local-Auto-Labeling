@@ -581,7 +581,7 @@ md5 대조). 그날 정리로 지운 것(주기 체크포인트·옛 DB·버린 
 비어 E: 가 유일한 사본이 된 날 떴다. `.venv`·`graft`·`data/visible/dataset`·`runs/runpod/*.tar`·`__pycache__`
 를 빼고 전부 — 17,346개 5.15GB 를 원본과 md5 전수 대조했고, DB 는 sqlite `backup()` 스냅샷(이미지 6,567 /
 박스 41,554 / 이력 3,282, integrity ok). 뺀 것과 되살리는 법은 그 폴더의 `BACKUP_INFO.txt`. 로그는
-`C:\local_auto_labeling_backup\robocopy_20260928.log`. **C: 는 남은 공간이 46GB 뿐이다** — 다음 백업은
+`C:\local_auto_labeling_backup\robocopy_20260928.log`. **C: 는 남은 공간이 적다**(09-28 46GB → 10-02 33GB) — 다음 백업은
 날짜 폴더를 새로 만들기 전에 이전 것을 지울지 물을 것. 같은 방법으로 다시 뜨려면 robocopy `/E /XD .venv graft
 data\visible\dataset __pycache__ /XF labeling.db* *.tar` 뒤에 DB 를 `backup()` 으로 따로 뜬다.
 
