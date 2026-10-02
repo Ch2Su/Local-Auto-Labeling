@@ -78,11 +78,21 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
   라벨 안 된 이미지가 승인으로 들어가면 모델이 그 사람을 배경으로 배운다. Universe 의 차종 데이터셋은
   대부분 사람을 라벨하지 않았고, 한 장에 박스 하나뿐인 것도 많다. Objects365 의 `Scooter` 는 오토바이형
   스쿠터이고 이 프로젝트의 scooter 는 전동 킥보드다(`Hoverboard` 는 세그웨이류).
-- **Objects365 v2 train 을 BAAI 에서 직접 받는 중 (10-02, 사용자).** `E:\datasets\objects365\` — 저장소
-  밖이다. 라벨 `zhiyuan_objv2_train.json`(5.14GB), 압축 `patchN.tar.gz`(약 3.4GB씩, 안에 `patchN/` 접두사)를
-  `train\patchN\` 으로 푼다. json 의 `file_name` 은 `images/v1|v2/patchN/<이름>.jpg` 꼴이고 51묶음
-  (p0~15 v1, p16~50 v2) **1,742,291장**이다. p0~3 은 사용자가 풀었고 장수가 json 과 정확히 맞았다.
-  라벨 라이선스는 license.txt 에 CC BY 4.0 이라 적혀 있다(링크는 by-sa 로 되어 있다).
+- **Objects365 v2 train 을 BAAI 에서 직접 받아 풀었다 (10-02~03).** `E:\datasets\objects365\` — 저장소
+  밖이다. 라벨 `zhiyuan_objv2_train.json`(5.14GB), 압축 `patchN.tar.gz`(v1 p0~15 약 3.4GB, v2 p16~50 약
+  7.7GB, 안에 `patchN/` 접두사)를 `train\patchN\` 으로 풀었다. json 은 51묶음 **1,742,292장**, 디스크에는
+  **49묶음 1,686,812장** — p44·p45(55,477장)는 받지 않았고, 압축 자체에 3장이 없고(p6 `…00320532`·
+  `…00320534`, p16 `…00908726`) p4 에 0바이트 쓰레기 `objects365_v1_00215749.jpg.ddEA04F9` 가 들어 있다.
+  나머지는 파일 이름까지 json 과 같다(tar 반환값 0).
+  - json 은 **뒤쪽 주석의 필드 순서가 다르다**(`image_id` 가 앞) — 정규식으로 흘려 읽을 때 객체째 잘라
+    `json.loads` 할 것. 이미지 항목 끝에 `"url": ""` 이 있다. 주석에 `iscrowd`·`isfake`(포스터·장난감)·
+    `isreflected`(반사) 플래그가 있다. 우리 클래스 관련 박스만 뽑은 색인이 `o365_index.pkl` 이다
+    (images: id→(patch, 이름, w, h), boxes: id→[(cat, x, y, w, h, crowd, fake, refl)]).
+  - 라벨 라이선스는 license.txt 에 CC BY 4.0(링크는 by-sa), **이미지는 Flickr CC 로 NonCommercial 이 섞여
+    있다**(json `licenses`).
+  - **O365 의 Van 은 우리 van 과 다르다** — 무작위 크롭 48장에 SUV(볼보 XC60)·시에나·캐노피 픽업·버스
+    뒷면이 섞여 있었다. Pickup Truck 은 대부분 미국식 픽업이라 우리 1a 와 맞지만 세단·SUV 오표기가 있다.
+    그대로 승인으로 넣지 말고 검수를 거칠 것.
 
 **git — 2026-10-02 에 저장소로 만들었다 (사용자 허락, 원격 없음, 브랜치 `main`).** 담는 것은 코드·설정·
 문서와 `runs/` 의 텍스트 기록(results.csv·args.yaml·`test_baseline/history.jsonl`·스크립트)뿐이다.
