@@ -1,0 +1,24 @@
+{"model": "s", "imgsz": 640, "batch": 16, "params_m": 10.0, "reserved": 4.76, "allocated": 4.43, "device_used": 5.16, "total": 44.43, "ms_per_step": 173, "status": "ok", "wall_s": 37}
+{"model": "s", "imgsz": 640, "batch": 32, "params_m": 10.0, "reserved": 9.13, "allocated": 8.69, "device_used": 9.53, "total": 44.43, "ms_per_step": 273, "status": "ok", "wall_s": 38}
+{"model": "s", "imgsz": 960, "batch": 16, "params_m": 10.0, "reserved": 11.15, "allocated": 9.89, "device_used": 11.55, "total": 44.43, "ms_per_step": 370, "status": "ok", "wall_s": 36}
+{"model": "s", "imgsz": 960, "batch": 32, "params_m": 10.0, "reserved": 21.76, "allocated": 19.82, "device_used": 22.17, "total": 44.43, "ms_per_step": 573, "status": "ok", "wall_s": 56}
+{"model": "s", "imgsz": 1280, "batch": 16, "params_m": 10.0, "reserved": 20.14, "allocated": 18.28, "device_used": 20.55, "total": 44.43, "ms_per_step": 644, "status": "ok", "wall_s": 75}
+{"model": "s", "imgsz": 1280, "batch": 32, "params_m": 10.0, "reserved": 39.68, "allocated": 36.69, "device_used": 40.1, "total": 44.43, "ms_per_step": 1389, "status": "ok", "wall_s": 140}
+{"model": "m", "imgsz": 640, "batch": 16, "params_m": 21.9, "reserved": 8.82, "allocated": 8.46, "device_used": 9.22, "total": 44.43, "ms_per_step": 227, "status": "ok", "wall_s": 28}
+{"model": "m", "imgsz": 640, "batch": 32, "params_m": 21.9, "reserved": 17.14, "allocated": 16.57, "device_used": 17.54, "total": 44.43, "ms_per_step": 386, "status": "ok", "wall_s": 38}
+{"model": "m", "imgsz": 960, "batch": 16, "params_m": 21.9, "reserved": 20.37, "allocated": 18.7, "device_used": 20.77, "total": 44.43, "ms_per_step": 444, "status": "ok", "wall_s": 38}
+{"model": "m", "imgsz": 960, "batch": 32, "params_m": 21.9, "reserved": 39.96, "allocated": 37.24, "device_used": 40.37, "total": 44.43, "ms_per_step": 939, "status": "ok", "wall_s": 59}
+{"model": "m", "imgsz": 1280, "batch": 16, "params_m": 21.9, "reserved": 37.19, "allocated": 33.72, "device_used": 37.6, "total": 44.43, "ms_per_step": 968, "status": "ok", "wall_s": 61}
+{"model": "m", "imgsz": 1280, "batch": 32, "params_m": 21.9, "reserved": 43.88, "allocated": 43.59, "device_used": 44.24, "total": 44.43, "ms_per_step": 1525, "status": "over", "wall_s": 190}
+{"model": "l", "imgsz": 640, "batch": 16, "params_m": 26.3, "reserved": 10.93, "allocated": 10.44, "device_used": 11.33, "total": 44.43, "ms_per_step": 276, "status": "ok", "wall_s": 32}
+{"model": "l", "imgsz": 640, "batch": 32, "params_m": 26.3, "reserved": 21.15, "allocated": 20.46, "device_used": 21.55, "total": 44.43, "ms_per_step": 481, "status": "ok", "wall_s": 42}
+{"model": "l", "imgsz": 960, "batch": 16, "params_m": 26.3, "reserved": 25.14, "allocated": 23.19, "device_used": 25.55, "total": 44.43, "ms_per_step": 552, "status": "ok", "wall_s": 44}
+{"model": "l", "imgsz": 960, "batch": 32, "status": "error", "error": "dedBatchedEx(handle, opa, opb, (int)m, (int)n, (int)k, (void*)&falpha, a, CUDA_R_16BF, (int)lda, stridea, b, CUDA_R_16BF, (int)ldb, strideb, (void*)&fbeta, c, std::is_same_v<C_Dtype, float> ? CUDA_R_32F : CUDA_R_16BF, (int)ldc, stridec, (int)num_batches, compute_type, CUBLAS_GEMM_DEFAULT_TENSOR_OP)`", "wall_s": 49}
+{"model": "l", "imgsz": 1280, "batch": 16, "params_m": 26.3, "reserved": 43.89, "allocated": 42.08, "device_used": 42.7, "total": 44.43, "ms_per_step": 1097, "status": "over", "wall_s": 62}
+{"model": "l", "imgsz": 1280, "batch": 4, "params_m": 26.3, "reserved": 11.95, "allocated": 10.9, "device_used": 12.34, "total": 44.43, "ms_per_step": 292, "status": "ok", "wall_s": 31}
+{"model": "x", "imgsz": 640, "batch": 16, "params_m": 59.0, "reserved": 16.14, "allocated": 15.78, "device_used": 16.54, "total": 44.43, "ms_per_step": 426, "status": "ok", "wall_s": 41}
+{"model": "x", "imgsz": 640, "batch": 32, "params_m": 59.0, "reserved": 31.35, "allocated": 30.57, "device_used": 31.75, "total": 44.43, "ms_per_step": 757, "status": "ok", "wall_s": 53}
+{"model": "x", "imgsz": 960, "batch": 16, "params_m": 59.0, "reserved": 37.1, "allocated": 34.8, "device_used": 37.5, "total": 44.43, "ms_per_step": 885, "status": "ok", "wall_s": 57}
+{"model": "x", "imgsz": 960, "batch": 32, "params_m": 59.0, "reserved": 44.03, "allocated": 43.33, "device_used": 43.88, "total": 44.43, "ms_per_step": 873, "status": "over", "wall_s": 74}
+{"model": "x", "imgsz": 1280, "batch": 16, "params_m": 59.0, "reserved": 44.06, "allocated": 43.95, "device_used": 43.36, "total": 44.43, "ms_per_step": 887, "status": "over", "wall_s": 79}
+{"model": "x", "imgsz": 1280, "batch": 4, "params_m": 59.0, "reserved": 17.71, "allocated": 16.5, "device_used": 18.11, "total": 44.43, "ms_per_step": 474, "status": "ok", "wall_s": 40}

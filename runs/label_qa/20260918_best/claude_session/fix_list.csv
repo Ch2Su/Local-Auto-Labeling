@@ -1,0 +1,75 @@
+﻿image_id,grp,split,pred_cls,conf,box_px,sheet_no,name
+106,g000001,train,person,0.516,280 176 292 207,198,000000504021_jpg.rf.PO4da3XsOf5Wjq53MhYw.jpg
+254,g000001,train,car,0.955,544 50 603 111,440,000133_jpg.rf.yHkZF6EQFo4hv11iO0It.jpg
+264,g000001,train,car,0.955,544 50 603 111,213,000143_jpg.rf.1hbfN7nOebBW3I2UX4sU.jpg
+333,g000001,train,car,0.954,544 50 603 111,163,000212_jpg.rf.mf5d3SeFdszDzaluw3i2.jpg
+349,g000001,train,car,0.956,544 50 603 111,265,000228_jpg.rf.AtmrpOflmuk9UcFgz88U.jpg
+393,g000001,train,car,0.956,544 50 603 111,121,000272_jpg.rf.gMnih7gmS4HaaImQ7x5h.jpg
+393,g000001,train,person,0.8,350 187 368 225,439,000272_jpg.rf.gMnih7gmS4HaaImQ7x5h.jpg
+634,g000001,train,car,0.956,544 50 602 111,59,000513_jpg.rf.TqwLF5BXQWths50Hchtb.jpg
+719,g000001,train,car,0.956,544 50 603 111,125,000598_jpg.rf.6D9rYgZpAR1jkbOR3FFK.jpg
+1033,g001033,train,person,0.547,20 276 45 306,16,153974116-1248x876_jpg.rf.SN4FmDS3lzQWQeYo5Dxf.jpg
+1188,g001188,val,person,0.786,713 10 733 64,423,20260411_184944_jpg.rf.PQIpeT5fbBYIIl1dhRYP.jpg
+1217,g001217,val,car,0.663,114 106 158 146,48,20260411_191019_jpg.rf.l2BlAaoLHqntWXuUpJxO.jpg
+1266,g001266,val,person,0.519,45 594 123 740,100,20260411_194740_jpg.rf.pCJZTO1SvmPkd0JYF60n.jpg
+1271,g001270,val,car,0.802,208 191 229 209,76,20260411_195002_jpg.rf.fXYmacJXfjxpEK1Xhdyp.jpg
+1283,g001280,test,car,0.713,430 322 506 368,32,20260411_195837_jpg.rf.YGbmOJ9AQ1NYn0hvoWq1.jpg
+2626,g002615,test,person,0.606,974 63 992 96,176,fourth_032_png_jpg.rf.XHUB6QquEENJ0nj2fXIo.jpg
+2627,g002615,test,person,0.669,701 159 726 209,208,fourth_033_png_jpg.rf.ISmTjBBfU4XdSk8u78HK.jpg
+2686,g002686,val,scooter,0.66,0 292 27 366,435,image24-09-30_13-13-24-89_00066_jpg.rf.LwMXWx3VLEht6yfgFm9H.jpg
+2691,g002691,train,scooter,0.65,0 333 28 402,243,image24-09-30_14-04-00-43_00088_jpg.rf.m6Tbr2dcqhCkqiIr8tmv.jpg
+2692,g002692,val,scooter,0.653,0 296 28 364,349,image24-09-30_14-13-38-46_00092_jpg.rf.BwnjjKZ7nB9gtpFomlfJ.jpg
+2693,g002693,val,scooter,0.678,0 310 28 381,256,image24-09-30_14-57-47-54_00110 - Copy_jpg.rf.UrtOMSaSHYepQlpF1MrV.jpg
+2725,g002725,train,car,0.741,1150 0 1208 30,343,image24-10-02_10-55-37-90_00760_jpeg.rf.CohAZRnjpxebULVZj3mr.jpeg
+2781,g002781,train,car,0.54,544 0 580 18,64,image24-10-29_10-54-51-60_00001_jpeg.rf.ob8q2w3TUPpkDCx7S6AT.jpeg
+2788,g002788,train,car,0.55,488 0 604 12,321,image24-10-29_16-49-25-03_00001_jpeg.rf.P8Xh2jUR6kpBhoEhIn2L.jpeg
+2825,g002825,train,bicycle,0.776,925 602 989 658,424,image24-11-01_19-09-33-15_00001_jpeg.rf.M9ahPJ1zuggVppYXxnLh.jpeg
+2837,g002837,val,car,0.654,619 0 698 14,205,image24-11-04_16-46-53-01_00001_jpg.rf.EnMi4npWoTksbGS8eCZ0.jpg
+2837,g002837,val,car,0.514,1240 0 1277 13,237,image24-11-04_16-46-53-01_00001_jpg.rf.EnMi4npWoTksbGS8eCZ0.jpg
+2841,g002840,train,person,0.755,38 28 61 83,225,image24-11-04_22-42-43-19_00001_jpg.rf.uLYSJn8eReNZZiSgbXQY.jpg
+2884,g002884,val,car,0.648,298 1 374 12,282,imagen55_20221010_155449_jpg.rf.nPSrrInzvI6Mm2Xy5EJz.jpg
+3021,g003021,test,bicycle,0.583,510 148 640 630,317,img-bicycles-C2O6J0JMXY_png_jpg.rf.ekAJVRertvbzs4wDRpsu.jpg
+3252,g003252,train,car,0.641,761 1 794 21,69,SeieeDept-031_00048_jpg.rf.4kYXt1hYc8Un4jWL7anH.jpg
+3662,g003662,val,scooter,0.732,116 83 146 136,138,T002767_000_0168_C_D_R_1_jpg.rf.foomEGb3iRZcG8sVJvEA.jpg
+3779,g003779,test,motorcycle,0.713,571 153 650 273,134,T002798_000_0135_C_D_R_1_jpg.rf.RQCbCbwnxr067VfVmtXq.jpg
+3924,g003830,val,person,0.583,266 0 287 44,389,WhatsApp Video 2022-03-23 at 10_07_39 (1)_mp4-49_jpg.rf.rTopkh5ZifbB0qH16g1B.jpg
+3979,g003979,val,car,0.855,890 1 963 46,151,스크린샷 2026-04-12 133859_png_png.rf.hk905y2DBI1PHgtALOSt.png
+3979,g003979,val,car,0.674,991 1 1128 28,222,스크린샷 2026-04-12 133859_png_png.rf.hk905y2DBI1PHgtALOSt.png
+4019,g004019,val,person,0.658,648 34 682 93,172,스크린샷 2026-04-12 141949_png_png.rf.Wp7U1AsgOs3KWL9NpSEW.png
+4037,g004037,val,truck,0.664,1981 1 2037 54,203,스크린샷 2026-04-12 142540_png_png.rf.mSVGIonGhkCKkpMsYgXT.png
+4118,g004118,val,car,0.654,620 105 637 118,28,스크린샷 2026-04-12 210120_png_png.rf.Cyj4Dt9Nhapv0v23hej9.png
+4118,g004118,val,car,0.829,54 374 122 465,332,스크린샷 2026-04-12 210120_png_png.rf.Cyj4Dt9Nhapv0v23hej9.png
+4119,g004119,train,car,0.698,788 160 808 172,30,스크린샷 2026-04-12 210126_png_png.rf.2lzlRj3fFjFVJvixcOWt.png
+4201,g004201,test,person,0.597,653 74 706 172,223,스크린샷 2026-04-12 213505_png_png.rf.Xfvty82qCDoouHjjShtJ.png
+4304,g004304,train,person,0.556,383 82 396 106,418,스크린샷 2026-04-13 164353_png.rf.BZMBzFkBLrrVnnQcur7A.png
+4420,g004417,train,person,0.74,1028 521 1070 619,254,스크린샷 2026-04-14 231835_png.rf.dSMzDMnt4HH9HVVjgzPs.png
+4434,g004432,train,car,0.607,899 569 932 594,233,스크린샷 2026-04-28 150631_png.rf.mrfYNLXp0bxww2nOovrx.png
+4518,g004514,test,car,0.851,662 50 718 112,47,스크린샷 2026-05-13 183430_png.rf.e1JPRclI9pFXWFfCAI90.png
+4521,g004514,test,car,0.861,655 80 711 142,206,스크린샷 2026-05-13 183522_png.rf.EXFeiVLOrMCI9m0cgP6i.png
+4650,g004650,test,person,0.602,1518 0 1530 32,195,스크린샷 2026-06-07 020835_png.rf.3lkRjJn3EWjEvy7S8TuK.png
+4681,g004681,test,person,0.584,152 456 172 514,226,스크린샷 2026-06-07 031456_png.rf.uaZPf7h5GLy83uUK4FLF.png
+4741,g004741,val,car,0.663,256 4 291 45,286,스크린샷 2026-06-07 044208_png.rf.9fJN961U3lY0N4fEzV5i.png
+4742,g004741,val,car,0.662,243 0 292 39,385,스크린샷 2026-06-07 044214_png.rf.Xi7Bixd5sptLapteo9uI.png
+4793,g004785,test,person,0.592,536 232 565 284,15,스크린샷 2026-06-07 151417_png.rf.VFqstr7fCNE3MzdDyBUu.png
+4846,g004846,val,car,0.606,1409 192 1471 229,130,스크린샷 2026-06-07 161747_png.rf.xWeNPSw2Z7djnCpA9OLy.png
+4863,g004862,val,car,0.52,334 6 362 28,14,스크린샷 2026-06-07 162951_png.rf.tLvORgXYTxYBRfEG9QG6.png
+5074,g005074,train,truck,0.809,0 38 29 111,1,스크린샷 2026-06-08 150731_png.rf.9FgHLRBNwTT0ooOZXdUR.png
+5075,g005074,train,truck,0.605,0 89 23 148,234,스크린샷 2026-06-08 150754_png.rf.jUZwTalkmZSgaNmhJAlH.png
+5645,g005643,train,person,0.69,675 453 703 498,141,스크린샷 2026-06-19 112337_png.rf.yTWtH3QgDldo0zN1bFbF.png
+5706,g005706,test,person,0.682,67 29 86 76,416,스크린샷 2026-06-19 121720_png.rf.ZcrdY941MuRRP3Z2r7nF.png
+5725,g005725,test,person,0.823,909 415 1024 589,5,스크린샷 2026-09-02 092916_png.rf.mv4eReYOD49I6BSeoMEN.png
+5896,g005896,test,scooter,0.714,43 105 90 299,235,스크린샷 2026-09-03 125057_png.rf.zkLPGR6TVx7GECquX9og.png
+5966,g005953,val,car,0.777,0 104 27 136,285,스크린샷 2026-09-08 144348_png.rf.rLMRcAGGn7W2gR0uIzIg.png
+6004,g006004,val,car,0.78,1360 9 1407 44,63,T100_jpg.rf.1ebbArNTmjNQzf5T1kLS.jpg
+6005,g006004,val,car,0.739,1356 3 1408 42,272,T101_jpg.rf.EhV74mFpuaAe8eRbZSsp.jpg
+6006,g006004,val,car,0.737,1359 2 1410 37,147,T102_jpg.rf.iOdRFhHPAkyxO1wsRFG6.jpg
+6034,g006004,val,scooter,0.514,271 94 314 200,303,T134_jpg.rf.TZsFZDWXPV58dMmrFsPY.jpg
+6054,g006004,val,car,0.694,1258 1 1294 34,90,T16_jpg.rf.ZOVbRt22uzZt6Fee1MDV.jpg
+6062,g006004,val,car,0.739,1361 4 1410 36,444,T17_jpg.rf.03mJQoaOqRQnxCM9TW8F.jpg
+6068,g006004,val,car,0.803,1257 1 1307 37,41,T18_jpg.rf.DmGTzvbyygUvnABsfa4i.jpg
+6074,g006004,val,car,0.86,1358 1 1405 35,43,T19_jpg.rf.dKvQ1wz4lleSJ9OggVCH.jpg
+6076,g006004,val,car,0.806,1256 4 1304 36,132,T20_jpg.rf.gnDhXgrQXz36oVpnEUfT.jpg
+6082,g006004,val,car,0.806,1251 2 1299 36,164,T21_jpg.rf.aIMPyRhNclwqHFPegunP.jpg
+6140,g006004,val,car,0.752,1361 3 1406 41,264,T97_jpg.rf.OnJmzcvr74YN10z0lsGJ.jpg
+6141,g006004,val,car,0.753,1358 1 1406 40,52,T98_jpg.rf.y4WMIFWD8ZnbibgmMZft.jpg
+6142,g006004,val,car,0.77,1357 1 1411 39,61,T99_jpg.rf.o9gaNrvOpofaHp7ACar7.jpg

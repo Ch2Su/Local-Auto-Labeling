@@ -1,0 +1,6 @@
+{
+ "weights": "E:\\local_auto_labeling\\models\\best.pt",
+ "imgsz": 640,
+ "store_conf": 0.1,
+ "date": "2026-09-18"
+}

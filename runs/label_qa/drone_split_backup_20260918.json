@@ -1,0 +1,480 @@
+{
+ "moved": [
+  {
+   "id": 3272,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3273,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3274,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3275,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3276,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3277,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3278,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3279,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3280,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3281,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3282,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3283,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3284,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3285,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3286,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3287,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3288,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3289,
+   "grp": "g003272",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3290,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3291,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3292,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3293,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3294,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3295,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3296,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3297,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3298,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3299,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3300,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3301,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3302,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3303,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3304,
+   "grp": "g003290",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3323,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3324,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3325,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3326,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3327,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3328,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3329,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3330,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3331,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3332,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3333,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3334,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3335,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3336,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3337,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  },
+  {
+   "id": 3338,
+   "grp": "g003323",
+   "from": "test",
+   "to": "train"
+  }
+ ],
+ "kept": [
+  {
+   "id": 3254,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3255,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3256,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3257,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3258,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3259,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3260,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3261,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3262,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3263,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3264,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3265,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3266,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3267,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3268,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3269,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3270,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3271,
+   "grp": "g003254",
+   "split": "test"
+  },
+  {
+   "id": 3305,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3306,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3307,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3308,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3309,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3310,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3311,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3312,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3313,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3314,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3315,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3316,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3317,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3318,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3319,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3320,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3321,
+   "grp": "g003305",
+   "split": "test"
+  },
+  {
+   "id": 3322,
+   "grp": "g003305",
+   "split": "test"
+  }
+ ]
+}

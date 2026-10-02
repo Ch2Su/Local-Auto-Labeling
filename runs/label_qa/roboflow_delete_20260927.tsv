@@ -1,0 +1,53 @@
+﻿# 로보플로 원본에서도 지워야 할 시드 이미지. DB 와 로컬 파일은 이미 지웠다 — 로보플로에 남아 있으면
+# 다음 내보내기 때 새 이름으로 다시 들어온다(DB 에 없으니 중복 검사도 못 막는다).
+# 검색어 = 로보플로에서 찾을 이름(.rf. 앞부분). 외부백업 = E:\local_auto_labeling_backup\20260911 에 원본 파일이 있는가
+지운날	id	분할	묶음	검색어	파일 이름	외부백업
+09-24~27	1810	train	g001810	70_8592997	70_8592997_jpg.rf.0qjmaUi8HifSlInAIjw1.jpg	있음
+09-24~27	1897	train	g001897	aguanambi-5155	aguanambi-5155_png_png.rf.MsHu1qgORTgZQwPwrqkv.png	있음
+09-24~27	1898	train	g001898	ala_2_001	ala_2_001_png_jpg.rf.JKcPbvbTodaINeqN0S9w.jpg	있음
+09-24~27	1899	train	g001899	ala_2_003	ala_2_003_png_jpg.rf.mMlR5RsLXyIoBWcyke6Q.jpg	있음
+09-24~27	1900	train	g001900	ala_2_005	ala_2_005_png_jpg.rf.LvnGxHaETIDcESnj6NKh.jpg	있음
+09-24~27	1901	train	g001901	ala_2_011	ala_2_011_png_jpg.rf.wGs03EaBjVqA7fuR6nJ8.jpg	있음
+09-24~27	1902	train	g001902	ala_2_015	ala_2_015_png_jpg.rf.aRuhUmlA0NS2jNPt20kS.jpg	있음
+09-24~27	1903	val	g001903	ala_2_016	ala_2_016_png_jpg.rf.iqMNYB6OVxglRd1aGpBS.jpg	있음
+09-24~27	1904	train	g001904	ala_2_017	ala_2_017_png_jpg.rf.3wfDnvSiyomdEQPsozma.jpg	있음
+09-24~27	1905	train	g001905	ala_2_018	ala_2_018_png_jpg.rf.MjHJpJtcD04iJ6MGoO58.jpg	있음
+09-24~27	1906	val	g001903	ala_2_019	ala_2_019_png_jpg.rf.VBugyjyatEOVzbaYpKQZ.jpg	있음
+09-24~27	1907	val	g001903	ala_2_020	ala_2_020_png_jpg.rf.Vuser6uz1jHeShFFYG5z.jpg	있음
+09-24~27	1908	val	g001903	ala_2_021	ala_2_021_png_jpg.rf.IUSJe74QnWSa56FSlNM1.jpg	있음
+09-24~27	1909	val	g001903	ala_2_022	ala_2_022_png_jpg.rf.Zwg7qk4zWQpJHVSfSVXq.jpg	있음
+09-24~27	1910	val	g001903	ala_2_026	ala_2_026_png_jpg.rf.PGO0UqB7IOr8OiTS2HHF.jpg	있음
+09-24~27	1911	val	g001903	ala_2_027	ala_2_027_png_jpg.rf.7mBbz8F3s0IMrJOp5bSo.jpg	있음
+09-24~27	1912	val	g001903	ala_2_028	ala_2_028_png_jpg.rf.6eAAznSXsxphiG1OAB5I.jpg	있음
+09-24~27	1913	val	g001903	ala_2_030	ala_2_030_png_jpg.rf.f0T9r00oBI2v50TA2q02.jpg	있음
+09-24~27	1914	val	g001903	ala_2_031	ala_2_031_png_jpg.rf.TPCMHqV2Y6Hx2Z68ioog.jpg	있음
+09-24~27	1915	val	g001903	ala_2_032	ala_2_032_png_jpg.rf.DncZ4fPSHeoG04L4Izwe.jpg	있음
+09-24~27	1916	val	g001903	ala_2_033	ala_2_033_png_jpg.rf.ttnQ5EVST3mRkpM5Azzx.jpg	있음
+09-24~27	1917	train	g001917	ala_2_035	ala_2_035_png_jpg.rf.ReMZlOKbVzFEck4TkGH6.jpg	있음
+09-24~27	1918	train	g001918	ala_2_046	ala_2_046_png_jpg.rf.8PDAUUfsM85h7SXDYsHy.jpg	있음
+09-24~27	1919	train	g001919	ala_2_050	ala_2_050_png_jpg.rf.2h4GAkXMupT06wj8r6MN.jpg	있음
+09-24~27	1920	train	g001920	ala_2_062	ala_2_062_png_jpg.rf.zA4DvubXF78dMZpbg7O8.jpg	있음
+09-24~27	1921	val	g001903	ala_2_066	ala_2_066_png_jpg.rf.qUICC6EX5Bxv8N6cDMF2.jpg	있음
+09-24~27	1922	val	g001903	ala_2_067	ala_2_067_png_jpg.rf.gR1c67aVi689HBtQRk8z.jpg	있음
+09-24~27	1923	val	g001903	ala_2_069	ala_2_069_png_jpg.rf.nL2HxB0vFJfzKoso4UpT.jpg	있음
+09-24~27	1924	train	g001924	ala_2_072	ala_2_072_png_jpg.rf.UhZATEkL9SiSx5J4kmet.jpg	있음
+09-24~27	1925	train	g001925	ala_2_074	ala_2_074_png_jpg.rf.9EVlCeQ2wOJLDdFKhByG.jpg	있음
+09-24~27	1926	val	g001903	ala_2_080	ala_2_080_png_jpg.rf.wWHvPMsEsC0EpKtPrSWW.jpg	있음
+09-24~27	1927	val	g001903	ala_2_081	ala_2_081_png_jpg.rf.b7LR0WrpYmz8gjbEPuY1.jpg	있음
+09-24~27	1928	val	g001903	ala_2_084	ala_2_084_png_jpg.rf.cnfbQqsSQKbRltXSfx1j.jpg	있음
+09-24~27	1929	train	g001929	ala_2_089	ala_2_089_png_jpg.rf.10u0kXOHtj5KsZQ1bvWU.jpg	있음
+09-24~27	1930	val	g001903	ala_2_090	ala_2_090_png_jpg.rf.D5u7bVIFrhGGnzzFU8qD.jpg	있음
+09-24~27	1931	val	g001903	ala_2_092	ala_2_092_png_jpg.rf.r885BjXP72mo0Woc3f3y.jpg	있음
+09-24~27	1932	train	g001932	ala_2_093	ala_2_093_png_jpg.rf.6Dmdq9GaYc2NencQFDLT.jpg	있음
+09-24~27	3216	train	g003215	Screenshot 2021-08-30 201536	Screenshot 2021-08-30 201536_jpg.rf.hpDTtKnmP43I8kGHnLqN.jpg	있음
+09-24~27	3236	train	g003215	Screenshot-2021-08-30-204047	Screenshot-2021-08-30-204047_jpg.rf.jIdrTrkUgAeiDWGjJQls.jpg	있음
+09-24~27	4096	train	g004096	스크린샷 2026-04-12 205516	스크린샷 2026-04-12 205516_png_png.rf.ssugyLcj8TpYjeM43x1k.png	있음
+09-24~27	4097	train	g004097	스크린샷 2026-04-12 205541	스크린샷 2026-04-12 205541_png_png.rf.su3FXg2kKXVSdA95r1rC.png	있음
+09-24~27	4308	train	g004307	스크린샷 2026-04-13 165116	스크린샷 2026-04-13 165116_png.rf.8kBriCr1bwXezgdXNqEM.png	있음
+09-24~27	4344	train	g004344	스크린샷 2026-04-14 214319	스크린샷 2026-04-14 214319_png.rf.myIzKaLk2WNQS0LmpzLd.png	있음
+09-24~27	4853	test	g004853	스크린샷 2026-06-07 162159	스크린샷 2026-06-07 162159_png.rf.6elOEwpySp98j7QSRY8X.png	있음
+09-24~27	5240	test	g005240	스크린샷 2026-06-08 223930	스크린샷 2026-06-08 223930_png.rf.SuiK4fB25hes4HLW9Cx4.png	있음
+09-24~27	5241	test	g005240	스크린샷 2026-06-08 223948	스크린샷 2026-06-08 223948_png.rf.LXjI2GLMLGGTBBZCA5xK.png	있음
+09-18	4019	-	-	스크린샷 2026-04-12 141949	스크린샷 2026-04-12 141949_png_png.rf.Wp7U1AsgOs3KWL9NpSEW.png	있음
+09-18	4119	-	-	스크린샷 2026-04-12 210126	스크린샷 2026-04-12 210126_png_png.rf.2lzlRj3fFjFVJvixcOWt.png	있음
+09-18	4304	-	-	스크린샷 2026-04-13 164353	스크린샷 2026-04-13 164353_png.rf.BZMBzFkBLrrVnnQcur7A.png	있음

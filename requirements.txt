@@ -1,0 +1,21 @@
+# --- PyTorch (CUDA 13.0 / Blackwell sm_120) ---
+# 반드시 아래 인덱스로 설치할 것:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+torch>=2.14.0
+torchvision
+
+# --- 검출 모델 ---
+# 정지·스냅샷·이어하기는 Ultralytics 내부 순서에 기댄다(CLAUDE.md 함정 8).
+# 8.4.50(WSL) 과 8.4.142(Windows) 에서 소스로 확인했다. 올리면 다시 확인할 것.
+ultralytics>=8.4.50
+
+# --- 검수 웹 UI ---
+fastapi>=0.115
+uvicorn[standard]>=0.34
+
+# --- 유틸 ---
+# 11.3 부터 AVIF 코덱이 들어 있다 (yolo_io.IMG_EXTS 에 .avif 가 있다, 2026-09-22).
+# 11.0 은 확장자만 .png 인 JPEG 의 EXIF 를 다시 쓰다 죽어 그 이미지를 학습에서 뺀다(CLAUDE.md Runpod).
+pillow>=11.3
+pyyaml
+numpy

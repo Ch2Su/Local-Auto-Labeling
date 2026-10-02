@@ -1,0 +1,302 @@
+"""train / val / test 배정 — 묶음 단위로, 계층화해서, DB 에 고정한다.
+
+세 가지를 한꺼번에 푼다.
+
+1. **DB 에 고정** (`images.split`). 예전에는 파일 경로 해시로 매번 계산해서, `tidy` 가
+   파일을 옮기면 배정이 뒤집혔다. 이제 경로가 바뀌어도 그대로다.
+2. **계층화.** 해시·무작위 분할은 클래스별 비중이 20% ±0.7~1.9%p 로 흔들린다(무작위
+   200회 실측). 계층화하면 ±0.5%p 안에 든다. 희소 클래스(scooter·bus)의 점수가 덜 흔들린다.
+3. **묶음 단위 분할.** 같은 영상·같은 연사·내용이 같은 이미지는 통째로 한쪽에만 넣는다
+   (`grouping.py`). 인접 프레임이 train 과 val 로 갈리면 점수가 부풀려지기 때문이다.
+
+**test 는 학습에도, best.pt 고르기에도 쓰지 않는다.** val 은 학습 중 best 를 고르는 데
+쓰이므로 val 점수에는 '여러 epoch 중 가장 좋은 것을 골랐다'는 이득이 섞인다. test 는
+그게 없어서 모델 간 비교에 쓸 수 있다. `data.yaml` 의 `test:` 로 나가고,
+`YOLO(w).val(split="test")` 로 잰다.
+
+**배정은 한 번 정하면 움직이지 않는다.** 새로 승인된 이미지만 계층화로 채운다. 전체를
+다시 나누려면 `labeler.py split --reset` 을 사람이 명시적으로 돌려야 한다 — 그러면
+이전 학습들과 점수 비교가 끊긴다(그 모델들이 새 val/test 이미지를 학습에 썼을 수 있다).
+"""
+
+from __future__ import annotations
+
+import random
+from collections import Counter
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .config import Config
+from .grouping import close_pairs, dhash, group_images
+from .store import Store
+
+SPLITS = ("train", "val", "test")
+
+
+@dataclass
+class SplitReport:
+    total: int = 0
+    counts: dict[str, int] = field(default_factory=dict)
+    groups: int = 0
+    biggest_group: int = 0
+    hashed: int = 0          # 이번에 dHash 를 새로 계산한 장수
+    assigned: int = 0        # 이번에 새로 배정한 장수 (배정이 없던 이미지)
+    moved: dict[str, int] = field(default_factory=dict)   # 이미 배정돼 있다가 옮겨진 것 {"val->train": n}
+    reset: bool = False
+    ratios: dict[str, float] = field(default_factory=dict)
+    shares: dict[str, dict[str, float]] = field(default_factory=dict)  # split -> 클래스 -> 비중
+
+    def worst(self) -> float:
+        out = 0.0
+        for s, per in self.shares.items():
+            for v in per.values():
+                out = max(out, abs(v - self.ratios.get(s, 0)))
+        return out
+
+    def summary(self) -> str:
+        n = max(self.total, 1)
+        head = "  ".join(f"{s} {self.counts.get(s, 0)}장 ({self.counts.get(s, 0)/n:.1%})"
+                         for s in SPLITS if self.counts.get(s))
+        lines = [f"분할: {head}",
+                 f"  묶음 {self.groups}개 (가장 큰 묶음 {self.biggest_group}장)"]
+        if self.hashed:
+            lines.append(f"  dHash 새로 계산 {self.hashed}장")
+        if self.reset:
+            lines.append("  **전체 재배정** — 이전 학습과 점수 비교는 끊깁니다")
+        else:
+            if self.assigned:
+                lines.append(f"  새로 배정 {self.assigned}장")
+            if self.moved:
+                detail = ", ".join(f"{k} {v}장" for k, v in sorted(self.moved.items()))
+                lines.append(
+                    f"  [경고] 이미 배정돼 있던 이미지가 옮겨졌습니다: {detail}. 새 이미지가 "
+                    "두 묶음을 이어 붙여 다수결을 따른 것입니다. train 에서 val·test 로 간 것이 "
+                    "있으면 그 이미지를 학습한 이전 모델의 val·test 점수는 부풀려집니다.")
+        for s in SPLITS:
+            per = self.shares.get(s)
+            if per:
+                lines.append(f"  {s} 클래스 비중: "
+                             + ", ".join(f"{k} {v:.1%}" for k, v in sorted(per.items())))
+        if self.shares:
+            lines.append(f"  목표에서 벗어난 폭: {self.worst():.1%}p")
+        return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ 내부 계산
+
+def _ratios(cfg: Config) -> dict[str, float]:
+    val = float(cfg.get("train.val_ratio", 0.2))
+    test = float(cfg.get("train.test_ratio", 0.0))
+    if val + test >= 1.0:
+        raise RuntimeError("config.yaml 의 train.val_ratio + test_ratio 가 1 이상입니다.")
+    out = {"train": 1.0 - val - test, "val": val}
+    if test > 0:
+        out["test"] = test
+    return out
+
+
+def _ensure_dhash(store: Store, items: list[dict]) -> int:
+    """dHash 가 없는 이미지만 계산해 DB 에 넣는다. 원본이 없으면 건너뛴다."""
+    todo = [it for it in items if not it.get("dhash")]
+    done = []
+    for it in todo:
+        p = Path(it["path"])
+        if not p.exists():
+            continue
+        h = dhash(p)
+        if h:
+            it["dhash"] = h
+            done.append((it["id"], h))
+    store.set_dhashes(done)
+    return len(done)
+
+
+def _stratify_groups(groups: dict[str, list[dict]], ratios: dict[str, float],
+                     fixed: dict[str, str], jitter: int = 0) -> dict[str, str]:
+    """묶음을 split 에 배분한다 (묶음 단위 계층화).
+
+    **큰 묶음부터** 넣는다 — 이 데이터에는 천 장이 넘는 묶음(고정 CCTV 한 대)이 있어서,
+    작은 것부터 채우면 마지막에 큰 것을 놓을 자리가 없다. 각 묶음은 '넣고 났을 때
+    전체가 가장 덜 틀어지는' split 으로 간다. 틀어짐은 클래스별 비중과 장수 비중을
+    같이 본다 — 클래스만 보면 장수가 쏠리고, 장수만 보면 희소 클래스가 쏠린다.
+    (먼저 '모자란 쪽'을 고르는 방식으로 짰다가 70/15/15 가 65/14/21 로 나와서 바꿨다.)
+    """
+    totals: Counter = Counter()
+    n_all = 0
+    for members in groups.values():
+        for it in members:
+            totals.update(it["counts"])
+            n_all += 1
+
+    got = {s: Counter() for s in ratios}
+    got_n = {s: 0 for s in ratios}
+    assign: dict[str, str] = {}
+    for g, s in fixed.items():           # 이미 배정된 묶음은 그대로 두고 채워 넣는다
+        if g in groups and s in ratios:
+            assign[g] = s
+            for it in groups[g]:
+                got[s].update(it["counts"])
+                got_n[s] += 1
+
+    def counts_of(g: str) -> Counter:
+        c: Counter = Counter()
+        for it in groups[g]:
+            c.update(it["counts"])
+        return c
+
+    def delta(s: str, c: Counter, size: int) -> float:
+        """이 묶음을 s 에 넣으면 '목표에서 벗어난 정도'가 얼마나 늘어나나."""
+        r = ratios[s]
+        out = 0.0
+        for k, n in c.items():
+            if not totals[k]:
+                continue
+            before = abs(got[s][k] / totals[k] - r)
+            after = abs((got[s][k] + n) / totals[k] - r)
+            out += after - before
+        before_n = abs(got_n[s] / n_all - r)
+        after_n = abs((got_n[s] + size) / n_all - r)
+        return out + (after_n - before_n) * len(totals)   # 장수도 클래스들만큼 무겁게
+
+    rng = random.Random(jitter)
+    todo = sorted((g for g in groups if g not in assign),
+                  key=lambda g: (-len(groups[g]) * (1 if not jitter else rng.uniform(0.7, 1.3)),
+                                 min((totals[k] for k in counts_of(g)), default=10**9)))
+    for g in todo:
+        c = counts_of(g)
+        size = len(groups[g])
+        best = min(ratios, key=lambda s: (delta(s, c, size), -ratios[s]))
+        assign[g] = best
+        got[best].update(c)
+        got_n[best] += size
+    return assign
+
+
+def _deviation(groups: dict[str, list[dict]], assign: dict[str, str],
+               ratios: dict[str, float]) -> float:
+    """배정 전체가 목표에서 벗어난 정도 (클래스 비중 + 장수). 작을수록 좋다."""
+    totals: Counter = Counter()
+    per: dict[str, Counter] = {s: Counter() for s in ratios}
+    n_all = 0
+    n_per = {s: 0 for s in ratios}
+    for g, members in groups.items():
+        s = assign.get(g)
+        for it in members:
+            totals.update(it["counts"])
+            n_all += 1
+            if s:
+                per[s].update(it["counts"])
+                n_per[s] += 1
+    out = 0.0
+    for s, r in ratios.items():
+        out += sum(abs(per[s][k] / totals[k] - r) for k in totals if totals[k])
+        out += abs(n_per[s] / max(n_all, 1) - r) * len(totals)
+    return out
+
+
+def _shares(groups: dict[str, list[dict]], assign: dict[str, str],
+            classes: list[str]) -> dict[str, dict[str, float]]:
+    tot: Counter = Counter()
+    per: dict[str, Counter] = {s: Counter() for s in SPLITS}
+    for g, members in groups.items():
+        s = assign.get(g)
+        for it in members:
+            for k, n in it["counts"].items():
+                tot[k] += n
+                if s:
+                    per[s][k] += n
+    name = lambda k: classes[k] if k < len(classes) else f"cls_{k}"
+    return {s: {name(k): per[s][k] / tot[k] for k in sorted(tot) if tot[k]}
+            for s in SPLITS if per[s]}
+
+
+# -------------------------------------------------------------------- 공개 API
+
+def ensure_splits(cfg: Config, store: Store, *, reset: bool = False,
+                  regroup: bool = False) -> tuple[dict[int, str], SplitReport]:
+    """승인 이미지 전부에 train/val/test 배정을 보장하고 {이미지 id: split} 을 돌려준다.
+
+    reset=True 면 전부 다시 나눈다 (이전 학습과 비교가 끊긴다).
+    regroup=True 면 묶음도 다시 계산한다 (새 이미지가 기존 묶음에 붙을 수 있으므로,
+    dHash 를 새로 계산한 이미지가 있으면 자동으로 켜진다).
+    """
+    ratios = _ratios(cfg)
+    items = store.approved_class_counts()
+    report = SplitReport(total=len(items), ratios=ratios, reset=reset)
+    if not items:
+        return {}, report
+
+    report.hashed = _ensure_dhash(store, items)
+    need_group = reset or regroup or report.hashed > 0 or any(not it["grp"] for it in items)
+    if need_group:
+        keys = group_images(items)
+        store.set_groups([(it["id"], keys[it["id"]]) for it in items
+                          if it["grp"] != keys[it["id"]]])
+        for it in items:
+            it["grp"] = keys[it["id"]]
+
+    groups: dict[str, list[dict]] = {}
+    for it in items:
+        groups.setdefault(it["grp"], []).append(it)
+    report.groups = len(groups)
+    report.biggest_group = max(len(v) for v in groups.values())
+
+    # 이미 배정된 이미지가 **하나라도** 있는 묶음은 그 split 을 유지한다(다수결).
+    # 새로 들어온 이미지는 자기 묶음을 따라가고, 기존 이미지는 움직이지 않는다.
+    # (전부 배정된 묶음만 고정했더니, 새 이미지가 낀 묶음이 통째로 재배정돼
+    #  기존 이미지 7장이 따라 움직였다 — 2026-09-16 시험에서 잡았다.)
+    fixed: dict[str, str] = {}
+    if not reset:
+        for g, members in groups.items():
+            have = Counter(it["split"] for it in members if it["split"] in ratios)
+            if have:
+                fixed[g] = have.most_common(1)[0][0]
+
+    # 큰 묶음이 어디로 가느냐에 따라 결과가 꽤 달라진다. 순서를 몇 번 흔들어 보고
+    # 가장 덜 틀어진 배정을 고른다 (시드 고정이라 항상 같은 결과가 나온다).
+    assign_g = min(
+        (_stratify_groups(groups, ratios, fixed, jitter=j) for j in range(12)),
+        key=lambda a: _deviation(groups, a, ratios),
+    )
+    assign = {it["id"]: assign_g[g] for g, members in groups.items() for it in members}
+
+    changed = [(it["id"], assign[it["id"]]) for it in items
+               if it["split"] != assign[it["id"]]]
+    # 기존 이미지는 원래 움직이지 않는다. 다만 묶음을 다시 계산하면 새 이미지가 서로 다른
+    # split 의 두 묶음을 이어 붙일 수 있고, 그러면 위의 다수결로 소수 쪽이 옮겨진다.
+    # 조용히 지나가면 안 되는 일이라 따로 센다.
+    moved = Counter(f"{it['split']}->{assign[it['id']]}" for it in items
+                    if it["split"] in ratios and it["split"] != assign[it["id"]])
+    report.moved = {} if reset else dict(moved)
+    report.assigned = len(changed) - (0 if reset else sum(moved.values()))
+    if changed:
+        store.set_splits(changed)
+
+    report.counts = Counter(assign.values())
+    report.shares = _shares(groups, assign_g, store.get_classes())
+    return assign, report
+
+
+def leak_report(cfg: Config, store: Store, *, max_dist: int = 6) -> str:
+    """val·test 이미지가 train 에 '비슷한 이미지'를 몇 장이나 두고 있는지.
+
+    묶음 기준(dHash ≤2)보다 느슨한 거리로 재서, 묶음으로 못 막은 잔여 누수를 본다.
+    """
+    items = [it for it in store.approved_class_counts() if it.get("dhash")]
+    by_id = {it["id"]: it for it in items}
+    ids = [it["id"] for it in items]
+    hashes = [it["dhash"] for it in items]
+    pairs = close_pairs(ids, hashes, max_dist)
+    near: dict[int, set[str]] = {}
+    for a, b in pairs:
+        near.setdefault(a, set()).add(by_id[b]["split"])
+        near.setdefault(b, set()).add(by_id[a]["split"])
+    lines = [f"[잔여 누수] dHash 거리 ≤{max_dist} 로 본 '비슷한 이미지' (묶음 기준은 ≤2)"]
+    for s in ("val", "test"):
+        members = [i for i in ids if by_id[i]["split"] == s]
+        if not members:
+            continue
+        hit = sum(1 for i in members if "train" in near.get(i, ()))
+        lines.append(f"  {s} {len(members)}장 중 train 쪽에 비슷한 것이 있는 이미지: "
+                     f"{hit}장 ({hit / len(members):.1%})")
+    return "\n".join(lines)

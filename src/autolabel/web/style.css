@@ -1,0 +1,427 @@
+:root {
+  --bg:        #14161a;
+  --bg-2:      #1b1e24;
+  --bg-3:      #232730;
+  --line:      #2e333d;
+  --fg:        #e6e9ef;
+  --fg-dim:    #9aa3b2;
+  --accent:    #4c8dff;
+  --accent-2:  #2f6fe0;
+  --ok:        #3ecf8e;
+  --warn:      #f0a742;
+  --err:       #ef5f6b;
+  --radius:    6px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 "Malgun Gothic", "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* 페이지 전체를 세로 flex로 두어, 작업 로그 패널이 열려도 높이 계산이 저절로 맞게 한다. */
+body { display: flex; flex-direction: column; }
+
+kbd {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+  font: 11px/1.4 ui-monospace, Consolas, monospace;
+  color: var(--fg-dim);
+}
+
+.spacer { flex: 1; }
+.dim { color: var(--fg-dim); font-weight: normal; }
+.hidden { display: none !important; }
+
+/* ── 상단바 ───────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  flex: none; height: 46px; padding: 0 14px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 700; letter-spacing: .2px; white-space: nowrap; }
+
+/* 프로젝트 탭 (projects.yaml 에 둘 이상일 때만 보인다). 각 탭은 /p/<이름>/ 로 가는 링크다 —
+   프로젝트마다 서버 앱이 따로라 누르면 그쪽으로 이동한다. */
+.tabs { display: flex; gap: 4px; }
+.tabs .tab {
+  color: var(--fg-dim);
+  text-decoration: none;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  white-space: nowrap;
+}
+.tabs .tab:hover { color: var(--fg); border-color: var(--accent); }
+.tabs .tab.on {
+  color: var(--fg);
+  background: var(--accent-2);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.counts { display: flex; gap: 12px; color: var(--fg-dim); }
+.counts b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.counts .trash-count { color: var(--err); }
+.counts .trash-count b { color: var(--err); }
+
+.actions { margin-left: auto; display: flex; gap: 6px; }
+
+.btn {
+  background: var(--bg-3);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 11px;
+  cursor: pointer;
+  font: inherit;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary { background: var(--accent-2); border-color: var(--accent); font-weight: 600; }
+.btn-primary:hover:not(:disabled) { background: var(--accent); }
+.btn-sm { padding: 4px 8px; }
+.btn-danger { border-color: #6b3238; color: #ffb3ba; }
+.btn-danger:hover:not(:disabled) { background: var(--err); border-color: var(--err); color: #fff; }
+
+.linkbtn {
+  background: none; border: none; color: var(--fg-dim);
+  cursor: pointer; font: inherit; text-decoration: underline;
+}
+.linkbtn:hover { color: var(--fg); }
+
+/* ── 작업 로그 패널 ───────────────────────────────── */
+.job {
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 14px;
+  flex: none; max-height: 220px;
+  display: flex; flex-direction: column;
+}
+.job-head { display: flex; gap: 10px; align-items: center; font-weight: 600; }
+.job-progress { color: var(--fg-dim); font-family: ui-monospace, Consolas, monospace; }
+.job-log {
+  margin: 6px 0 0; overflow: auto; flex: 1;
+  font: 11px/1.4 ui-monospace, Consolas, monospace;
+  color: var(--fg-dim); white-space: pre-wrap; word-break: break-all;
+}
+.job .running { color: var(--warn); }
+.job .done    { color: var(--ok); }
+.job .error   { color: var(--err); }
+
+/* ── 레이아웃 ─────────────────────────────────────── */
+.layout {
+  display: grid;
+  grid-template-columns: 250px 1fr 270px;
+  flex: 1;
+  min-height: 0;
+}
+
+.panel {
+  background: var(--bg-2);
+  display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden;
+}
+.panel-left  { border-right: 1px solid var(--line); }
+.panel-right { border-left: 1px solid var(--line); }
+
+.panel-head {
+  display: flex; gap: 6px; align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600; font-size: 12px;
+}
+.panel-head select {
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 3px 4px; font: inherit; flex: 1; min-width: 0;
+}
+
+/* ── 이미지 목록 ──────────────────────────────────── */
+.image-list, .class-list, .box-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+.image-list { flex: 1; }
+
+/* 묶음 헤더 */
+.image-list li.group {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 9px; cursor: pointer;
+  background: var(--bg-3);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  position: sticky; top: 0; z-index: 1;
+}
+.image-list li.group:hover { background: #2b313b; }
+.image-list li.group .caret { width: 9px; color: var(--fg-dim); flex: none; }
+.image-list li.group.open .caret { color: var(--accent); }
+.image-list li.group .rng { flex: 1; min-width: 0; }
+.image-list li.group .cnt { color: var(--fg-dim); font-size: 11px; font-weight: normal; }
+.image-list li.group.has-current .rng { color: var(--accent); }
+
+.image-list li.item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px 6px 20px; cursor: pointer;
+  border-bottom: 1px solid var(--bg-3);
+}
+.image-list li.item:hover { background: var(--bg-3); }
+.image-list li.item.active { background: var(--accent-2); }
+.image-list .nm {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.image-list .nb {
+  font-variant-numeric: tabular-nums; color: var(--fg-dim); font-size: 11px;
+}
+.image-list li.item.active .nb { color: #dbe6ff; }
+/* '드문 클래스 먼저' 정렬에서 그 이미지를 앞으로 끌어온 클래스 */
+.image-list .rare { font-size: 10px; font-weight: 600; flex: none; }
+
+/* 불확실도 막대 */
+.unc { width: 3px; height: 18px; border-radius: 2px; background: var(--line); flex: none; }
+
+/* ── 클래스 목록 ──────────────────────────────────── */
+.class-list li {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px; cursor: pointer;
+  position: relative;
+}
+/* 클래스별 박스 수 비율 막대. 가장 많은 클래스를 100%로 본 상대값. */
+.class-list li::before {
+  content: ""; position: absolute; left: 0; bottom: 0;
+  width: var(--bar, 0); height: 2px;
+  background: var(--barcolor, var(--accent));
+  opacity: .55;
+}
+.class-list li:hover { background: var(--bg-3); }
+.class-list li.active { background: var(--bg-3); box-shadow: inset 3px 0 0 var(--accent); }
+.swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.class-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 지금 보고 있는 이미지의 개수 — 눈에 띄게 */
+.class-list .here {
+  min-width: 18px; padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent-2);
+  color: #fff; font-size: 11px; font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.class-list .here.zero {
+  background: none; color: var(--line); font-weight: normal;
+}
+/* 데이터셋 전체 개수 — 참고용이라 흐리게 */
+.class-list .cnt {
+  font-size: 11px; color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 42px; text-align: right;
+}
+.class-list .idx { color: var(--fg-dim); font-size: 11px; width: 10px; text-align: right; }
+
+.add-class, .goto {
+  display: flex; gap: 5px; padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.add-class input, .goto input {
+  flex: 1; min-width: 0;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 4px 6px; font: inherit;
+}
+
+/* ── 클래스 필터 (좌측 목록 위) ────────────────────── */
+.class-filter {
+  position: relative;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.class-filter .btn { flex: 1; text-align: left; }
+.class-filter .btn.on { border-color: var(--accent); background: var(--accent-2); }
+.cf-panel {
+  position: absolute; z-index: 20; top: 100%; left: 10px; right: 10px;
+  max-height: 300px; overflow: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+.cf-panel label {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 7px; border-radius: 4px; cursor: pointer;
+}
+.cf-panel label:hover { background: var(--bg-3); }
+.cf-panel label .n { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.cf-panel .sep { height: 1px; background: var(--line); margin: 5px 2px; }
+
+/* ── 박스 목록 ────────────────────────────────────── */
+.box-list { flex: 1; }
+.box-list li {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 10px; cursor: pointer;
+  border-bottom: 1px solid var(--bg-3);
+}
+.box-list li:hover { background: var(--bg-3); }
+.box-list li.active { background: var(--bg-3); box-shadow: inset 3px 0 0 var(--accent); }
+.box-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.box-list .conf { font-size: 11px; font-variant-numeric: tabular-nums; }
+.conf.low  { color: var(--err); }
+.conf.mid  { color: var(--warn); }
+.conf.high { color: var(--ok); }
+.conf.human { color: var(--accent); }
+.box-list .del { color: var(--fg-dim); padding: 0 2px; }
+.box-list .del:hover { color: var(--err); }
+
+/* ── 변경 내역 (오른쪽 아래, 접었다 폈다) ──────────── */
+.panel-head.clickable { cursor: pointer; border-top: 1px solid var(--line); }
+.panel-head.clickable:hover { background: var(--bg-3); }
+.panel-head .caret { width: 9px; color: var(--fg-dim); }
+.hist-list {
+  list-style: none; margin: 0; padding: 0;
+  overflow-y: auto; max-height: 38%; flex: none;
+}
+.hist-list li {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; align-items: center;
+  padding: 5px 10px; border-bottom: 1px solid var(--bg-3); font-size: 11px;
+}
+.hist-list li:hover { background: var(--bg-3); }
+.hist-list .when { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.hist-list .what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-list .cnt { font-variant-numeric: tabular-nums; }
+.hist-list li.shrunk .cnt { color: var(--warn); font-weight: 600; }
+.hist-list .diff { grid-column: 1 / 3; color: var(--fg-dim); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-list .btn { grid-column: 3; padding: 1px 6px; font-size: 11px; }
+.hist-list .empty { display: block; color: var(--fg-dim); }
+
+/* ── 예측 비교 (P) ────────────────────────────────── */
+.btn.on { border-color: var(--accent); background: var(--accent-2); }
+.pred-head { border-top: 1px solid var(--line); }
+.pred-list {
+  list-style: none; margin: 0; padding: 0;
+  overflow-y: auto; max-height: 34%; flex: none;
+}
+.pred-list li {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-bottom: 1px solid var(--bg-3); font-size: 11px; cursor: pointer;
+}
+.pred-list li:hover, .pred-list li.hot { background: var(--bg-3); }
+.pred-list .kind {
+  flex: none; padding: 0 5px; border-radius: 8px; font-weight: 600;
+  border: 1px solid currentColor;
+}
+.pred-list .kind.missing { color: #ff6fe0; }
+.pred-list .kind.class   { color: #ffae52; }
+.pred-list .kind.box     { color: #57e2ff; }
+.pred-list .kind.unseen  { color: #ff6b6b; }
+.pred-list .txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pred-list .btn { padding: 1px 6px; font-size: 11px; }
+.pred-list .empty { color: var(--fg-dim); cursor: default; }
+
+/* ── 대화상자 ─────────────────────────────────────── */
+.modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, .55);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-box {
+  width: min(880px, 92vw); max-height: 84vh;
+  display: flex; flex-direction: column;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .6);
+}
+.modal-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line); font-weight: 600;
+}
+.modal-body { padding: 12px 14px; overflow: auto; }
+.modal-body p { margin: 0 0 10px; }
+.modal-body .row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; flex-wrap: wrap; }
+.modal-body select {
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 3px 4px; font: inherit;
+}
+.modal-body .warn { color: var(--warn); }
+.tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tbl th, .tbl td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--bg-3); white-space: nowrap; }
+.tbl th { color: var(--fg-dim); font-weight: 600; position: sticky; top: 0; background: var(--bg-2); }
+.tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tbl td.name { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+.tbl tr.link { cursor: pointer; }
+.tbl tr.link:hover td { background: var(--bg-3); }
+.tbl .shrunk { color: var(--warn); font-weight: 600; }
+
+/* ── 캔버스 ───────────────────────────────────────── */
+.stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.stage-head, .stage-foot {
+  display: flex; align-items: center; gap: 10px;
+  flex: none; padding: 7px 12px;
+  background: var(--bg-2);
+}
+.stage-foot .btn { white-space: nowrap; }
+.stage-head > * { white-space: nowrap; }
+
+/* 힌트는 절대 줄바꿈되지 않게 한다. 줄바꿈되면 하단 바가 커지면서 캔버스를 잡아먹는다. */
+.hints {
+  min-width: 0; flex: 0 1 auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@media (max-width: 1180px) { .hints { display: none; } }
+.stage-head { border-bottom: 1px solid var(--line); }
+.stage-foot { border-top: 1px solid var(--line); }
+
+/* 이름이 길면 이름 쪽이 줄어든다 — 오른쪽 '저장됨 · 박스 5→4' 가 밀려나면 안 된다 */
+.img-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.img-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stage-head .save-state, .stage-head .linkbtn { flex: none; }
+.img-meta, .hints { color: var(--fg-dim); font-size: 11px; }
+.save-state { font-size: 11px; color: var(--fg-dim); min-width: 60px; text-align: right; }
+.save-state.dirty { color: var(--warn); }
+.save-state.saved { color: var(--ok); }
+/* 이 이미지를 연 뒤로 박스가 줄었다 — 의도한 삭제가 아니면 '변경 내역' 에서 되돌린다 */
+.save-state.saved.shrunk { color: var(--warn); font-weight: 600; }
+
+.canvas-wrap {
+  flex: 1; position: relative; min-height: 0;
+  background: #0e1013;
+  overflow: hidden;
+}
+#canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+/* 현재 편집 모드 표시 */
+.mode-badge {
+  flex: none; padding: 3px 9px; border-radius: 11px;
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.mode-badge.box { background: rgba(76,141,255,.18); color: var(--accent); border-color: #35507e; }
+.mode-badge.pan { background: rgba(62,207,142,.18); color: var(--ok);     border-color: #2c6350; }
+.mode-badge.sam { background: rgba(190,130,255,.18); color: #c79cff;      border-color: #5a3e82; }
+/* Ctrl 로 임시 반전 중이면 점선으로 구분 */
+.mode-badge.temp { border-style: dashed; }
+
+.empty-hint {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--fg-dim); text-align: center; line-height: 1.9;
+  pointer-events: none;
+}
+
+/* ── 토스트 ───────────────────────────────────────── */
+.toast {
+  position: fixed; left: 50%; bottom: 70px; transform: translateX(-50%);
+  background: var(--bg-3); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 9px 16px;
+  box-shadow: 0 6px 22px rgba(0,0,0,.5);
+  max-width: 70vw;
+}
+.toast.err { border-color: var(--err); color: #ffd9dc; }
