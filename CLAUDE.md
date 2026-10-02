@@ -78,6 +78,11 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
   라벨 안 된 이미지가 승인으로 들어가면 모델이 그 사람을 배경으로 배운다. Universe 의 차종 데이터셋은
   대부분 사람을 라벨하지 않았고, 한 장에 박스 하나뿐인 것도 많다. Objects365 의 `Scooter` 는 오토바이형
   스쿠터이고 이 프로젝트의 scooter 는 전동 킥보드다(`Hoverboard` 는 세그웨이류).
+- **Objects365 v2 train 을 BAAI 에서 직접 받는 중 (10-02, 사용자).** `E:\datasets\objects365\` — 저장소
+  밖이다. 라벨 `zhiyuan_objv2_train.json`(5.14GB), 압축 `patchN.tar.gz`(약 3.4GB씩, 안에 `patchN/` 접두사)를
+  `train\patchN\` 으로 푼다. json 의 `file_name` 은 `images/v1|v2/patchN/<이름>.jpg` 꼴이고 51묶음
+  (p0~15 v1, p16~50 v2) **1,742,291장**이다. p0~3 은 사용자가 풀었고 장수가 json 과 정확히 맞았다.
+  라벨 라이선스는 license.txt 에 CC BY 4.0 이라 적혀 있다(링크는 by-sa 로 되어 있다).
 
 **git — 2026-10-02 에 저장소로 만들었다 (사용자 허락, 원격 없음, 브랜치 `main`).** 담는 것은 코드·설정·
 문서와 `runs/` 의 텍스트 기록(results.csv·args.yaml·`test_baseline/history.jsonl`·스크립트)뿐이다.
