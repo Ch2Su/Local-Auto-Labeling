@@ -4,7 +4,7 @@
 만들었다. `labeler.py train` 의 `build_dataset` 은 DB 에 쓰지만(미배정 이미지를 배정한다)
 이 스크립트는 **DB 를 읽기 전용으로만 열고**, test 분할만 따로 복사해 재고 지운다.
 
-    python tools/test_baseline.py --domains                         # 전체·드론·비CCTV·드론 제외를 한 번에 (권장)
+    python tools/test_baseline.py --domains                         # 정해진 도메인을 한 번에 (권장)
     python tools/test_baseline.py                                   # models/best.pt 를 지금 라벨로 (전체만)
     python tools/test_baseline.py --weights models/best_visible2.pt # 옛 모델 (점수는 부풀려져 있다 — CLAUDE.md)
     python tools/test_baseline.py --history                         # 쌓인 기록만 표로 본다 (재지 않음)
@@ -21,6 +21,8 @@
   all 전체 / drone 드론(경로에 stabilized_) / noncctv 비CCTV(source='unlabeled', 나중에 넣은 이미지)
   / nodrone 드론 제외. 비CCTV 는 예전에 `--like "data\\labeled"` 로 쟀는데, 09-21 에 폴더를
   data/visible/ 로 옮긴 뒤로 그 조건은 **0장**에 걸린다 — 그래서 경로가 아니라 source 로 가른다.
+  **2026-10-03 부터 all·nodrone 은 Objects365(source='o365')를 뺀다** — 그 사진이 test 로 들어와도
+  09-27 기준선과 같은 범위를 잰다. Objects365 만은 o365, 전부 합친 것은 all_o365.
 """
 
 from __future__ import annotations
@@ -43,11 +45,15 @@ from autolabel.yolo_io import Box, write_yolo_txt
 HISTORY = "runs/test_baseline/history.jsonl"
 
 # 이름: (보여 줄 이름, 이미지 한 장을 받을지 가르는 함수). 판정은 DB 행(path, source)으로 한다.
+# 'all'·'nodrone' 은 Objects365(source='o365', 10-03 부터)를 뺀다 — 09-27 기준선과 비교가 이어지게.
+# 이름표는 그대로 둔다(--history 가 이름표로 묶는다).
 DOMAINS = {
-    "all": ("전체", lambda r: True),
+    "all": ("전체", lambda r: r["source"] != "o365"),
     "drone": ("드론", lambda r: "stabilized_" in r["path"].lower()),
     "noncctv": ("비CCTV", lambda r: r["source"] == "unlabeled"),
-    "nodrone": ("드론 제외", lambda r: "stabilized_" not in r["path"].lower()),
+    "nodrone": ("드론 제외", lambda r: "stabilized_" not in r["path"].lower() and r["source"] != "o365"),
+    "o365": ("Objects365", lambda r: r["source"] == "o365"),
+    "all_o365": ("전체+O365", lambda r: True),
 }
 
 
@@ -60,7 +66,7 @@ def parse_args():
     p.add_argument("--imgsz", type=int, default=None, help="기본: model.imgsz (학습 해상도)")
     p.add_argument("--out", default=None, help="만들 폴더 (기본: runs/test_baseline/<날짜>_<가중치>_<split>)")
     p.add_argument("--keep", action="store_true", help="만든 이미지 폴더를 지우지 않는다")
-    p.add_argument("--domains", action="store_true", help="전체·드론·비CCTV·드론 제외를 한 번에 잰다")
+    p.add_argument("--domains", action="store_true", help="정해진 도메인(전체·드론·비CCTV·드론 제외·Objects365·전체+O365)을 한 번에 잰다")
     p.add_argument("--domain", choices=sorted(DOMAINS), default=None, help="도메인 하나만")
     p.add_argument("--like", default=None,
                    help="경로에 이 문자열이 든 이미지만 (임시 조건. 정해진 도메인은 --domain)")
@@ -257,6 +263,7 @@ def main():
             label, keep = DOMAINS[key]
             if args.like or args.not_like:
                 key, label = "custom", f"조건 like={args.like} not_like={args.not_like}"
+                keep = lambda r: True       # noqa: E731  임시 조건은 출처를 가리지 않는다
             sub = [it for it in items if keep(it)]
             if not sub:
                 print(f"  [{label}] 해당 이미지가 0장이라 건너뜁니다.")

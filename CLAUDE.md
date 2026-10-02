@@ -97,7 +97,12 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
     복사하고 **검수 대기**(source·origin `o365`)로 넣는다. 기본은 보기만, `--apply` 때 DB 를 먼저 떠 둔다.
     사용자 결정: Scooter → motorcycle, isfake·isreflected 박스는 버린다. 우리 클래스에 iscrowd 가 있는
     사진(후보의 절반)과 Ambulance 가 있는 사진은 뺀다. **넣은 뒤 `labeler.py label --all` 을 쓰지 말 것** —
-    검수 대기 라벨을 모델 예측으로 덮어쓴다.
+    검수 대기 라벨을 모델 예측으로 덮어쓴다(웹 UI 의 자동 라벨링 버튼은 `include_pending: false` 라 안전하다).
+  - **10-03 에 500장(seed 0)을 넣었다** — id 6726~7225, 박스 3,292개(car 1,252·person 1,107·van 371·
+    pickup 350 …), 전부 검수 대기. 넣기 전 DB: `data/visible/labeling.db.bak_o365_20261003_024915`, 목록:
+    `runs/o365_import/20261003_024915.tsv`. 한 장 검수에 걸리는 시간을 재 보고 더 넣을지 정하기로 했다.
+  - **`tools/test_baseline.py` 의 all·nodrone 은 10-03 부터 source='o365' 를 뺀다**(이름표는 그대로라
+    --history 가 이어진다). Objects365 만은 `o365`, 전부는 `all_o365` 도메인.
   - **`objects365_v1_00420917` 같은 이름은 연번 계열로 묶지 않는다** (`grouping._INDEPENDENT`, 10-03) —
     그대로면 O365 사진 전부가 묶음 하나가 되어 한 분할에 갇힌다.
 
@@ -458,6 +463,7 @@ Git Bash 에서 `wsl` 을 부를 때는 `MSYS_NO_PATHCONV=1` 을 앞에 붙일 �
 bicycle 1,511  bus 985  car 9,270  motorcycle 1,459  person 23,321
 scooter 1,031  truck 1,047  pickup 712  van 2,218
 검수 대기 0, 미라벨 0, 건너뜀 0, 휴지통 0, 박스 없는 승인 이미지 127
+(10-03: Objects365 500장을 검수 대기로 더 넣었다 — 위 'Roboflow MCP' 의 Objects365 항목)
 분할: train 4,642 / val 822 / test 968(박스 6,508) / 미배정 135 — DB 의 images.split 에 고정
       (미배정은 다음 학습 때 배정된다. 09-24 에 DB 복사본으로 돌려 봤을 때 기존 배정 이동은 0장)
 ```
