@@ -64,13 +64,20 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
 **Roboflow MCP — claude.ai 커넥터로 붙어 있다 (2026-09-28).** 도구 이름은 `mcp__<커넥터 id>__projects_list`
 꼴(프로젝트·이미지·라벨·버전 내보내기·학습·Universe 검색·휴지통 등). OAuth 라 키가 없다.
 - **워크스페이스는 비어 있다** — 스토리지만으로 크레딧이 나가 사용자가 09-28 에 데이터를 전부 지웠다.
-  `projects_list` 0개, 휴지통에 'My First Project'(object-detection, 09-28 17:23 삭제, **10-28 영구
-  삭제**) 하나. 휴지통 프로젝트는 `projects_get` 으로 못 연다(복원해야 내용이 보인다).
+  `projects_list` 0개. 휴지통에 남아 있던 'My First Project'(object-detection, 09-28 삭제)도 **10-02 에
+  사용자가 직접 비웠다**(`trash_list` 0개로 확인). MCP 에는 휴지통을 비우는 도구가 없다(목록·복원뿐).
 - **그래서 로컬이 유일한 사본이다.** 외부 백업(09-11)은 같은 물리 디스크(E: = 디스크 0)에 있어서,
   09-28 에 **다른 디스크(C: = 디스크 1)로 한 벌 떴다** — 아래 '외부 백업'.
 - 로보플로에 무언가를 올리거나 프로젝트를 만들고 복원하면 **스토리지 크레딧이 다시 나간다** — 먼저 물을 것.
   Universe 검색(`universe_search`·`universe_dataset_images_search`)은 조회만 한다(크레딧이 드는지는
   확인하지 않았다). Universe 데이터를 받을 때도 **COCO 로** 받을 것(함정 4).
+- **남의 데이터셋을 넣을 때 (10-02 조사).** 시드(COCO) 경로는 라벨을 **검수 없이 곧바로 approved** 로
+  넣고, 이름이 config 의 `classes` 와 다른 카테고리(`pedestrian`·`SUV`·`Pickup Truck` 등)는 리포트에만
+  남기고 **버린다**(`coco_io.read_coco`). 미라벨 폴더로 넣으면 라벨을 아예 읽지 않는다. 그래서 카테고리
+  이름을 우리 9클래스로 먼저 바꾸고, 우리 클래스를 **빠짐없이** 라벨한 데이터인지 확인할 것 — 사람이
+  라벨 안 된 이미지가 승인으로 들어가면 모델이 그 사람을 배경으로 배운다. Universe 의 차종 데이터셋은
+  대부분 사람을 라벨하지 않았고, 한 장에 박스 하나뿐인 것도 많다. Objects365 의 `Scooter` 는 오토바이형
+  스쿠터이고 이 프로젝트의 scooter 는 전동 킥보드다(`Hoverboard` 는 세그웨이류).
 
 **git — 2026-10-02 에 저장소로 만들었다 (사용자 허락, 원격 없음, 브랜치 `main`).** 담는 것은 코드·설정·
 문서와 `runs/` 의 텍스트 기록(results.csv·args.yaml·`test_baseline/history.jsonl`·스크립트)뿐이다.
@@ -110,8 +117,8 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 것 같다). `config.thermal.yaml`·`config.fire.yaml`·`data/thermal`(빈 DB)·`data/fire`(로보플로 시드
 358장·박스 531개, UI 에서 고친 적 없음)를 **외부 백업 없이 지웠다.** 지울 때는 로보플로에 원본이 있다고
 여겼는데, **같은 날 사용자가 로보플로 데이터를 전부 지웠다고 알려 왔다**(아래 'Roboflow MCP'). 로보플로
-휴지통의 'My First Project'(10-28 영구 삭제)가 화재 시드인지는 복원해 보기 전엔 모른다 — 아니면 화재
-데이터는 이제 어디에도 없다. 학습한 적이 없어 가중치·runs·WSL 폴더는 원래 없었다.
+휴지통의 'My First Project' 가 화재 시드였는지는 열어 보지 않은 채 10-02 에 사용자가 휴지통을 비웠다 —
+**화재 데이터는 이제 어디에도 없다.** 학습한 적이 없어 가중치·runs·WSL 폴더는 원래 없었다.
 탭 구조(코드)는 그대로 두었다. `projects.yaml` 에 항목이 하나면 탭 줄을 그리지 않는다(`app.js
 loadProjects`). 목록은 `projects.yaml` 이고, 프로젝트 하나 = config 파일 하나다 (데이터 폴더·DB·
 가중치·`runs` 이름이 전부 config 로 갈린다).
