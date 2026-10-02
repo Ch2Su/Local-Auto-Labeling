@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/autocommit.sh\"",
+            "timeout": 60,
+            "statusMessage": "변경 사항 자동 커밋"
+          }
+        ]
+      }
+    ]
+  }
+}
