@@ -93,6 +93,13 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
   - **O365 의 Van 은 우리 van 과 다르다** — 무작위 크롭 48장에 SUV(볼보 XC60)·시에나·캐노피 픽업·버스
     뒷면이 섞여 있었다. Pickup Truck 은 대부분 미국식 픽업이라 우리 1a 와 맞지만 세단·SUV 오표기가 있다.
     그대로 승인으로 넣지 말고 검수를 거칠 것.
+  - **가져오기는 `tools/import_o365.py`** (10-03). van·pickup 이 든 사진을 반씩 골라 `unlabeled/o365/` 로
+    복사하고 **검수 대기**(source·origin `o365`)로 넣는다. 기본은 보기만, `--apply` 때 DB 를 먼저 떠 둔다.
+    사용자 결정: Scooter → motorcycle, isfake·isreflected 박스는 버린다. 우리 클래스에 iscrowd 가 있는
+    사진(후보의 절반)과 Ambulance 가 있는 사진은 뺀다. **넣은 뒤 `labeler.py label --all` 을 쓰지 말 것** —
+    검수 대기 라벨을 모델 예측으로 덮어쓴다.
+  - **`objects365_v1_00420917` 같은 이름은 연번 계열로 묶지 않는다** (`grouping._INDEPENDENT`, 10-03) —
+    그대로면 O365 사진 전부가 묶음 하나가 되어 한 분할에 갇힌다.
 
 **git — 2026-10-02 에 저장소로 만들었다 (사용자 허락, 원격 없음, 브랜치 `main`).** 담는 것은 코드·설정·
 문서와 `runs/` 의 텍스트 기록(results.csv·args.yaml·`test_baseline/history.jsonl`·스크립트)뿐이다.
