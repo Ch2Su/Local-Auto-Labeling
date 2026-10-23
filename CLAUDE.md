@@ -53,7 +53,9 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
 - **A40 비교 결과** (300 스케줄의 60 epoch, 7클래스 test 전체): s640 0.6515 / l960 0.7264 / x960
   0.7243 — 960 + 큰 모델이 같은 조건 대조군보다 +0.07. 설정끼리만 비교할 것(60 epoch 이라 절대값은
   낮다). 표와 해석은 docs/experiments.md.
-- **새 pod 절차는 `runs/runpod/`** (`make_bundle.py` → scp → `pod_probe.sh` → `pod_compare.sh`).
+- **새 pod 절차는 `runs/runpod/`** (묶음 tar 만들기 → scp → `pod_probe.sh` → `pod_compare.sh`).
+  **묶음을 만든 `make_bundle.py` 는 저장소 어디에도 없다**(10-23 확인 — 세션 scratchpad 에 있었던 것으로
+  보인다). 다시 쓰려면 `data/visible/dataset` 을 DB 로 만들고 tar 로 묶는 스크립트를 새로 짤 것.
   학습 전에 **`pip install --break-system-packages -U pillow` 와 `labels/*.cache` 삭제** — 이미지의
   Pillow 11.0.0 은 확장자만 .png 인 삼성 폰 JPEG 29장을 '손상'으로 빼고(EXIF 쓰다 ZeroDivisionError),
   AVIF 도 못 읽는다. `/workspace` 는 네트워크 FS 라 데이터셋은 `/root` 에 풀고, 컨테이너 RAM 한도
