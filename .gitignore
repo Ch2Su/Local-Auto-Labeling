@@ -17,6 +17,9 @@ __pycache__/
 # 이 PC 에서만 쓰는 Claude Code 설정
 /.claude/settings.local.json
 
+# Claude ↔ Gemini 로컬 작업 칠판 (2026-10-25). 턴마다 바뀌는 메모라 담지 않는다 — 남길 것은 CLAUDE.md·docs/experiments.md 로
+/docs/collab.md
+
 # 학습·평가 결과: 텍스트 기록(results.csv·args.yaml·history.jsonl·스크립트)만 담는다.
 # 그래프·대조 시트(png/jpg)·라벨 사본(labels/*.txt)·로그·Runpod 묶음(tar)은 뺀다.
 /runs/**
