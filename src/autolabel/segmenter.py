@@ -60,6 +60,7 @@ class Segmenter:
         self.cfg = cfg
         self._model = None
         self._pred = None
+        self._device: str | None = None               # 지금 올라가 있는 장치
         self._cur: tuple[str, float] | None = None   # (경로, mtime) — 인코딩해 둔 이미지
         self._lock = threading.Lock()
         self._failed: str | None = None              # 로드 실패 사유를 기억해 재시도 폭주를 막는다
@@ -80,16 +81,26 @@ class Segmenter:
             "enabled": self.enabled,
             "model": self.model_name,
             "loaded": self._pred is not None,
+            "device": self._device,
             "error": self._failed,
         }
 
     # ------------------------------------------------------------------ 로드
 
-    def _load(self):
+    def _load(self, device):
+        """`self._lock` 을 쥔 채로 부른다. device 가 바뀌면 내리고 그 장치에 다시 올린다.
+
+        학습·자동 라벨링이 도는 동안에는 CPU 로 온다(`segment`). 작업을 시작할 때 `free_gpu()`
+        가 SAM 을 내려도, 그 뒤 검수 UI 에서 C·R 을 누르면 예전에는 GPU 에 다시 올라가 학습과
+        8GB 를 나눠 썼다 — 넘치면 에러 없이 느려지기만 한다(CLAUDE.md 함정 9, 2026-10-25).
+        """
         global _active
-        if self._pred is not None:
+        device = str(device)
+        if self._pred is not None and self._device == device:
             _active = self
             return self._pred
+        if self._pred is not None:
+            self._unload()
         if not self.enabled:
             raise SegmenterUnavailable(
                 "SAM 이 꺼져 있습니다. config.yaml 의 sam.enabled 를 true 로 두세요."
@@ -109,8 +120,9 @@ class Segmenter:
             import numpy as np
 
             dummy = np.zeros((64, 64, 3), dtype=np.uint8)
-            model(source=dummy, bboxes=[[8, 8, 40, 40]], verbose=False, save=False)
-            self._model, self._pred = model, model.predictor
+            # 장치는 predictor 가 처음 만들어질 때 정해지고 바뀌지 않는다 (LiveDetector 와 같다).
+            model(source=dummy, bboxes=[[8, 8, 40, 40]], device=device, verbose=False, save=False)
+            self._model, self._pred, self._device = model, model.predictor, device
             _active = self
         except Exception as exc:
             self._failed = f"{self.model_name} 를 불러오지 못했습니다: {exc}"
@@ -132,19 +144,26 @@ class Segmenter:
         if _active is self:
             _active = None
         with self._lock:
-            if self._pred is not None:
-                try:
-                    self._pred.reset_image()
-                except Exception:
-                    pass
-            self._model = self._pred = None
-            self._cur = None
-            try:
-                import torch
+            self._unload()
 
-                torch.cuda.empty_cache()
+    def _unload(self) -> None:
+        """`self._lock` 을 쥔 채로 부른다 (Lock 은 재진입이 안 된다 — `_load` 가 장치를 바꿀 때)."""
+        if self._pred is not None:
+            try:
+                self._pred.reset_image()
             except Exception:
                 pass
+        self._model = self._pred = None
+        self._device = None
+        self._cur = None
+        try:
+            import torch
+
+            # 내린 뒤에도 memory_allocated 에 32MiB 가 남는데, 파이썬에서 닿는 CUDA 텐서는 0개였다
+            # (2026-10-25) — 한 번이라도 GPU 연산을 한 프로세스가 갖는 cuBLAS 작업 공간으로 보인다.
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ 추론
 
@@ -166,8 +185,11 @@ class Segmenter:
         if not path.exists():
             raise FileNotFoundError(path)
 
+        from .jobs import gpu_busy
+
+        device = "cpu" if gpu_busy() else self.cfg.device
         with self._lock:
-            self._load()
+            self._load(device)
             self._ensure_image(path)
             kw: dict = {}
             if box is not None:

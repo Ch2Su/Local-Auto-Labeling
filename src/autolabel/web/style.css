@@ -277,6 +277,7 @@ kbd {
 .conf.mid  { color: var(--warn); }
 .conf.high { color: var(--ok); }
 .conf.human { color: var(--accent); }
+.box-list .dup { font-size: 11px; color: var(--warn); white-space: nowrap; }
 .box-list .del { color: var(--fg-dim); padding: 0 2px; }
 .box-list .del:hover { color: var(--err); }
 

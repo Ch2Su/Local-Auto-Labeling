@@ -39,6 +39,9 @@ DHASH_MAX = 2        # 8x8 dHash(64비트) 해밍 거리
 
 # 로보플로가 붙이는 꼬리표: `_jpg.rf.<해시>` / `.rf.<해시>`
 _RF = re.compile(r"[._](?:jpg|jpeg|png)?\.rf\.[0-9a-z]+", re.I)
+# tidy 가 이름이 겹칠 때 붙이는 꼬리표: `__<원래 경로 sha1 앞 8자>` (+ `_2`, `_3` …), `tidy._free_name`.
+# 떼지 않으면 `maxresdefault__7bfb8759` 가 해시 끝 숫자 '59' 때문에 연번으로 잡혔다 (2026-10-25).
+_TIDY = re.compile(r"__[0-9a-f]{8}(?:_\d+)?$")
 _SHOT = re.compile(r"^스크린샷 (\d{4}-\d{2}-\d{2}) (\d{6})$")
 _PHONE = re.compile(r"^(\d{8})_(\d{6})$")
 # 끝이 번호로 끝나는 이름은 한 출처의 연번으로 본다: `000123`, `cctv01_000098`,
@@ -69,8 +72,8 @@ class DSU:
 
 
 def base_name(path: str) -> str:
-    """로보플로 꼬리표를 떼어낸 원래 이름."""
-    return Path(_RF.sub("", Path(path).name)).stem
+    """로보플로·tidy 꼬리표를 떼어낸 원래 이름."""
+    return _TIDY.sub("", Path(_RF.sub("", Path(path).name)).stem)
 
 
 def name_series(path: str, size: tuple[int, int] | None = None) -> tuple[str, int] | None:
@@ -103,13 +106,17 @@ def dhash(path: Path, size: int = 8) -> str | None:
     """8x8 dHash 를 16자리 16진수로. 읽지 못하면 None.
 
     JPEG 은 `draft()` 로 디코딩 단계에서 줄여 받는다 (6,466장에 약 2분).
+    **EXIF 회전은 화면 기준으로 돌려서 잰다** (2026-10-25) — 같은 사진이 회전 태그로 저장된 것과
+    돌려서 저장된 것이 다른 해시가 되지 않게. 태그가 2~8 일 때만 돌려 대부분의 사진은 비용이 없다.
     """
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     try:
         with Image.open(path) as im:
+            orient = im.getexif().get(0x0112, 1)
             im.draft("L", (size * 8, size * 8))
-            small = im.convert("L").resize((size + 1, size), Image.BILINEAR)
+            src = ImageOps.exif_transpose(im) if orient in (2, 3, 4, 5, 6, 7, 8) else im
+            small = src.convert("L").resize((size + 1, size), Image.BILINEAR)
     except Exception:
         return None
     a = np.asarray(small, dtype=np.int16)

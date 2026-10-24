@@ -42,6 +42,8 @@ class SplitReport:
     hashed: int = 0          # 이번에 dHash 를 새로 계산한 장수
     assigned: int = 0        # 이번에 새로 배정한 장수 (배정이 없던 이미지)
     moved: dict[str, int] = field(default_factory=dict)   # 이미 배정돼 있다가 옮겨진 것 {"val->train": n}
+    # 기존 배정이 서로 다른 이미지가 한 묶음으로 이어진 것 {묶음: {split: 장수}} — 옮기지 않고 알리기만 한다
+    mixed: dict[str, dict[str, int]] = field(default_factory=dict)
     reset: bool = False
     ratios: dict[str, float] = field(default_factory=dict)
     shares: dict[str, dict[str, float]] = field(default_factory=dict)  # split -> 클래스 -> 비중
@@ -66,12 +68,18 @@ class SplitReport:
         else:
             if self.assigned:
                 lines.append(f"  새로 배정 {self.assigned}장")
-            if self.moved:
+            if self.moved:      # reset 이 아니면 일어나지 않아야 한다 (2026-10-25 부터 기존 배정을 고정)
                 detail = ", ".join(f"{k} {v}장" for k, v in sorted(self.moved.items()))
                 lines.append(
-                    f"  [경고] 이미 배정돼 있던 이미지가 옮겨졌습니다: {detail}. 새 이미지가 "
-                    "두 묶음을 이어 붙여 다수결을 따른 것입니다. train 에서 val·test 로 간 것이 "
-                    "있으면 그 이미지를 학습한 이전 모델의 val·test 점수는 부풀려집니다.")
+                    f"  [경고] 이미 배정돼 있던 이미지가 옮겨졌습니다: {detail}. train 에서 val·test 로 "
+                    "간 것이 있으면 그 이미지를 학습한 이전 모델의 val·test 점수는 부풀려집니다.")
+            if self.mixed:
+                detail = "; ".join(f"{g} " + "·".join(f"{s} {n}" for s, n in sorted(c.items()))
+                                   for g, c in sorted(self.mixed.items())[:5])
+                more = f" 외 {len(self.mixed) - 5}개" if len(self.mixed) > 5 else ""
+                lines.append(
+                    f"  [알림] 서로 다른 분할에 있던 이미지가 한 묶음으로 이어졌습니다 {len(self.mixed)}개"
+                    f"({detail}{more}). 기존 배정은 그대로 두었습니다 — 그 장면은 두 분할에 걸칩니다.")
         for s in SPLITS:
             per = self.shares.get(s)
             if per:
@@ -194,17 +202,17 @@ def _deviation(groups: dict[str, list[dict]], assign: dict[str, str],
     return out
 
 
-def _shares(groups: dict[str, list[dict]], assign: dict[str, str],
+def _shares(items: list[dict], assign: dict[int, str],
             classes: list[str]) -> dict[str, dict[str, float]]:
+    """이미지별 배정({이미지 id: split})으로 센다 — 한 묶음이 두 분할에 걸칠 수 있어서."""
     tot: Counter = Counter()
     per: dict[str, Counter] = {s: Counter() for s in SPLITS}
-    for g, members in groups.items():
-        s = assign.get(g)
-        for it in members:
-            for k, n in it["counts"].items():
-                tot[k] += n
-                if s:
-                    per[s][k] += n
+    for it in items:
+        s = assign.get(it["id"])
+        for k, n in it["counts"].items():
+            tot[k] += n
+            if s:
+                per[s][k] += n
     name = lambda k: classes[k] if k < len(classes) else f"cls_{k}"
     return {s: {name(k): per[s][k] / tot[k] for k in sorted(tot) if tot[k]}
             for s in SPLITS if per[s]}
@@ -241,16 +249,23 @@ def ensure_splits(cfg: Config, store: Store, *, reset: bool = False,
     report.groups = len(groups)
     report.biggest_group = max(len(v) for v in groups.values())
 
-    # 이미 배정된 이미지가 **하나라도** 있는 묶음은 그 split 을 유지한다(다수결).
-    # 새로 들어온 이미지는 자기 묶음을 따라가고, 기존 이미지는 움직이지 않는다.
-    # (전부 배정된 묶음만 고정했더니, 새 이미지가 낀 묶음이 통째로 재배정돼
-    #  기존 이미지 7장이 따라 움직였다 — 2026-09-16 시험에서 잡았다.)
+    # 이미 배정된 이미지가 **하나라도** 있는 묶음은 그 split 을 유지한다(다수결) — 새로 들어온
+    # 이미지는 그쪽을 따라간다. (전부 배정된 묶음만 고정했더니, 새 이미지가 낀 묶음이 통째로
+    # 재배정돼 기존 이미지 7장이 따라 움직였다 — 2026-09-16 시험에서 잡았다.)
+    # **기존 이미지 자체는 묶음의 다수결과 상관없이 제자리다** (2026-10-25). 새 이미지가 dHash 로
+    # train 묶음과 test 묶음을 이어 붙이면, 예전에는 소수 쪽 기존 이미지가 다수결로 옮겨졌다 —
+    # test 기준선이 바뀌거나 학습한 이미지가 test 로 들어갈 수 있었다. 이제는 옮기지 않고
+    # 그 묶음을 `report.mixed` 로 알린다(그 장면은 두 분할에 걸친다).
     fixed: dict[str, str] = {}
+    pinned: dict[int, str] = {}
     if not reset:
         for g, members in groups.items():
             have = Counter(it["split"] for it in members if it["split"] in ratios)
             if have:
                 fixed[g] = have.most_common(1)[0][0]
+                if len(have) > 1:
+                    report.mixed[g] = dict(have)
+        pinned = {it["id"]: it["split"] for it in items if it["split"] in ratios}
 
     # 큰 묶음이 어디로 가느냐에 따라 결과가 꽤 달라진다. 순서를 몇 번 흔들어 보고
     # 가장 덜 틀어진 배정을 고른다 (시드 고정이라 항상 같은 결과가 나온다).
@@ -258,13 +273,12 @@ def ensure_splits(cfg: Config, store: Store, *, reset: bool = False,
         (_stratify_groups(groups, ratios, fixed, jitter=j) for j in range(12)),
         key=lambda a: _deviation(groups, a, ratios),
     )
-    assign = {it["id"]: assign_g[g] for g, members in groups.items() for it in members}
+    assign = {it["id"]: pinned.get(it["id"], assign_g[g])
+              for g, members in groups.items() for it in members}
 
     changed = [(it["id"], assign[it["id"]]) for it in items
                if it["split"] != assign[it["id"]]]
-    # 기존 이미지는 원래 움직이지 않는다. 다만 묶음을 다시 계산하면 새 이미지가 서로 다른
-    # split 의 두 묶음을 이어 붙일 수 있고, 그러면 위의 다수결로 소수 쪽이 옮겨진다.
-    # 조용히 지나가면 안 되는 일이라 따로 센다.
+    # reset 이 아니면 위의 pinned 때문에 0 이어야 한다. 그래도 조용히 지나가면 안 되는 일이라 센다.
     moved = Counter(f"{it['split']}->{assign[it['id']]}" for it in items
                     if it["split"] in ratios and it["split"] != assign[it["id"]])
     report.moved = {} if reset else dict(moved)
@@ -273,7 +287,7 @@ def ensure_splits(cfg: Config, store: Store, *, reset: bool = False,
         store.set_splits(changed)
 
     report.counts = Counter(assign.values())
-    report.shares = _shares(groups, assign_g, store.get_classes())
+    report.shares = _shares(items, assign, store.get_classes())
     return assign, report
 
 

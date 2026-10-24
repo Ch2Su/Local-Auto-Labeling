@@ -17,6 +17,10 @@ DB 는 읽기 전용으로 열고(`mode=ro`) 아무것도 고치지 않는다. �
 - `unseen`  — 라벨이 있는데 모델이 어떤 클래스로도 거기 아무것도 안 본다(conf ≥ 0.1,
   IoU ≥ 0.3 인 예측 없음). 잘못 그린 박스일 수도, 그냥 어려운 객체일 수도 있다.
   짧은 변 `--min-side` 픽셀 미만은 뺀다 — 작은 객체는 모델이 원래 놓친다.
+- `duplicate` — **라벨끼리** 사실상 같은 자리다(IoU ≥ 0.85, 클래스 불문). 같은 물체를 두 번
+  그렸거나 클래스를 바꾸려다 하나를 더 그린 흔적이다(2026-10-25 추가). 예측과는 상관없어서
+  모델 없이도 잰다(`--dup-only`). 이 행의 `pred_cls`·`pred_box` 는 예측이 아니라 **짝이 된 다른
+  라벨**이고 `iou` 가 두 라벨의 IoU 다. 오토바이와 탄 사람처럼 진짜로 겹친 것도 걸린다.
 
 **train 분할의 후보는 적게 나온다.** 모델이 그 라벨을 외웠기 때문이다. 거기서도
 어긋나면 오히려 강한 신호다. val·test·미배정은 학습에 안 쓴 이미지라 편향이 없다.
@@ -44,6 +48,7 @@ from autolabel.predictor import build_class_map
 STORE_CONF = 0.10       # 이 이상 예측은 전부 저장 (분석 임계값은 나중에 바꿀 수 있게)
 MATCH_IOU = 0.5
 NEAR_IOU = 0.3
+DUP_IOU = 0.85          # 라벨끼리 이 이상 겹치면 duplicate 후보 (검수 UI 의 SELF_OVERLAP 과 같다)
 
 
 def parse_args():
@@ -57,6 +62,8 @@ def parse_args():
     p.add_argument("--out", default=None, help="결과 폴더 (기본: runs/label_qa/<날짜>_<가중치>)")
     p.add_argument("--reuse", action="store_true", help="저장된 preds.jsonl 로 분석만 다시")
     p.add_argument("--sheet", type=int, default=48, help="종류별 대조 시트에 넣을 상위 후보 수 (0=안 만듦)")
+    p.add_argument("--dup-only", action="store_true",
+                   help="모델 없이 라벨끼리 겹친 곳(duplicate)만 찾는다 (GPU 를 쓰지 않음)")
     return p.parse_args()
 
 
@@ -182,6 +189,43 @@ def analyze_image(gt_rows, rec, high, min_side):
     return out
 
 
+def self_overlaps(gt_rows) -> list[tuple[int, int, float]]:
+    """라벨끼리 IoU ≥ DUP_IOU 인 쌍 (j, k, IoU). 정규화 좌표로 잰다 — IoU 는 가로·세로를 따로
+    늘려도 변하지 않아서 이미지 크기가 필요 없다."""
+    if len(gt_rows) < 2:
+        return []
+    g = np.array([[cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2] for _, cx, cy, w, h in gt_rows])
+    m = iou_matrix(g, g)
+    j, k = np.where(np.triu(m, 1) >= DUP_IOU)
+    return [(int(a), int(b), float(m[a, b])) for a, b in zip(j, k)]
+
+
+def duplicate_rows(images: list[dict], gt, classes) -> list[dict]:
+    from autolabel.yolo_io import display_size
+
+    rows = []
+    for im in images:
+        pairs = self_overlaps(gt[im["id"]])
+        if not pairs:
+            continue
+        try:
+            W, H = display_size(Path(im["path"]))    # EXIF 회전 4장은 DB 크기와 가로·세로가 다르다
+        except Exception:
+            W, H = im["width"], im["height"]
+        px = lambda r: [(r[1] - r[3] / 2) * W, (r[2] - r[4] / 2) * H, (r[1] + r[3] / 2) * W, (r[2] + r[4] / 2) * H]
+        for j, k, v in pairs:
+            a, b = px(gt[im["id"]][j]), px(gt[im["id"]][k])
+            rows.append({
+                "kind": "duplicate", "image_id": im["id"], "split": im["split"] or "미배정", "name": im["name"],
+                "gt_cls": classes[gt[im["id"]][j][0]], "pred_cls": classes[gt[im["id"]][k][0]],
+                "conf": 0.0, "iou": round(v, 3),
+                "side_px": round(float(min(a[2] - a[0], a[3] - a[1])), 1),
+                "gt_box": " ".join(f"{x:.1f}" for x in a), "pred_box": " ".join(f"{x:.1f}" for x in b),
+                "path": im["path"],
+            })
+    return rows
+
+
 def render_sheet(rows, images_by_id, gt, classes, path: Path, title: str):
     from PIL import Image, ImageDraw, ImageOps
 
@@ -224,7 +268,10 @@ def render_sheet(rows, images_by_id, gt, classes, path: Path, title: str):
         sheet.paste(crop, (x, y))
         split = r["split"] if r["split"] != "미배정" else "unassigned"   # 기본 폰트는 한글을 못 그린다
         cap = f"#{k + 1} id{r['image_id']} {split} {r['side_px']:.0f}px"
-        cap2 = f"{r['gt_cls'] or '-'}>{r['pred_cls'] or '-'} {r['conf']}"
+        if r["kind"] == "duplicate":
+            cap2 = f"{r['gt_cls']}+{r['pred_cls']} iou {r['iou']}"
+        else:
+            cap2 = f"{r['gt_cls'] or '-'}>{r['pred_cls'] or '-'} {r['conf']}"
         d.text((x + 3, y + tile + 1), cap, fill="black")
         d.text((x + 3, y + tile + 13), cap2, fill="black")
     sheet.save(path)
@@ -234,16 +281,17 @@ def main():
     args = parse_args()
     cfg = Config.load(args.config)
     weights = str(resolve(args.weights)) if args.weights else cfg.active_weights()
-    out = resolve(args.out) if args.out else resolve(f"runs/label_qa/{date.today():%Y%m%d}_{Path(weights).stem}")
+    tag = "dup" if args.dup_only else Path(weights).stem
+    out = resolve(args.out) if args.out else resolve(f"runs/label_qa/{date.today():%Y%m%d}_{tag}")
     out.mkdir(parents=True, exist_ok=True)
 
     classes, images, gt = load_db(cfg.db)
     images_by_id = {im["id"]: im for im in images}
-    if not args.reuse:
+    if not args.reuse and not args.dup_only:
         predict_all(cfg, weights, images, classes, args, out)
 
-    recs = [json.loads(line) for line in open(out / "preds.jsonl", encoding="utf-8")]
-    rows = []
+    recs = [] if args.dup_only else [json.loads(line) for line in open(out / "preds.jsonl", encoding="utf-8")]
+    rows = duplicate_rows(images, gt, classes)      # 라벨끼리 겹침 — 예측과 상관없이 승인 이미지 전부
     for rec in recs:
         im = images_by_id.get(rec["id"])
         if im is None:
@@ -260,17 +308,26 @@ def main():
                 "path": im["path"],
             })
 
-    order = {"missing": 0, "class": 1, "box": 2, "unseen": 3}
-    rows.sort(key=lambda r: (order[r["kind"]], -(r["conf"] if r["kind"] != "unseen" else r["side_px"])))
+    order = {"missing": 0, "class": 1, "box": 2, "unseen": 3, "duplicate": 4}
+    if args.dup_only:
+        order = {"duplicate": 4}
+    sort_key = {"unseen": "side_px", "duplicate": "iou"}
+    rows.sort(key=lambda r: (order[r["kind"]], -r[sort_key.get(r["kind"], "conf")]))
     with open(out / "candidates.csv", "w", encoding="utf-8-sig", newline="") as f:
         wr = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else ["kind"])
         wr.writeheader()
         wr.writerows(rows)
 
     # --- 요약 ---
-    split_n = Counter((images_by_id[r["id"]]["split"] or "미배정") for r in recs if r["id"] in images_by_id)
+    if args.dup_only:       # 예측을 안 했으니 분모는 승인 이미지 전부
+        split_n = Counter((im["split"] or "미배정") for im in images)
+    else:
+        split_n = Counter((images_by_id[r["id"]]["split"] or "미배정") for r in recs if r["id"] in images_by_id)
     print(f"\n결과: {out}")
-    print(f"예측한 이미지 {len(recs)}장, 후보 {len(rows)}건 (예측 conf ≥ {args.high})")
+    if args.dup_only:
+        print(f"승인 이미지 {len(images)}장, 라벨끼리 겹침(IoU ≥ {DUP_IOU}) {len(rows)}쌍")
+    else:
+        print(f"예측한 이미지 {len(recs)}장, 후보 {len(rows)}건 (예측 conf ≥ {args.high}, duplicate 는 라벨끼리)")
     splits = ["train", "val", "test", "미배정"]
     print(f"\n{'':10}" + "".join(f"{s:>12}" for s in splits))
     print(f"{'이미지':10}" + "".join(f"{split_n[s]:>12}" for s in splits))
@@ -289,12 +346,17 @@ def main():
     print("unseen 후보: 라벨 클래스")
     for k, n in Counter(r["gt_cls"] for r in rows if r["kind"] == "unseen").most_common():
         print(f"  {k:<10} {n}")
+    print("duplicate 후보: 라벨 · 라벨 (IoU)")
+    for r in [r for r in rows if r["kind"] == "duplicate"][:20]:
+        print(f"  id{r['image_id']:<6} {r['gt_cls']:>10} · {r['pred_cls']:<10} {r['iou']:.3f}  {r['split']}")
 
     if args.sheet:
         for kind in order:
             top = [r for r in rows if r["kind"] == kind][:args.sheet]
+            legend = ("yellow/red=the two overlapping labels" if kind == "duplicate"
+                      else "yellow=label in question  red=prediction")
             render_sheet(top, images_by_id, gt, classes, out / f"sheet_{kind}.png",
-                         f"{kind} top {len(top)}  green=labels  yellow=label in question  red=prediction")
+                         f"{kind} top {len(top)}  green=labels  {legend}")
         print(f"\n대조 시트: {out}\\sheet_*.png")
 
 

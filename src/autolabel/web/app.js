@@ -740,22 +740,50 @@ function confClass(b) {
   return "low";
 }
 
+/** 라벨끼리 사실상 같은 자리(IoU ≥ 0.85)인 쌍 — 같은 물체를 두 번 그렸거나, 클래스를 바꾸려다
+ *  새로 하나 더 그린 흔적이다. 모델은 예측과만 견주므로 이것은 따로 본다 (2026-10-25).
+ *  오토바이와 탄 사람(person·motorcycle) 처럼 진짜로 겹치는 물체도 0.85 를 넘을 수 있다. */
+const SELF_OVERLAP = 0.85;
+function selfOverlaps(boxes = S.boxes) {
+  const out = [];
+  for (let i = 0; i < boxes.length; i++)
+    for (let j = i + 1; j < boxes.length; j++) {
+      const v = iouN(boxes[i], boxes[j]);
+      if (v >= SELF_OVERLAP) out.push([i, j, v]);
+    }
+  return out;
+}
+
 function renderBoxList() {
   const ul = $("#box-list");
   ul.innerHTML = "";
-  $("#box-count").textContent = S.boxes.length ? `${S.boxes.length}개` : "";
+  const overlaps = selfOverlaps();
+  $("#box-count").textContent = (S.boxes.length ? `${S.boxes.length}개` : "")
+    + (overlaps.length ? ` · 겹침 ${overlaps.length}쌍` : "");
   $("#btn-same").disabled = S.sel < 0;
   // 박스 목록이 바뀌는 곳(추가·삭제·클래스 변경·되돌리기)은 전부 여기를 지난다.
   if (S.predOn) updateFindings();
+  const partner = new Map();      // 박스 번호 -> [짝 번호, IoU] (IoU 가 가장 큰 짝 하나)
+  for (const [i, j, v] of overlaps) {
+    if (!partner.has(i) || partner.get(i)[1] < v) partner.set(i, [j, v]);
+    if (!partner.has(j) || partner.get(j)[1] < v) partner.set(j, [i, v]);
+  }
   S.boxes.forEach((b, i) => {
     const li = document.createElement("li");
     li.className = i === S.sel ? "active" : "";
     li.innerHTML =
       `<span class="swatch" style="background:${classColor(b.cls)}"></span>` +
       `<span class="nm"></span>` +
+      (partner.has(i) ? `<span class="dup"></span>` : "") +
       `<span class="conf ${confClass(b)}">${b.conf == null ? "수동" : b.conf.toFixed(2)}</span>` +
       `<span class="del" title="삭제">✕</span>`;
     li.querySelector(".nm").textContent = S.classes[b.cls] ?? `cls_${b.cls}`;
+    if (partner.has(i)) {
+      const [j, v] = partner.get(i);
+      const el = li.querySelector(".dup");
+      el.textContent = `⚠ 겹침 ${v.toFixed(2)}`;
+      el.title = `${clsName(S.boxes[j].cls)} 박스와 거의 같은 자리입니다 (IoU ${v.toFixed(3)}). 같은 물체를 두 번 그렸는지 보세요.`;
+    }
     li.onclick = (e) => {
       if (e.target.classList.contains("del")) {
         pushUndo(); S.boxes.splice(i, 1); S.sel = -1; markDirty(); refresh();
@@ -1699,6 +1727,18 @@ async function setStatus(status) {
 
   const id = S.cur.id;
   const idx = S.images.findIndex((im) => im.id === id);
+
+  if (status === "approved") {
+    const overlaps = selfOverlaps();
+    if (overlaps.length) {
+      const lines = overlaps.slice(0, 5).map(([i, j, v]) =>
+        `  ${clsName(S.boxes[i].cls)} · ${clsName(S.boxes[j].cls)}  (IoU ${v.toFixed(2)})`);
+      const msg = `같은 자리에 박스가 겹쳐 있습니다 ${overlaps.length}쌍:\n${lines.join("\n")}\n\n`
+        + "같은 물체를 두 번 그렸다면 하나를 지우세요. 오토바이와 탄 사람처럼 진짜로 겹친 것이면 "
+        + "그대로 승인해도 됩니다.\n\n그래도 승인할까요?";
+      if (!confirm(msg)) return;
+    }
+  }
 
   if (status) {
     await api(`/api/images/${id}/status`, { method: "POST", body: { status } });
