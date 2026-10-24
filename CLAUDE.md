@@ -56,6 +56,7 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
 - **새 pod 절차는 `runs/runpod/`** (묶음 tar 만들기 → scp → `pod_probe.sh` → `pod_compare.sh`).
   **묶음을 만든 `make_bundle.py` 는 저장소 어디에도 없다**(10-23 확인 — 세션 scratchpad 에 있었던 것으로
   보인다). 다시 쓰려면 `data/visible/dataset` 을 DB 로 만들고 tar 로 묶는 스크립트를 새로 짤 것.
+  09-20 에 만든 묶음 tar 3개(4.5GB)는 라벨이 바뀌어 낡았기에 10-24 에 지웠다(사용자 확인, 휴지통으로).
   학습 전에 **`pip install --break-system-packages -U pillow` 와 `labels/*.cache` 삭제** — 이미지의
   Pillow 11.0.0 은 확장자만 .png 인 삼성 폰 JPEG 29장을 '손상'으로 빼고(EXIF 쓰다 ZeroDivisionError),
   AVIF 도 못 읽는다. `/workspace` 는 네트워크 FS 라 데이터셋은 `/root` 에 풀고, 컨테이너 RAM 한도
@@ -206,6 +207,7 @@ finetune 은 `models/best.pt` 를 건드리지 않고 `models/best_ft960.pt` 로
 **라벨 점검 (2026-09-18, `runs/label_qa/20260918_best/`) — 끝났다.** visible-3 의 missing 후보
 366건을 눈으로 가려(대조군을 섞어 가린 채로) 진짜 누락 74곳/70장을 뽑았고, 사용자가 전부 검수했다.
 남긴 45곳(잘린 조각·야간 번짐·유리 너머 사람·기둥 뒤 차량)은 일관된 판단이라 더 고칠 것은 없다.
+그 폴더의 대조 시트·크롭 그림 492장은 10-24 에 지웠다(사용자 확인) — csv·json·판정 txt 는 남아 있다.
 - 로컬에서 지운 시드 49장을 로보플로에서도 지울 할 일은 **없어졌다** — 09-28 에 사용자가 로보플로
   데이터를 전부 지웠다. 목록 `runs/label_qa/roboflow_delete_20260927.tsv` 는 기록으로만 남는다. 49장 모두
   09-11 외부 백업(`E:\local_auto_labeling_backup\20260911`)에 원본이 있다.
