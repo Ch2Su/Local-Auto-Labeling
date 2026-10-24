@@ -1,0 +1,30 @@
+판정 446건 (세션에서 눈으로, 대조군 여부를 모르는 상태)
+
+양성 대조 (라벨 숨김, 정답 missing) 40건: missing 34 (85%)   {'missing': 34, 'already_labeled': 3, 'unsure': 2, 'not_object': 1}
+     <32px: missing 8/10  {'missing': 8, 'not_object': 1, 'already_labeled': 1}
+   32-64px: missing 18/22  {'missing': 18, 'unsure': 2, 'already_labeled': 2}
+    >=64px: missing 8/8  {'missing': 8}
+
+음성 대조 (빈 배경, 정답은 missing 아님) 40건: missing 0 (0%)   {'not_object': 39, 'already_labeled': 1}
+     <32px: missing 0/19  {'not_object': 18, 'already_labeled': 1}
+   32-64px: missing 0/15  {'not_object': 15}
+    >=64px: missing 0/6  {'not_object': 6}
+
+후보 366건: not_object 156 (43%), missing 87 (24%), unsure 67 (18%), already_labeled 47 (13%), depiction 9 (2%)
+     <32px (137): not_object 54, missing 36, unsure 32, already_labeled 14, depiction 1
+   32-64px (133): not_object 48, missing 38, already_labeled 24, unsure 22, depiction 1
+    >=64px (96): not_object 54, missing 13, unsure 13, already_labeled 9, depiction 7
+  예측 클래스별 missing:
+    person     19/222
+    car        55/97
+    scooter    7/15
+    truck      3/14
+    bicycle    2/10
+    motorcycle 1/5
+    bus        0/3
+  분할별 missing:
+    test     27/140
+    val      36/130
+    train    24/74
+    미배정      0/22
+  missing 판정이 나온 이미지 83장
