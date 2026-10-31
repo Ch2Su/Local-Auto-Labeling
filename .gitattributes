@@ -1,0 +1,4 @@
+# 줄끝 고정 (2026-10-31, GitHub 원격을 붙일 때). 이 저장소는 core.autocrlf=false 로 파일을 바이트 그대로
+# 두지만, 새로 클론하는 곳의 Windows 기본값(core.autocrlf=true)에서는 .sh 가 CRLF 로 풀려 WSL·Runpod 의
+# bash 가 $'do\r' 문법 오류를 낸다. 셸 스크립트만 LF 로 고정하고 나머지는 지금처럼 둔다(전체 정규화는 하지 않는다).
+*.sh text eol=lf

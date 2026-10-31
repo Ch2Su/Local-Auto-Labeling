@@ -76,7 +76,8 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
   `projects_list` 0개. 휴지통에 남아 있던 'My First Project'(object-detection, 09-28 삭제)도 **10-02 에
   사용자가 직접 비웠다**(`trash_list` 0개로 확인). MCP 에는 휴지통을 비우는 도구가 없다(목록·복원뿐).
 - **그래서 로컬이 유일한 사본이다.** 외부 백업(09-11)은 같은 물리 디스크(E: = 디스크 0)에 있어서,
-  09-28 에 **다른 디스크(C: = 디스크 1)로 한 벌 떴다** — 아래 '외부 백업'.
+  09-28 에 **다른 디스크(C: = 디스크 1)로 한 벌 떴다** — 아래 '외부 백업'. **그런데 10-31 에 보니 그 C: 사본이
+  없다** — 지금은 모든 사본이 디스크 0 에 있다.
 - 로보플로에 무언가를 올리거나 프로젝트를 만들고 복원하면 **스토리지 크레딧이 다시 나간다** — 먼저 물을 것.
   Universe 검색(`universe_search`·`universe_dataset_images_search`)은 조회만 한다(크레딧이 드는지는
   확인하지 않았다). Universe 데이터를 받을 때도 **COCO 로** 받을 것(함정 4).
@@ -115,7 +116,7 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
   - **`objects365_v1_00420917` 같은 이름은 연번 계열로 묶지 않는다** (`grouping._INDEPENDENT`, 10-03) —
     그대로면 O365 사진 전부가 묶음 하나가 되어 한 분할에 갇힌다.
 
-**git — 2026-10-02 에 저장소로 만들었다 (사용자 허락, 원격 없음, 브랜치 `main`).** 담는 것은 코드·설정·
+**git — 2026-10-02 에 저장소로 만들었다 (사용자 허락, 브랜치 `main`).** 담는 것은 코드·설정·
 문서와 `runs/` 의 텍스트 기록(results.csv·args.yaml·`test_baseline/history.jsonl`·스크립트)뿐이다.
 `data/`·`models/`·`weights/`·`export/`·`.venv`·`graft/`·그림·로그·tar 는 `.gitignore` 로 뺐다 —
 **데이터와 DB 는 git 이 아니라 백업으로 지킨다**(아래 '외부 백업'). 저장소 설정 `core.autocrlf=false`
@@ -123,10 +124,31 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
 `KNUT_APP` 이지만 이 저장소는 `main` 으로 만들었다.
 - **턴이 끝날 때마다 자동으로 커밋된다** (사용자 요청, 10-02). `.claude/settings.json` 의 Stop 훅이
   `.claude/hooks/autocommit.sh` 를 부른다 — 바뀐 게 있으면 `git add -A` 후 '자동 커밋: <파일 이름들>'
-  으로 커밋한다. 5MB 넘는 파일은 담지 않고 알리며, 머지·리베이스 중이면 건너뛴다. 사용자가 직접 고친
-  파일도 같이 담긴다. 끄려면 settings.json 에서 그 훅을 지운다.
+  으로 커밋한다. 5MB 넘는 파일은 담지 않고 알린다. 사용자가 직접 고친 파일도 같이 담긴다. 끄려면
+  settings.json 에서 그 훅을 지운다. 훅이 추적 파일이라 **이 저장소를 클론한 다른 PC 에서도 돈다.**
+  - 머지·리베이스·cherry-pick·revert 중이거나, HEAD 가 브랜치에 있지 않거나, **충돌이 남아 있으면** 알리고
+    건너뛴다(10-31). stash pop 충돌은 MERGE_HEAD 를 남기지 않아서 옛 훅은 충돌 표시째 커밋했다(시험 저장소에서
+    재현 — 실제 기록에 그런 커밋은 없다). 색인에서만 풀린 충돌(`git restore --staged`·`git reset` 뒤)도 파일에 남은
+    표시로 거른다. `git add`·`git commit` 이 실패하면(다른 프로그램이 파일을 잡고 있음, 새 PC 에 `user.name`·
+    `user.email` 이 없음 등) 알린다.
 - 의미 있는 단위로 남기고 싶으면 턴이 끝나기 전에 직접 메시지를 붙여 커밋한다 — 그러면 훅은 할 일이 없다.
 - 코드 리뷰·수정 범위는 `git diff HEAD~N` 이나 `git log` 로 잡는다(작업 트리는 턴마다 비워진다).
+- **원격: GitHub `chisu0208/Local-Auto-Labeling` (private, 2026-10-31 연결, 사용자 허락).** 첫 push 때 GitHub 이
+  만든 'Initial commit'(README 한 줄)을 `--force-with-lease` 로 덮어써서, 로컬 이력이 해시 그대로 올라갔다.
+  - **훅은 push 하지 않는다 — push 는 사용자가 요청할 때만.** 올린 커밋은 다시 쓰지 말 것(amend·rebase 뒤
+    force push 금지 — Gemini 칠판이 커밋을 해시로 가리킨다).
+  - **GitHub 은 개인 private 저장소에서 비밀을 걸러 주지 않는다**(push protection 은 public 저장소나 조직의 유료
+    플랜 몫이고, 개인 Pro 로는 안 된다). 그래서 `.gitignore` 맨 끝에 비밀 파일 이름(`.env`·`*.pem`·`id_ed25519*`·
+    `credentials.*`·`.mcp.json`·`.gemini/settings.json` 등)과 runs/ 밖의 DB 사본·영상·로그·압축을 막아 두었다
+    (10-31). `runs/runpod/` 의 json(pod 조회 결과)도 뺀다. 키는 환경 변수에만 둔다. 새 비밀 패턴은 그 블록에 넣을
+    것 — runs/ 화이트리스트보다 **뒤에** 있어야 runs/ 아래에서도 먹는다. `.claude/worktrees/` 도 무시한다(담으면
+    워크트리가 gitlink 로 커밋된다).
+  - **줄끝: `.gitattributes` 가 `*.sh` 만 LF 로 고정한다**(10-31). 그 전에는 Windows 기본값(core.autocrlf=true)
+    으로 클론하면 .sh 가 CRLF 로 풀려 WSL bash 가 `$'do\r'` 문법 오류를 냈다(재현함). 나머지 파일은 CRLF(32개)와
+    LF 가 섞인 채 바이트 그대로 둔다 — 전체 정규화는 하지 않았다. **그 대신 작업 트리의 .sh 를 CRLF 로 저장하면
+    git 에는 보이지 않는다**(status 가 깨끗하고 `git checkout --` 으로도 안 고쳐진다). WSL 은 이 작업 트리를 직접
+    실행하므로, WSL 에서 `$'\r'` 오류가 나면 `git ls-files --eol -- '*.sh'` 의 `w/crlf` 로 찾아
+    `sed -i 's/\r$//' <파일>` 로 CR 을 지운다.
 
 **코드는 graft 로 먼저 찾는다 (2026-09-20 도입).** `graft/` 에 이 저장소의 코드 그래프가 있다
 (29개 파일·385 심볼·1,164 간선: `src/autolabel/`·`tools/`·`wsl/`·`labeler.py`·`app.js`).
@@ -622,7 +644,10 @@ train 으로 갔다). 이제 `reset=False` 면 **기존 이미지는 무조건 �
 **외부 백업: `E:\local_auto_labeling_backup\20260911\`** (09-11, `.venv`·`data/dataset` 빼고 전부,
 md5 대조). 그날 정리로 지운 것(주기 체크포인트·옛 DB·버린 학습 폴더 등)도 여기 있다.
 
-**다른 디스크 백업: `C:\local_auto_labeling_backup\20260928\`** (09-28, E: 와 다른 물리 디스크). 로보플로가
+**다른 디스크 백업: `C:\local_auto_labeling_backup\20260928\`** (09-28, E: 와 다른 물리 디스크).
+**10-31 에 확인하니 이 폴더가 없다** — C:\ 에도 휴지통에도 없고, 아래 로그도 없다. 지웠는지 옮겼는지
+사용자에게 묻는 중이니, 답이 오기 전까지는 디스크 밖 사본이 없다고 볼 것(남은 사본인 위 09-11 외부 백업과
+`data/visible/backups/` 는 모두 디스크 0 에 있다). 아래는 09-28 당시 기록이다. 로보플로가
 비어 E: 가 유일한 사본이 된 날 떴다. `.venv`·`graft`·`data/visible/dataset`·`runs/runpod/*.tar`·`__pycache__`
 를 빼고 전부 — 17,346개 5.15GB 를 원본과 md5 전수 대조했고, DB 는 sqlite `backup()` 스냅샷(이미지 6,567 /
 박스 41,554 / 이력 3,282, integrity ok). 뺀 것과 되살리는 법은 그 폴더의 `BACKUP_INFO.txt`. 로그는
