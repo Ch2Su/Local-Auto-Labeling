@@ -35,10 +35,11 @@ WinDbg 가 없어 분석 안 함), 09-16 버그체크 0 으로 꺼짐(WSL 학습
 학습을 그 뒤 여러 번 돌렸을 때는 문제없었다.
 
 Python 3.14 + sm_120 조합이라 **PyTorch는 cu130 인덱스에서만** 받을 수 있다.
-재설치가 필요하면:
+재설치가 필요하면 (버전은 `requirements.txt` 와 같게 — 10-31 에 고정했다. 빼면 인덱스 최신(그날 2.14.1)이
+깔리고, 뒤이은 `pip install -r requirements.txt` 가 `==2.14.0` 에 맞추려고 PyPI 의 CPU 빌드로 바꾼다 — dry-run 확인):
 
 ```bash
-.venv/Scripts/python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+.venv/Scripts/python.exe -m pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu130
 ```
 
 **Runpod (클라우드 GPU 대여) — MCP 서버 `runpod` 로 붙어 있다 (2026-09-18).** 키는 Windows 사용자
