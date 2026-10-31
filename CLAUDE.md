@@ -76,8 +76,8 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
   `projects_list` 0개. 휴지통에 남아 있던 'My First Project'(object-detection, 09-28 삭제)도 **10-02 에
   사용자가 직접 비웠다**(`trash_list` 0개로 확인). MCP 에는 휴지통을 비우는 도구가 없다(목록·복원뿐).
 - **그래서 로컬이 유일한 사본이다.** 외부 백업(09-11)은 같은 물리 디스크(E: = 디스크 0)에 있어서,
-  09-28 에 **다른 디스크(C: = 디스크 1)로 한 벌 떴다** — 아래 '외부 백업'. **그런데 10-31 에 보니 그 C: 사본이
-  없다** — 지금은 모든 사본이 디스크 0 에 있다.
+  09-28 에 **다른 디스크(C: = 디스크 1)로 한 벌 떴다** — 아래 '외부 백업'. 10-31 에 보니 그 C: 사본이 없어져서
+  **같은 날 새로 떴다**(`C:\local_auto_labeling_backup\20261031\`).
 - 로보플로에 무언가를 올리거나 프로젝트를 만들고 복원하면 **스토리지 크레딧이 다시 나간다** — 먼저 물을 것.
   Universe 검색(`universe_search`·`universe_dataset_images_search`)은 조회만 한다(크레딧이 드는지는
   확인하지 않았다). Universe 데이터를 받을 때도 **COCO 로** 받을 것(함정 4).
@@ -644,16 +644,17 @@ train 으로 갔다). 이제 `reset=False` 면 **기존 이미지는 무조건 �
 **외부 백업: `E:\local_auto_labeling_backup\20260911\`** (09-11, `.venv`·`data/dataset` 빼고 전부,
 md5 대조). 그날 정리로 지운 것(주기 체크포인트·옛 DB·버린 학습 폴더 등)도 여기 있다.
 
-**다른 디스크 백업: `C:\local_auto_labeling_backup\20260928\`** (09-28, E: 와 다른 물리 디스크).
-**10-31 에 확인하니 이 폴더가 없다** — C:\ 에도 휴지통에도 없고, 아래 로그도 없다. 지웠는지 옮겼는지
-사용자에게 묻는 중이니, 답이 오기 전까지는 디스크 밖 사본이 없다고 볼 것(남은 사본인 위 09-11 외부 백업과
-`data/visible/backups/` 는 모두 디스크 0 에 있다). 아래는 09-28 당시 기록이다. 로보플로가
-비어 E: 가 유일한 사본이 된 날 떴다. `.venv`·`graft`·`data/visible/dataset`·`runs/runpod/*.tar`·`__pycache__`
-를 빼고 전부 — 17,346개 5.15GB 를 원본과 md5 전수 대조했고, DB 는 sqlite `backup()` 스냅샷(이미지 6,567 /
-박스 41,554 / 이력 3,282, integrity ok). 뺀 것과 되살리는 법은 그 폴더의 `BACKUP_INFO.txt`. 로그는
-`C:\local_auto_labeling_backup\robocopy_20260928.log`. **C: 는 남은 공간이 적다**(09-28 46GB → 10-02 33GB) — 다음 백업은
-날짜 폴더를 새로 만들기 전에 이전 것을 지울지 물을 것. 같은 방법으로 다시 뜨려면 robocopy `/E /XD .venv graft
-data\visible\dataset __pycache__ /XF labeling.db* *.tar` 뒤에 DB 를 `backup()` 으로 따로 뜬다.
+**다른 디스크 백업: `C:\local_auto_labeling_backup\20261031\`** (10-31, E: 와 다른 물리 디스크 — C: = 디스크 1).
+09-28 에 뜬 `…\20260928\`(17,346개 5.15GB)이 10-31 에 보니 없어져서(C:\ 에도 휴지통에도 없었다) 사용자 확인을
+받고 같은 날 새로 떴다. `.venv`·`graft`·`data/visible/dataset`·`__pycache__`·`*.tar`·살아 있는 DB 파일을 빼고
+전부 — 8,127개 5.11GB(코드·`.git`·`data/visible` 의 seed·unlabeled·labeled·backups·옛 DB `.bak` 2개·models·
+weights·runs)를 원본과 md5 전수 대조했다(불일치·누락 0, 복사 직후 원본이 고쳐진 requirements.txt 1개뿐). DB 는
+sqlite `backup()` 스냅샷을 `data/visible/labeling.db` 에 넣었다(journal_mode=delete, integrity ok, 이미지 7,067 /
+박스 44,844 / 이력 4,105 — 원본과 같음). DB 가 가리키는 이미지 7,067장은 전부 복사 범위 안에 있다.
+`E:\datasets\objects365`(O365 원본)는 저장소 밖이라 들어 있지 않다. 뺀 것·되살리는 법·다시 뜨는 명령은 그 폴더의
+`BACKUP_INFO.txt`, 로그는 `C:\local_auto_labeling_backup\robocopy_20261031.log`. 09-28 방법(`/XF labeling.db*`)과
+달리 옛 DB 백업(`labeling.db.bak_*`)도 담는다. **C: 는 남은 공간이 적다**(10-31 백업 뒤 25.2GB) — 다음 백업은
+날짜 폴더를 새로 만들기 전에 이전 것을 지울지 물을 것.
 
 ---
 
