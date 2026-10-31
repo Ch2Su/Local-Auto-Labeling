@@ -1,21 +1,35 @@
+# Windows `.venv`(Python 3.14) 에서 검증한 버전으로 고정한다 (2026-10-31 `pip freeze`).
+# 이 저장소가 직접 쓰는 패키지만 적었다. 나머지 간접 의존성은 pip 가 고르므로 그날의 `.venv` 와
+# 다를 수 있다. WSL 학습 환경(conda `yolo_final`)은 따로다 — CLAUDE.md 'WSL 학습'.
+
 # --- PyTorch (CUDA 13.0 / Blackwell sm_120) ---
-# 반드시 아래 인덱스로 설치할 것:
-#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-torch>=2.14.0
-torchvision
+# 이 파일보다 **먼저** cu130 인덱스에서 받을 것:
+#   pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu130
+# 검증한 빌드는 torch 2.14.0+cu130 · torchvision 0.29.0+cu130 이다. 아래 == 는 +cu130 꼬리표를 따지지
+# 않아(PEP 440) 위에서 받은 빌드를 그대로 쓴다. 먼저 받지 않으면 PyPI 의 Windows 빌드(torch 2.14.0
+# win_amd64 는 124MB 짜리 CPU 빌드)가 깔려 GPU 를 못 쓴다. 버전을 빼고 받으면 인덱스의 최신
+# (10-31 에 2.14.1+cu130)이 깔리고, 아래 고정과 어긋나 PyPI 의 CPU 빌드로 바꾸려 든다.
+torch==2.14.0
+torchvision==0.29.0
 
 # --- 검출 모델 ---
 # 정지·스냅샷·이어하기는 Ultralytics 내부 순서에 기댄다(CLAUDE.md 함정 8).
 # 8.4.50(WSL) 과 8.4.142(Windows) 에서 소스로 확인했다. 올리면 다시 확인할 것.
-ultralytics>=8.4.50
+ultralytics==8.4.142
+# 직접 import 하지는 않지만 Ultralytics 가 학습·추론 이미지를 이것으로 읽는다(AVIF 는 PIL 폴백).
+opencv-python==5.0.0.93
 
 # --- 검수 웹 UI ---
-fastapi>=0.115
-uvicorn[standard]>=0.34
+fastapi==0.141.1
+pydantic==2.13.5
+uvicorn[standard]==0.52.4
 
 # --- 유틸 ---
 # 11.3 부터 AVIF 코덱이 들어 있다 (yolo_io.IMG_EXTS 에 .avif 가 있다, 2026-09-22).
 # 11.0 은 확장자만 .png 인 JPEG 의 EXIF 를 다시 쓰다 죽어 그 이미지를 학습에서 뺀다(CLAUDE.md Runpod).
-pillow>=11.3
-pyyaml
-numpy
+pillow==12.3.0
+PyYAML==6.0.3
+numpy==2.5.2
+
+# --- 선택: tools/label_qa_claude.py (Claude API 파일럿) 에서만 쓴다 ---
+# 기본 설치에는 넣지 않는다. 그 도구를 돌릴 때만:  pip install anthropic==1.6.0
