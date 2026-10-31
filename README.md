@@ -38,8 +38,8 @@
 있고 **이미지·DB·가중치는 없습니다** — 그것들은 git 이 아니라 백업으로 지킵니다(아래 4).
 
 **1. git 사용자.** Claude Code 로 작업하면 턴이 끝날 때마다 `.claude/hooks/autocommit.sh` 가 바뀐 파일을
-로컬에 커밋합니다(push 는 하지 않습니다). 이름·메일이 없으면 그 커밋이 실패하고 변경은 스테이지된 채
-남으니, 클론한 폴더에서 먼저 정해 두세요.
+로컬에 커밋합니다(push 는 하지 않습니다). 이름·메일이 없으면 그 커밋이 실패해 턴마다 실패 알림만 뜨고
+아무것도 커밋되지 않으니, 클론한 폴더에서 먼저 정해 두세요.
 
 ```bash
 git config user.name "<이름>"
@@ -49,20 +49,24 @@ git config user.name "<이름>"
 git config user.email "<메일>"
 ```
 
-**2. 가상환경.** Python 3.14 로 저장소 폴더 안에 `.venv` 를 만듭니다. 이 문서의 python 명령은 모두 이
-`.venv` 의 것(`.venv\Scripts\python.exe`)으로 돌립니다 — 시스템 Python 에는 아무것도 깔지 않습니다.
+**2. 가상환경.** Python 3.14 로 저장소 폴더 안에 `.venv` 를 만듭니다 — 3.14.3 에서 검증했고, **3.14.1 은
+안 됩니다**(torchvision 0.29.0 이 그 버전만 받지 않습니다). 이 문서의 python 명령은 모두 이 `.venv` 의 것
+(`.venv\Scripts\python.exe`)으로 돌립니다 — 시스템 Python 에는 아무것도 깔지 않습니다. 명령은 PowerShell
+(또는 cmd)에서 저장소 폴더를 기준으로 적었습니다. Git Bash 에서는 역슬래시가 지워지니
+`.venv/Scripts/python.exe` 처럼 `/` 로 바꿔 쓰세요.
 
 ```bash
 py -3.14 -m venv .venv
 ```
 
 **3. 패키지 — PyTorch 를 먼저, cu130 인덱스에서.** 이 저장소는 PyTorch 의 CUDA 13.0(cu130) 빌드로
-검증했습니다. `requirements.txt` 부터 깔면 PyPI 의 Windows 빌드(torch 2.14.0 은 124MB 짜리 CPU 빌드)가
-들어와 GPU 를 못 씁니다. 버전도 빼지 마세요 — 빼면 인덱스의 최신(2026-10-31 에 2.14.1)이 깔리고, 다음
-단계가 `requirements.txt` 의 고정 버전에 맞추려고 그것을 PyPI 의 CPU 빌드로 바꿉니다.
+검증했습니다. PyPI 의 Windows 빌드(torch 2.14.0 은 124MB 짜리 CPU 빌드)로는 GPU 를 못 쓰기 때문에
+`requirements.txt` 는 `torch==2.14.0+cu130` 처럼 cu130 빌드를 콕 집어 고정해 두었습니다 — 순서를 바꿔
+`requirements.txt` 부터 깔면 CPU 빌드가 조용히 들어오는 대신 'No matching distribution' 으로 멈춥니다. 버전도
+빼지 마세요 — 빼면 인덱스의 최신(2026-10-31 에 2.14.1)이 깔려 다음 단계가 같은 오류로 멈춥니다.
 
 ```bash
-.venv\Scripts\python.exe -m pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu130
+.venv\Scripts\python.exe -m pip install torch==2.14.0+cu130 torchvision==0.29.0+cu130 --index-url https://download.pytorch.org/whl/cu130
 ```
 
 ```bash
@@ -73,20 +77,25 @@ py -3.14 -m venv .venv
 .venv\Scripts\python.exe -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-`2.14.0+cu130 True` 가 나오면 됩니다. `tools/label_qa_claude.py`(Claude API 파일럿)를 돌릴 때만
+`2.14.0+cu130 True` 가 나오면 됩니다. `2.14.0 False` 처럼 `+cu130` 이 없으면 CPU 빌드가 깔린 것이니 첫 명령을
+다시 돌리세요 — 버전을 `+cu130` 까지 적었기 때문에 깔려 있던 CPU 빌드를 cu130 빌드로 바꿉니다.
+`tools/label_qa_claude.py`(Claude API 파일럿)를 돌릴 때만
 `anthropic==1.6.0` 을 더 받습니다. WSL 학습 버튼을 쓰려면 WSL 안의 conda 환경이 따로 있어야 합니다
 (CLAUDE.md 'WSL 학습').
 
-**4. 데이터·DB·가중치 되살리기.** 아래 네 폴더는 git 에 없습니다. 백업(CLAUDE.md '외부 백업')에서 이
-폴더들만 저장소의 같은 자리로 복사하세요. **되살리기 전에는 `labeler.py` 명령을 돌리지 마세요** — 빈
-`labeling.db` 를 새로 만듭니다.
+**4. 데이터·DB·가중치 되살리기.** 아래 네 폴더는 git 에 없습니다. 다른 디스크 백업(CLAUDE.md '다른 디스크
+백업' — 지금은 `C:\local_auto_labeling_backup\20261031\`)에서 이 폴더들만 저장소의 같은 자리로 복사하세요.
+백업 폴더를 통째로 덮으면 그 안의 `.git` 과 옛 문서까지 덮여 저장소가 백업 시점으로 돌아갑니다.
+**되살리기 전에는 `labeler.py` 명령과 검수 UI 를 띄우지 마세요** — 빈 `labeling.db` 를 새로 만듭니다(UI 는 그
+빈 DB 의 사본까지 `backups/` 에 남깁니다). Claude Code 도 끈 채 복사하세요 — 켜 두면 턴이 끝날 때 자동 커밋
+훅이 덮인 `runs/` 기록을 커밋합니다.
 
 | 폴더 | 들어 있는 것 |
 |---|---|
 | `data/visible/` | 이미지·라벨과 `labeling.db`(검수 상태·박스·변경 이력 — 작업물 그 자체), `backups/`(DB 사본) |
 | `models/` | 학습한 가중치 — 운영 `best.pt` 와 따로 보관한 `best_*.pt` |
 | `weights/` | 사전학습 가중치 (`yolo26n/s/m/l.pt`, `sam2.1_t.pt`) |
-| `runs/` | 학습 체크포인트·그래프·로그 — 중단한 학습을 이어 하려면 필요합니다 |
+| `runs/` | 학습 체크포인트·그래프·로그 — 중단한 학습을 이어 하려면 필요합니다(저장소가 같은 경로일 때만 — 이어하기는 체크포인트에 적힌 데이터셋 절대경로를 봅니다) |
 
 `runs/` 의 텍스트 기록(`results.csv` 등)은 git 에도 있습니다. 백업의 옛 파일로 덮으면 다음 자동 커밋이
 그 옛 내용을 커밋하니, 덮었다면 `git checkout -- runs` 로 되돌리세요.
@@ -94,32 +103,44 @@ py -3.14 -m venv .venv
 **5. 경로 맞추기.** `labeling.db` 는 이미지를 **절대경로**로 들고 있습니다 — `images.path` 가
 `E:\local_auto_labeling\data\visible\…` 꼴입니다(2026-10-31 기준 7,067장 전부). 그래서 저장소를 **같은
 경로 `E:\local_auto_labeling`** 에 두면 그대로 동작하고, 다른 경로에 두면 모든 이미지가 '파일 없음' 이
-됩니다(`config.yaml` 의 경로는 저장소 기준 상대경로라 고칠 것이 없습니다). 다른 경로를 써야 한다면 검수
-서버를 끈 채 DB 를 따로 복사해 두고, 저장소 폴더에서 `.venv\Scripts\python.exe` 를 띄워 아래를 붙여
-넣습니다(`new` 를 실제 경로로).
+됩니다(`config.yaml` 의 경로는 저장소 기준 상대경로라 고칠 것이 없습니다).
+
+**경로를 고치기 전에는 스캔(`labeler.py scan`, 검수 UI 의 스캔 버튼)·학습·`prune`·정리 버튼을 쓰지 마세요.**
+스캔은 시드 사진을 검수 전 라벨로 다시 등록하고(그래서 스캔은 DB 의 절반 넘게 '파일 없음' 이면 멈춥니다),
+`prune`·정리는 '파일 없음' 인 항목을 라벨째 지웁니다(절반 넘게 없으면 멈추지만, 일부만 되살린 상태라면 그만큼
+지웁니다).
+
+다른 경로를 써야 한다면 검수 서버를 끈 채 DB 를 따로 복사해 두고, 저장소 폴더에서 `.venv\Scripts\python.exe`
+를 띄워 아래를 붙여 넣습니다. 새 경로는 손으로 적지 않고 이 저장소의 실제 위치(`ROOT`)에서 가져옵니다 —
+대소문자나 `/` 가 다르게 적히면 디스크와 표기가 어긋나기 때문입니다.
 
 ```python
-import sqlite3
+import sqlite3, sys
+sys.path.insert(0, "src")
+from autolabel.config import ROOT, Config
 old = "E:\\local_auto_labeling\\"
-new = "D:\\work\\local_auto_labeling\\"   # 새 저장소 경로, 끝의 \\ 까지
-con = sqlite3.connect("data/visible/labeling.db")
+new = str(ROOT) + "\\"
+con = sqlite3.connect(Config.load().db)
 n = con.execute("UPDATE images SET path = ? || substr(path, ?) WHERE substr(path, 1, ?) = ?",
                 (new, len(old) + 1, len(old), old)).rowcount
 con.commit()
 con.close()
-print(n, "행을 바꿨습니다")
+print(n, "행을", new, "로 바꿨습니다")
 ```
 
-앞부분만 바꾸므로 `old` 와 `new` 를 맞바꿔 다시 돌리면 원래대로 돌아옵니다. 그다음 확인합니다.
+`n` 이 0 이면 DB 의 경로가 `old` 로 시작하지 않는 것입니다. `UNIQUE constraint failed: images.path` 가 나면
+경로를 고치기 전에 스캔해 사진이 새 경로로 다시 들어간 것이니, 따로 복사해 둔 DB(또는 백업의
+`labeling.db`)를 다시 가져와 처음부터 하세요. 앞부분만 바꾸므로 `old` 와 `new` 를 맞바꿔 다시 돌리면 원래대로
+돌아옵니다. 그다음 확인합니다.
 
 ```bash
 .venv\Scripts\python.exe labeler.py check
 ```
 
-'파일 없음' 이 0 이면 준비가 끝났습니다. **그 전에는 `check` 가 권해도 `prune` 과 검수 UI 의 정리 버튼을
-쓰지 마세요** — '파일 없음' 인 항목을 라벨째 DB 에서 지웁니다(절반 넘게 없으면 멈추지만, 일부만 되살린
-상태라면 그만큼 지웁니다). 끝나면 `labeler.py status` 로 장수를 보고 `labeler.py review` 로 검수 UI 를
-띄웁니다.
+'이상 없음.' 이 나오면 준비가 끝났습니다. '파일 없음' 이 남았는데 `check` 가 `prune` 을 권해도 아직 쓰지
+마세요 — 덜 되살린 폴더가 있는지부터 봅니다. '경로 표기' 는 DB 에 적힌 경로가 디스크의 실제 경로와 달라(연결
+폴더·다른 드라이브 이름 등) 스캔이 같은 사진으로 알아보지 못하는 항목입니다. 끝나면 `labeler.py status` 로
+장수를 보고 `labeler.py review` 로 검수 UI 를 띄웁니다.
 
 ## 빠른 시작
 
@@ -212,7 +233,8 @@ http://127.0.0.1:7860 에서 검수합니다(`--host`·`--port` 로 바꿀 수 �
 승인된 라벨을 YOLO 포맷(`labels/*.txt` + `classes.txt` + `data.yaml`)으로 내보냅니다. 기본 폴더는
 프로젝트마다 따로인 `export/<프로젝트>`(예: `export/visible`)이고, `--out` 으로 바꿀 수 있습니다.
 다시 내보내면 지난번 내보내기를 비우고 새로 씁니다. 다른 파일이 들어 있는 폴더에는 쓰지 않고
-멈춥니다(엉뚱한 폴더를 지우지 않도록).
+멈춥니다(엉뚱한 폴더를 지우지 않도록). 저장소 안의 다른 폴더로 내보내면 그 폴더에 `.gitignore`(`*`)를 함께
+두어 자동 커밋에 담기지 않게 합니다.
 
 ```bash
 .venv\Scripts\python.exe labeler.py tidy
@@ -649,7 +671,7 @@ runs/                  Windows 학습 로그·그래프·체크포인트
 wsl/                   WSL 학습 스크립트 (웹 UI 'WSL 학습' 버튼이 부른다)
 docs/experiments.md    실험·비교 기록 (모델 선택 근거)
 src/autolabel/         소스
-tools/                 보조 도구 — 저장소 루트에서 `python tools/<이름>.py`
+tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\python.exe tools\<이름>.py`
   import_o365.py       Objects365 의 van·pickup 사진을 검수 대기로 넣는다 (기본은 보기만, --apply 로 넣음.
                        Objects365 를 푼 폴더는 --root, 기본 E:\datasets\objects365)
   finetune.py          해상도를 올려 짧게 미세조정

@@ -41,7 +41,7 @@ def _setup(args) -> tuple[Config, Store]:
 def cmd_scan(args) -> int:
     cfg, store = _setup(args)
     # ingest 를 먼저 돌려야 클래스 추론이 등록된 박스를 볼 수 있다.
-    report = ingest(cfg, store)
+    report = ingest(cfg, store, force=args.force)
     classes = discover_classes(cfg, store)
     print(report.summary())
     print(f"클래스({len(classes)}개): {classes}")
@@ -172,7 +172,7 @@ def cmd_check(args) -> int:
     report = check_images(cfg, store, fix_size=args.fix_size)
     print(report.summary())
     # --fix-size 로 크기를 전부 맞췄다면 남은 문제로 치지 않는다.
-    unresolved = bool(report.missing) or bool(report.unreadable) or (
+    unresolved = bool(report.missing) or bool(report.unreadable) or bool(report.noncanonical) or (
         bool(report.resized) and report.fixed < len(report.resized)
     )
     return 1 if unresolved else 0
@@ -265,6 +265,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("scan", help="시드/미라벨 폴더를 훑어 DB에 등록")
+    sp.add_argument("--force", action="store_true",
+                    help="DB 이미지의 절반 넘게 디스크에 없어도 스캔한다 (경로를 고치기 전이면 같은 사진이 다시 등록된다)")
     sp.set_defaults(func=cmd_scan)
 
     sp = sub.add_parser("train", help="승인된 라벨로 모델 학습")

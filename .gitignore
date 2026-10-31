@@ -78,12 +78,28 @@ service_account*.json
 *api_key
 *_key.txt
 # claude mcp add --scope project -e KEY=... 와 Gemini CLI 의 mcp add(기본 범위가 project)가 키를 그대로 적는다.
-# 공유해야 하면 git add -f
+# Gemini 는 실행한 폴더에 .gemini/settings.json 을 만든다 — 하위 폴더 것까지 막는다 (11-01). 공유해야 하면 git add -f
 .mcp.json
-.gemini/settings.json
+**/.gemini/settings.json
 CLAUDE.local.md
 
-# 데이터 사본·영상·로그·압축 — runs/ 밖에 생겨도 담지 않는다 (위 '데이터·가중치' 와 같은 이유)
+# Git Bash 에서 cmd 식으로 2>nul 을 쓰면 생기는 파일 — git 이 읽지 못해 git add -A 가 통째로 실패한다 (11-01)
+nul
+# git mergetool 이 남기는 충돌 전 사본 — 충돌 표시가 그대로 들어 있다 (11-01)
+*.orig
+
+# 데이터 사본(이미지·DB·.npy 캐시)·영상·로그·압축 — runs/ 밖에 생겨도 담지 않는다 (위 '데이터·가중치' 와 같은
+# 이유). 이미지는 11-01 에 넣었다 — 기본값이 아닌 폴더로 내보내면 수천 장이 커밋되려 했다. 문서에 그림을
+# 넣을 때는 git add -f.
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+*.tif
+*.tiff
+*.avif
+*.npy
 *.mp4
 *.avi
 *.mov

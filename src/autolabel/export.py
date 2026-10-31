@@ -5,6 +5,10 @@
 `data.yaml` 이 덮어써졌다. 다시 내보낼 때 지난번 파일(그 사이 빠진 이미지의 라벨)이 남아
 있던 것도 같은 날 고쳤다 — 이 함수가 만든 폴더(표식 `export_info.json`)만 비우고, 표식 없는
 폴더가 비어 있지 않으면 **쓰지 않고 멈춘다** (엉뚱한 폴더를 지우지 않게).
+
+**저장소 안에 내보내면 그 폴더에 `.gitignore`(`*`)를 둔다** (2026-11-01). 자동 커밋 훅이 턴마다
+`git add -A` 를 하므로, 기본값(`export/`, 무시됨)이 아닌 폴더로 내보낸 라벨·이미지 수천 개가 커밋되려
+했다 — 그만큼이면 훅이 60초 제한에도 걸린다.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from .config import Config, resolve
+from .config import ROOT, Config, resolve
 from .store import Store
 from .yolo_io import write_yolo_txt
 
@@ -66,6 +70,8 @@ def _prepare(out_dir: Path, cfg: Config) -> bool:
         cleared = True
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_marker(out_dir, {"db": str(cfg.db), "finished": False})
+    if out_dir.resolve().is_relative_to(ROOT) and not (out_dir / ".gitignore").exists():
+        (out_dir / ".gitignore").write_text("# labeler.py export 가 만든 폴더 — git 에 담지 않는다\n*\n", encoding="utf-8")
     return cleared
 
 

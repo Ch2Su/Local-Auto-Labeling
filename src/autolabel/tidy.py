@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import itertools
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -160,11 +161,13 @@ class CheckReport:
     resized: list[tuple[int, str, tuple[int, int], tuple[int, int]]] = field(
         default_factory=list
     )
+    # 파일은 있지만 DB 경로가 디스크의 실제 경로(resolve)와 달라 스캔이 같은 사진으로 못 알아보는 것. (id, DB, 실제)
+    noncanonical: list[tuple[int, str, str]] = field(default_factory=list)
     fixed: int = 0
 
     @property
     def ok(self) -> bool:
-        return not (self.missing or self.unreadable or self.resized)
+        return not (self.missing or self.unreadable or self.resized or self.noncanonical)
 
     def summary(self) -> str:
         lines = [
@@ -173,10 +176,16 @@ class CheckReport:
             f"  열리지 않음 : {len(self.unreadable)}",
             f"  크기 불일치 : {len(self.resized)}"
             + (f" (그중 {self.fixed}건 DB 갱신)" if self.fixed else ""),
+            f"  경로 표기   : {len(self.noncanonical)}",
         ]
         if self.missing:
-            lines.append("\n[파일 없음]  labeler.py prune 으로 정리할 수 있습니다")
+            lines.append("\n[파일 없음]  labeler.py prune 으로 정리할 수 있습니다 — 저장소를 옮긴 직후라면 쓰지 말고"
+                         " README '새 PC 에서 시작하기' 5단계로 경로부터 고치세요")
             lines += [f"  id={i}  {p}" for i, p in self.missing[:10]]
+        if self.noncanonical:
+            lines.append("\n[경로 표기]  DB 경로가 디스크의 실제 경로와 달라 다음 스캔이 같은 사진을 새로 등록합니다"
+                         " — README '새 PC 에서 시작하기' 5단계로 고치세요")
+            lines += [f"  id={i}  {p}\n        실제: {r}" for i, p, r in self.noncanonical[:10]]
         if self.unreadable:
             lines.append("\n[열리지 않음]  저장이 깨졌을 수 있습니다")
             lines += [f"  id={i}  {p}\n        {e}" for i, p, e in self.unreadable[:10]]
@@ -192,7 +201,8 @@ class CheckReport:
                 lines.append("  --fix-size 로 DB 를 실제 크기에 맞출 수 있습니다")
         for kind, items in (("파일 없음", self.missing),
                             ("열리지 않음", self.unreadable),
-                            ("크기 불일치", self.resized)):
+                            ("크기 불일치", self.resized),
+                            ("경로 표기", self.noncanonical)):
             if len(items) > 10:
                 lines.append(f"  ({kind} 외 {len(items) - 10}건 더 있음)")
         if self.ok:
@@ -210,6 +220,9 @@ def check_images(cfg: Config, store: Store, *, fix_size: bool = False) -> CheckR
       그대로여도 검수 UI 가 그리는 위치가 어긋난다(app.js 가 DB 의 width/height 로
       화면 좌표를 계산한다). 종횡비까지 달라지면 박스 자체가 틀어진다.
     - **파일 손상**: 저장이 깨지면 학습 중에야 드러난다.
+    - **경로 표기** (2026-11-01): 파일은 열리는데 DB 경로가 디스크의 실제 경로와 다르게 적힌 것
+      (연결 폴더·다른 드라이브 이름 등). 스캔은 `resolve()` 한 경로로 '이미 등록됐나' 를 보므로
+      같은 사진을 새 행으로 다시 넣는다. 대소문자·`/` 차이는 스캔도 가리지 않아 여기서도 넘어간다.
 
     fix_size=True 면 크기 불일치를 DB 쪽에 맞춘다. 박스 값은 건드리지 않는다 —
     정규화 좌표라 종횡비가 유지되는 한 그대로 유효하다.
@@ -223,6 +236,9 @@ def check_images(cfg: Config, store: Store, *, fix_size: bool = False) -> CheckR
         if not path.exists():
             report.missing.append((row["id"], str(path)))
             continue
+        real = str(path.resolve())
+        if os.path.normcase(real) != os.path.normcase(str(path)):   # ingest._key 와 같은 기준
+            report.noncanonical.append((row["id"], str(path), real))
         try:
             with Image.open(path) as im:
                 size = im.size

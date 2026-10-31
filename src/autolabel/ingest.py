@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from .config import Config
@@ -155,14 +157,48 @@ def discover_classes(cfg: Config, store: Store) -> list[str]:
 _BATCH = 500
 
 
-def ingest(cfg: Config, store: Store) -> IngestReport:
+def _key(path: str) -> str:
+    """'이미 등록됐나' 를 볼 때 쓰는 경로 키 — Windows 는 대소문자와 / \\ 를 가리지 않으니 그렇게 맞춘다.
+
+    2026-11-01 전에는 DB 문자열과 정확히 같아야 해서, 저장소를 옮기며 images.path 앞부분을 `d:\\...` 처럼
+    표기만 다르게 고치면 다음 스캔이 시드·미라벨 이미지를 전부 새 행으로 다시 넣었다(DupIndex 는 normcase 로
+    같은 파일이라 보고 막지 않았다). 시드는 검수 전 라벨을 단 approved 로 들어와 고친 라벨과 겹쳤다.
+    """
+    return os.path.normcase(path)
+
+
+def _check_db_paths(paths: Iterable[str], *, max_ratio: float = 0.5) -> None:
+    """DB 이미지의 절반 넘게 디스크에 없으면 스캔하지 않는다 (2026-11-01, prune 의 안전장치와 같은 비율).
+
+    저장소를 다른 경로에 두고 images.path 를 고치기 전에 스캔하면, 옛 행은 '파일 없음' 이라 중복 검사에도
+    걸리지 않고 새 경로의 시드가 검수 전 라벨로 다시 approved 로 들어간다 — 그 뒤엔 경로를 고치는 UPDATE 도
+    UNIQUE 로 실패한다. 드라이브가 빠진 채 스캔한 경우도 같다.
+    """
+    paths = list(paths)
+    if not paths:
+        return
+    missing = sum(1 for p in paths if not os.path.exists(p))
+    if missing / len(paths) > max_ratio:
+        raise RuntimeError(
+            f"DB 의 이미지 {len(paths)}장 중 {missing}장({missing / len(paths):.0%})이 디스크에 없어 스캔하지 "
+            "않았습니다. 저장소를 옮겼다면 README '새 PC 에서 시작하기' 5단계로 DB 경로부터 고치고, 드라이브가 "
+            "빠졌다면 연결하세요 — 이대로 스캔하면 같은 사진이 검수 전 라벨로 다시 등록됩니다. "
+            "그래도 스캔하려면 labeler.py scan --force."
+        )
+
+
+def ingest(cfg: Config, store: Store, *, force: bool = False) -> IngestReport:
     """폴더를 훑어 아직 DB에 없는 이미지만 등록한다.
 
     이미 등록된 이미지는 건너뛴다. 재스캔이 빨라지고, 검수 UI에서 손본 라벨이
-    원본 .txt 로 되덮이지 않는다.
+    원본 .txt 로 되덮이지 않는다. DB 경로가 디스크와 맞지 않으면(절반 넘게 '파일 없음')
+    force 가 아닌 한 멈춘다 (`_check_db_paths`).
     """
+    raw = store.known_statuses()
+    if not force:
+        _check_db_paths(raw)
     report = IngestReport()
-    statuses = store.known_statuses()
+    statuses = {_key(p): st for p, st in raw.items()}
     known = set(statuses)
     pending: list[dict] = []
     guard = _DupGuard(cfg, store, report)
@@ -179,7 +215,7 @@ def ingest(cfg: Config, store: Store) -> IngestReport:
 
     for img in iter_images(cfg.seed_images):
         resolved = str(img.resolve())
-        if resolved in known:
+        if _key(resolved) in known:
             report.seed_images += 1
             report.seed_already += 1
             continue
@@ -194,7 +230,7 @@ def ingest(cfg: Config, store: Store) -> IngestReport:
             continue              # 내용이 같은 이미지가 이미 있다 (리포트에 남는다)
         if not txt.exists():
             report.seed_without_label += 1
-        known.add(resolved)       # 같은 스캔 안에서 두 번 나와도 한 번만 넣는다
+        known.add(_key(resolved))  # 같은 스캔 안에서 두 번 나와도 한 번만 넣는다
         pending.append(
             {
                 "path": resolved,
@@ -240,7 +276,7 @@ def _ingest_coco(cfg, store, known, pending, report, flush, guard) -> None:
 
     for rec in records:
         resolved = str(rec.path.resolve())
-        if resolved in known:
+        if _key(resolved) in known:
             report.seed_images += 1
             report.seed_already += 1
             continue
@@ -250,7 +286,7 @@ def _ingest_coco(cfg, store, known, pending, report, flush, guard) -> None:
             report.seed_without_label += 1
         # 같은 이미지를 가리키는 COCO 항목이 둘이면(json 두 개가 같은 images/ 를 볼 때 등)
         # 첫 것만 넣는다. 둘 다 넣으려 하면 DB 가 경로 중복으로 두 번째를 거른다.
-        known.add(resolved)
+        known.add(_key(resolved))
         pending.append({
             "path": resolved,
             "source": "seed",
@@ -275,10 +311,10 @@ def _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard
         if seed_root in resolved_path.parents:
             continue  # 시드 폴더가 미라벨 폴더 안에 있는 경우 중복 방지
         resolved = str(resolved_path)
-        if resolved in known:
+        if _key(resolved) in known:
             report.unlabeled_images += 1
             report.unlabeled_already += 1
-            st = statuses.get(resolved, "unlabeled")
+            st = statuses.get(_key(resolved), "unlabeled")
             report.unlabeled_status[st] = report.unlabeled_status.get(st, 0) + 1
             continue
         try:
@@ -288,7 +324,7 @@ def _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard
             continue
         if guard.blocked(resolved):
             continue              # 내용이 같은 이미지가 이미 있다 (리포트에 남는다)
-        known.add(resolved)
+        known.add(_key(resolved))
         pending.append(
             {
                 "path": resolved,

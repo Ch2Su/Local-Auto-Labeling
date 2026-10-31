@@ -34,12 +34,14 @@
 WinDbg 가 없어 분석 안 함), 09-16 버그체크 0 으로 꺼짐(WSL 학습을 정상 중단한 뒤). 같은 검증·
 학습을 그 뒤 여러 번 돌렸을 때는 문제없었다.
 
-Python 3.14 + sm_120 조합이라 **PyTorch는 cu130 인덱스에서만** 받을 수 있다.
-재설치가 필요하면 (버전은 `requirements.txt` 와 같게 — 10-31 에 고정했다. 빼면 인덱스 최신(그날 2.14.1)이
-깔리고, 뒤이은 `pip install -r requirements.txt` 가 `==2.14.0` 에 맞추려고 PyPI 의 CPU 빌드로 바꾼다 — dry-run 확인):
+Python 3.14 + sm_120 조합이라 **PyTorch는 cu130 인덱스에서만** 받을 수 있다(3.14.1 은 torchvision 0.29.0 이
+받지 않는다). 재설치가 필요하면 (버전은 `requirements.txt` 와 같게 — 11-01 부터 `+cu130` 까지 고정했다. PyPI 의
+CPU 빌드는 이 고정을 못 맞춰서, 순서를 바꾸거나 버전을 빼면 조용히 CPU 로 바뀌는 대신 `pip install -r
+requirements.txt` 가 'No matching distribution' 으로 멈춘다. 이미 CPU 빌드가 깔렸으면 아래를 다시 돌리면 바뀐다 —
+`==2.14.0` 만 적으면 '이미 설치됨' 으로 넘어가서 안 바뀐다):
 
 ```bash
-.venv/Scripts/python.exe -m pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu130
+.venv/Scripts/python.exe -m pip install torch==2.14.0+cu130 torchvision==0.29.0+cu130 --index-url https://download.pytorch.org/whl/cu130
 ```
 
 **Runpod (클라우드 GPU 대여) — MCP 서버 `runpod` 로 붙어 있다 (2026-09-18).** 키는 Windows 사용자
@@ -125,14 +127,26 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
 (파일을 바이트 그대로 둔다 — CR 이 섞여 겪은 함정 6 때문). 사용자 전역 설정의 기본 브랜치는
 `KNUT_APP` 이지만 이 저장소는 `main` 으로 만들었다.
 - **턴이 끝날 때마다 자동으로 커밋된다** (사용자 요청, 10-02). `.claude/settings.json` 의 Stop 훅이
-  `.claude/hooks/autocommit.sh` 를 부른다 — 바뀐 게 있으면 `git add -A` 후 '자동 커밋: <파일 이름들>'
+  `.claude/hooks/autocommit.sh` 를 부른다 — 바뀐 게 있으면 `git add -A` 한 내용을 '자동 커밋: <파일 이름들>'
   으로 커밋한다. 5MB 넘는 파일은 담지 않고 알린다. 사용자가 직접 고친 파일도 같이 담긴다. 끄려면
   settings.json 에서 그 훅을 지운다. 훅이 추적 파일이라 **이 저장소를 클론한 다른 PC 에서도 돈다.**
-  - 머지·리베이스·cherry-pick·revert 중이거나, HEAD 가 브랜치에 있지 않거나, **충돌이 남아 있으면** 알리고
-    건너뛴다(10-31). stash pop 충돌은 MERGE_HEAD 를 남기지 않아서 옛 훅은 충돌 표시째 커밋했다(시험 저장소에서
-    재현 — 실제 기록에 그런 커밋은 없다). 색인에서만 풀린 충돌(`git restore --staged`·`git reset` 뒤)도 파일에 남은
-    표시로 거른다. `git add`·`git commit` 이 실패하면(다른 프로그램이 파일을 잡고 있음, 새 PC 에 `user.name`·
-    `user.email` 이 없음 등) 알린다.
+  - 머지·리베이스·cherry-pick·revert 중, squash 머지·`cherry-pick -n` 결과가 스테이지돼 기다릴 때, HEAD 가
+    브랜치에 있지 않을 때, **충돌이 남아 있을 때**, 담을 내용에 충돌 표시나 **비밀 키처럼 보이는 줄**(개인키 머리·
+    `sk-ant-`·`rpa_`·`ghp_` 등)이 있을 때, 바뀐 파일이 200개 넘을 때(60초 제한) 알리고 건너뛴다(10-31, 11-01).
+    stash pop 충돌은 MERGE_HEAD 를 남기지 않아서 옛 훅은 충돌 표시째 커밋했다(시험 저장소에서 재현 — 실제 기록에
+    그런 커밋은 없다). 충돌 표시·키는 스테이지한 결과(새 파일 포함 — 이름이 바뀐 채 충돌한 파일은 `git reset` 뒤
+    새 파일이 된다)에서 찾고 걸린 파일 이름을 알린다. 문서의 충돌 예시처럼 진짜 충돌이 아니면 직접 커밋한다.
+  - **임시 색인(`GIT_INDEX_FILE`)으로 고르고 커밋한다** (11-01). 건너뛰거나 실패해도 실제 색인은 그대로라 `git add -A`
+    결과가 스테이지된 채 남지 않는다(예전엔 남아서 뒤이은 `git reset --hard` 가 새 파일을 지울 수 있었다). 실패
+    알림에는 git 오류의 첫 줄이 붙는다(신원 없음·pre-commit 거부·서명 실패·`nul` 파일 등).
+  - **워크트리에서 일하면 그 워크트리를 커밋한다** (11-01). Claude Code 는 워크트리로 옮겨도(EnterWorktree,
+    데스크톱 앱의 워크트리 세션) `CLAUDE_PROJECT_DIR` 를 처음 체크아웃에 두고, 지금 위치는 훅 입력 JSON 의 `cwd`
+    로만 준다 — 예전 훅은 그래서 메인 체크아웃(사용자의 작업 중 파일)을 커밋했다. 같은 `.git` 을 쓰는 체크아웃일
+    때만 따라간다(다른 저장소로 cd 한 경우는 무시).
+  - 바뀐 게 없으면 `git status` 한 번 보고 끝낸다 — 턴마다 약 0.6초(10-31 판은 검사를 먼저 돌려 1.2초).
+    시나리오 38개 시험은 세션 scratchpad 에서 돌렸다(저장소에는 없다 — 다시 시험하려면 시험용 저장소를 만들어
+    `CLAUDE_PROJECT_DIR=<시험 저장소> bash <시험 저장소>/.claude/hooks/autocommit.sh` 로만 돌릴 것. 기본값이 이
+    저장소라 그냥 돌리면 실제로 커밋한다).
 - 의미 있는 단위로 남기고 싶으면 턴이 끝나기 전에 직접 메시지를 붙여 커밋한다 — 그러면 훅은 할 일이 없다.
 - 코드 리뷰·수정 범위는 `git diff HEAD~N` 이나 `git log` 로 잡는다(작업 트리는 턴마다 비워진다).
 - **원격: GitHub `chisu0208/Local-Auto-Labeling` (private, 2026-10-31 연결, 사용자 허락).** 첫 push 때 GitHub 이
@@ -141,10 +155,13 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
     force push 금지 — Gemini 칠판이 커밋을 해시로 가리킨다).
   - **GitHub 은 개인 private 저장소에서 비밀을 걸러 주지 않는다**(push protection 은 public 저장소나 조직의 유료
     플랜 몫이고, 개인 Pro 로는 안 된다). 그래서 `.gitignore` 맨 끝에 비밀 파일 이름(`.env`·`*.pem`·`id_ed25519*`·
-    `credentials.*`·`.mcp.json`·`.gemini/settings.json` 등)과 runs/ 밖의 DB 사본·영상·로그·압축을 막아 두었다
-    (10-31). `runs/runpod/` 의 json(pod 조회 결과)도 뺀다. 키는 환경 변수에만 둔다. 새 비밀 패턴은 그 블록에 넣을
-    것 — runs/ 화이트리스트보다 **뒤에** 있어야 runs/ 아래에서도 먹는다. `.claude/worktrees/` 도 무시한다(담으면
-    워크트리가 gitlink 로 커밋된다).
+    `credentials.*`·`.mcp.json`·`**/.gemini/settings.json` 등)과 runs/ 밖의 데이터 사본(이미지·DB·`.npy`)·영상·
+    로그·압축을 막아 두었다(10-31, 이미지·`nul`·`*.orig` 는 11-01). 이름만으로는 다 못 막아서(추적되는
+    `.claude/settings.json` 의 env, runs/ 화이트리스트의 .json·.yaml 메모 등) **자동 커밋 훅이 담을 내용에서 키
+    모양도 찾는다**(11-01). 손으로 하는 커밋은 훅을 거치지 않으니 키는 환경 변수에만 둔다. `runs/runpod/` 의
+    json(pod 조회 결과)도 뺀다. 새 비밀 패턴은 그 블록에 넣을 것 — runs/ 화이트리스트보다 **뒤에** 있어야 runs/
+    아래에서도 먹는다. `.claude/worktrees/` 도 무시한다(담으면 워크트리가 gitlink 로 커밋된다).
+    `labeler.py export` 는 저장소 안의 다른 폴더로 내보내면 그 폴더에 `.gitignore`(`*`)를 둔다(11-01).
   - **줄끝: `.gitattributes` 가 `*.sh` 만 LF 로 고정한다**(10-31). 그 전에는 Windows 기본값(core.autocrlf=true)
     으로 클론하면 .sh 가 CRLF 로 풀려 WSL bash 가 `$'do\r'` 문법 오류를 냈다(재현함). 나머지 파일은 CRLF(32개)와
     LF 가 섞인 채 바이트 그대로 둔다 — 전체 정규화는 하지 않았다. **그 대신 작업 트리의 .sh 를 CRLF 로 저장하면
@@ -601,7 +618,11 @@ train 으로 갔다). 이제 `reset=False` 면 **기존 이미지는 무조건 �
 **폴더는 프로젝트마다 따로다 (2026-09-21 에 가시광을 `data/visible/` 로 모았다).**
 지금은 `data/visible/` 하나다(열화상·화재는 09-28 에 지웠다). **DB 는 이미지를 절대경로로 들고 있어서,
 폴더를 옮기면 `images.path` 도 같이 치환해야 한다** — 아니면 전부 '파일 없음' 이 된다(09-21 에
-6,478행을 치환했다. 옮기기 직전 DB: `data/labeling.db.bak_20260921_125612`).
+6,478행을 치환했다. 옮기기 직전 DB: `data/labeling.db.bak_20260921_125612`). 치환 스니펫은 README '새 PC 에서
+시작하기' 5단계(새 경로는 `config.ROOT` 에서 가져온다). 11-01 부터 스캔은 DB 의 절반 넘게 '파일 없음' 이면
+멈추고(`scan --force` 로 강행 — 경로를 고치기 전 스캔은 시드를 검수 전 라벨로 다시 넣는다), '이미 등록됐나' 를
+대소문자·`/` 를 가리지 않고 본다(`ingest._key` — 예전엔 표기만 다른 경로로 고치면 전부 중복 등록됐다).
+`labeler.py check` 는 디스크의 실제 경로와 다르게 적힌 행(연결 폴더 등)을 '경로 표기' 로 알린다.
 
 - `data/visible/seed/seed1`, `seed2` — Roboflow 내보내기를 회차별로 쌓는다. 각 폴더에
   `coco/*.json` + `images/`. `config.yaml` 의 `seed_coco: data/visible/seed` 가 하위 json 을
@@ -658,10 +679,17 @@ md5 대조). 그날 정리로 지운 것(주기 체크포인트·옛 DB·버린 
 weights·runs)를 원본과 md5 전수 대조했다(불일치·누락 0, 복사 직후 원본이 고쳐진 requirements.txt 1개뿐). DB 는
 sqlite `backup()` 스냅샷을 `data/visible/labeling.db` 에 넣었다(journal_mode=delete, integrity ok, 이미지 7,067 /
 박스 44,844 / 이력 4,105 — 원본과 같음). DB 가 가리키는 이미지 7,067장은 전부 복사 범위 안에 있다.
-`E:\datasets\objects365`(O365 원본)는 저장소 밖이라 들어 있지 않다. 뺀 것·되살리는 법·다시 뜨는 명령은 그 폴더의
+`E:\datasets\objects365`(O365 원본)는 저장소 밖이라 들어 있지 않다. 뺀 것과 자세한 절차는 그 폴더의
 `BACKUP_INFO.txt`, 로그는 `C:\local_auto_labeling_backup\robocopy_20261031.log`. 09-28 방법(`/XF labeling.db*`)과
-달리 옛 DB 백업(`labeling.db.bak_*`)도 담는다. **C: 는 남은 공간이 적다**(10-31 백업 뒤 25.2GB) — 다음 백업은
-날짜 폴더를 새로 만들기 전에 이전 것을 지울지 물을 것.
+달리 옛 DB 백업(`labeling.db.bak_*`)도 담는다. 같은 방법으로 다시 뜨려면(PowerShell, `$src`=저장소 `$dst`=새 날짜
+폴더) `robocopy $src $dst /E /XJ /COPY:DAT /DCOPY:DAT /R:1 /W:1 /MT:8 /XD "$src\.venv" "$src\graft"
+"$src\data\visible\dataset" __pycache__ /XF labeling.db labeling.db-wal labeling.db-shm labeling.db-journal *.tar`
+(종료 코드 0\~7 이 성공) 뒤에 DB 를 sqlite `backup()` 으로 `$dst\data\visible\labeling.db` 에 뜬다 — 백업 폴더가
+사라져도 이 명령은 남게 여기 적어 둔다(11-01).
+**되살리기: 저장소(클론)가 있으면 README '새 PC 에서 시작하기' 4·5단계대로 네 폴더만 가져온다.** 백업 폴더를
+통째로 덮는 `BACKUP_INFO.txt` 1단계는 저장소까지 잃었을 때만이다 — 안의 `.git`(4b333c3)과 옛 문서·
+requirements.txt 까지 덮여 저장소가 백업 시점으로 돌아간다(11-01 에 BACKUP_INFO.txt 도 그렇게 고쳤다).
+**C: 는 남은 공간이 적다**(10-31 백업 뒤 25.2GB) — 다음 백업은 날짜 폴더를 새로 만들기 전에 이전 것을 지울지 물을 것.
 
 ---
 
