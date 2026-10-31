@@ -32,6 +32,95 @@
 | 검출 모델 | Ultralytics YOLO26 (`yolo26s`, DFL-free) |
 | 보조 모델 | SAM 2.1 tiny (검수 UI 의 클릭 한 번 박스) |
 
+## 새 PC 에서 시작하기
+
+저장소를 다른 PC 에 클론했을 때의 순서입니다. git 에는 코드·설정·문서와 `runs/` 의 텍스트 기록만
+있고 **이미지·DB·가중치는 없습니다** — 그것들은 git 이 아니라 백업으로 지킵니다(아래 4).
+
+**1. git 사용자.** Claude Code 로 작업하면 턴이 끝날 때마다 `.claude/hooks/autocommit.sh` 가 바뀐 파일을
+로컬에 커밋합니다(push 는 하지 않습니다). 이름·메일이 없으면 그 커밋이 실패하고 변경은 스테이지된 채
+남으니, 클론한 폴더에서 먼저 정해 두세요.
+
+```bash
+git config user.name "<이름>"
+```
+
+```bash
+git config user.email "<메일>"
+```
+
+**2. 가상환경.** Python 3.14 로 저장소 폴더 안에 `.venv` 를 만듭니다. 이 문서의 python 명령은 모두 이
+`.venv` 의 것(`.venv\Scripts\python.exe`)으로 돌립니다 — 시스템 Python 에는 아무것도 깔지 않습니다.
+
+```bash
+py -3.14 -m venv .venv
+```
+
+**3. 패키지 — PyTorch 를 먼저, cu130 인덱스에서.** 이 저장소는 PyTorch 의 CUDA 13.0(cu130) 빌드로
+검증했습니다. `requirements.txt` 부터 깔면 PyPI 의 Windows 빌드(torch 2.14.0 은 124MB 짜리 CPU 빌드)가
+들어와 GPU 를 못 씁니다. 버전도 빼지 마세요 — 빼면 인덱스의 최신(2026-10-31 에 2.14.1)이 깔리고, 다음
+단계가 `requirements.txt` 의 고정 버전에 맞추려고 그것을 PyPI 의 CPU 빌드로 바꿉니다.
+
+```bash
+.venv\Scripts\python.exe -m pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cu130
+```
+
+```bash
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+```bash
+.venv\Scripts\python.exe -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+`2.14.0+cu130 True` 가 나오면 됩니다. `tools/label_qa_claude.py`(Claude API 파일럿)를 돌릴 때만
+`anthropic==1.6.0` 을 더 받습니다. WSL 학습 버튼을 쓰려면 WSL 안의 conda 환경이 따로 있어야 합니다
+(CLAUDE.md 'WSL 학습').
+
+**4. 데이터·DB·가중치 되살리기.** 아래 네 폴더는 git 에 없습니다. 백업(CLAUDE.md '외부 백업')에서 이
+폴더들만 저장소의 같은 자리로 복사하세요. **되살리기 전에는 `labeler.py` 명령을 돌리지 마세요** — 빈
+`labeling.db` 를 새로 만듭니다.
+
+| 폴더 | 들어 있는 것 |
+|---|---|
+| `data/visible/` | 이미지·라벨과 `labeling.db`(검수 상태·박스·변경 이력 — 작업물 그 자체), `backups/`(DB 사본) |
+| `models/` | 학습한 가중치 — 운영 `best.pt` 와 따로 보관한 `best_*.pt` |
+| `weights/` | 사전학습 가중치 (`yolo26n/s/m/l.pt`, `sam2.1_t.pt`) |
+| `runs/` | 학습 체크포인트·그래프·로그 — 중단한 학습을 이어 하려면 필요합니다 |
+
+`runs/` 의 텍스트 기록(`results.csv` 등)은 git 에도 있습니다. 백업의 옛 파일로 덮으면 다음 자동 커밋이
+그 옛 내용을 커밋하니, 덮었다면 `git checkout -- runs` 로 되돌리세요.
+
+**5. 경로 맞추기.** `labeling.db` 는 이미지를 **절대경로**로 들고 있습니다 — `images.path` 가
+`E:\local_auto_labeling\data\visible\…` 꼴입니다(2026-10-31 기준 7,067장 전부). 그래서 저장소를 **같은
+경로 `E:\local_auto_labeling`** 에 두면 그대로 동작하고, 다른 경로에 두면 모든 이미지가 '파일 없음' 이
+됩니다(`config.yaml` 의 경로는 저장소 기준 상대경로라 고칠 것이 없습니다). 다른 경로를 써야 한다면 검수
+서버를 끈 채 DB 를 따로 복사해 두고, 저장소 폴더에서 `.venv\Scripts\python.exe` 를 띄워 아래를 붙여
+넣습니다(`new` 를 실제 경로로).
+
+```python
+import sqlite3
+old = "E:\\local_auto_labeling\\"
+new = "D:\\work\\local_auto_labeling\\"   # 새 저장소 경로, 끝의 \\ 까지
+con = sqlite3.connect("data/visible/labeling.db")
+n = con.execute("UPDATE images SET path = ? || substr(path, ?) WHERE substr(path, 1, ?) = ?",
+                (new, len(old) + 1, len(old), old)).rowcount
+con.commit()
+con.close()
+print(n, "행을 바꿨습니다")
+```
+
+앞부분만 바꾸므로 `old` 와 `new` 를 맞바꿔 다시 돌리면 원래대로 돌아옵니다. 그다음 확인합니다.
+
+```bash
+.venv\Scripts\python.exe labeler.py check
+```
+
+'파일 없음' 이 0 이면 준비가 끝났습니다. **그 전에는 `check` 가 권해도 `prune` 과 검수 UI 의 정리 버튼을
+쓰지 마세요** — '파일 없음' 인 항목을 라벨째 DB 에서 지웁니다(절반 넘게 없으면 멈추지만, 일부만 되살린
+상태라면 그만큼 지웁니다). 끝나면 `labeler.py status` 로 장수를 보고 `labeler.py review` 로 검수 UI 를
+띄웁니다.
+
 ## 빠른 시작
 
 ### 1. 데이터 넣기
@@ -82,10 +171,18 @@ truck, pickup, van)가 적혀 있습니다. 순서가 곧 클래스 번호라 **
 폴더를 훑어 DB에 등록하고 클래스를 확정합니다. 시드 라벨은 정답으로 보고 곧바로 `승인` 상태가 됩니다.
 
 ```bash
+.venv\Scripts\python.exe labeler.py status
+```
+
+지금 상태를 요약합니다 — DB 위치, 운영 가중치, 클래스 목록, 상태별 장수(미라벨·검수 대기·승인·건너뜀과
+휴지통까지 더한 합계).
+
+```bash
 .venv\Scripts\python.exe labeler.py train
 ```
 
-승인된 라벨로 학습합니다. 결과는 `models/best.pt` 로 복사됩니다.
+승인된 라벨로 학습합니다. 결과는 `models/best.pt` 로 복사됩니다. epoch 수는 `--epochs N` 으로 바꿀 수
+있습니다(기본은 `config.yaml` 의 `train.epochs`).
 
 ```bash
 .venv\Scripts\python.exe labeler.py label
@@ -93,11 +190,16 @@ truck, pickup, van)가 적혀 있습니다. 순서가 곧 클래스 번호라 **
 
 미라벨 이미지에 자동 라벨을 붙입니다 (`검수 대기` 상태로).
 
+**`label --all` 은 조심하세요.** 이미 검수 대기인 이미지까지 다시 추론해 **그 라벨을 모델 예측으로
+덮어씁니다.** 검수 대기 중인 Objects365 사진(`tools/import_o365.py` 가 원본 라벨째 넣은 것, 2026-10-31
+기준 429장)이 그렇게 됩니다. 옛 라벨은 변경 내역에 남지만 되돌리려면 이미지마다 해야 합니다. 검수 UI 의
+자동 라벨링 버튼은 미라벨 이미지만 추론합니다.
+
 ```bash
 .venv\Scripts\python.exe labeler.py review
 ```
 
-http://127.0.0.1:7860 에서 검수합니다. 이 UI 안에서 스캔·자동 라벨링·학습·내보내기를 모두 버튼으로 실행할 수 있으므로, 실제로는 `review` 하나만 띄워두고 작업해도 됩니다.
+http://127.0.0.1:7860 에서 검수합니다(`--host`·`--port` 로 바꿀 수 있고, 기본값은 `config.yaml` 의 `server`). 이 UI 안에서 스캔·자동 라벨링·학습·내보내기를 모두 버튼으로 실행할 수 있으므로, 실제로는 `review` 하나만 띄워두고 작업해도 됩니다.
 
 **프로젝트 탭.** `projects.yaml` 에 프로젝트가 둘 이상이면 화면 위쪽 탭으로 데이터셋을 오갑니다(`/p/<이름>/`). 지금은 가시광(`/p/visible/`) 하나라 탭이 보이지 않습니다 — 열화상·화재 감지는 2026-09-28 에 뺐습니다. 프로젝트 하나는 설정 파일 하나이고, 이미지·라벨·클래스·학습 가중치가 완전히 따로라 서로 섞이지 않습니다. 탭이 여럿이어도 GPU 는 하나뿐이라 **학습과 자동 라벨링은 프로젝트를 통틀어 한 번에 하나만** 돕니다.
 
@@ -116,7 +218,8 @@ http://127.0.0.1:7860 에서 검수합니다. 이 UI 안에서 스캔·자동 �
 .venv\Scripts\python.exe labeler.py tidy
 ```
 
-검수를 마친 이미지를 `data/visible/unlabeled` 밖으로 옮겨 정리합니다. UI의 **정리** 버튼과 같습니다.
+검수를 마친 이미지를 `data/visible/unlabeled` 밖으로 옮겨 정리합니다. UI의 **정리** 버튼은 이것에 더해
+원본이 사라진 DB 항목을 걷어내는 `prune` 까지 함께 합니다(아래 '파일을 탐색기에서 직접 지웠다면').
 
 `run.bat` 을 더블클릭하면 검수 UI가 바로 뜹니다.
 
@@ -142,9 +245,15 @@ http://127.0.0.1:7860 에서 검수합니다. 이 UI 안에서 스캔·자동 �
 Ctrl+C 는 즉시 종료입니다(진행 중이던 epoch 하나만 잃습니다).
 
 ```bash
-.venv\Scripts\python.exe labeler.py resume --check   # 이어할 지점만 확인
-.venv\Scripts\python.exe labeler.py resume           # 이어서 학습
+.venv\Scripts\python.exe labeler.py resume --check     # 이어할 지점만 확인
+.venv\Scripts\python.exe labeler.py resume             # 이어서 학습
+.venv\Scripts\python.exe labeler.py resume --batch 16  # 배치를 줄여 이어서 학습
 ```
+
+이어하기는 중단할 때의 설정을 그대로 씁니다 — `config.yaml` 을 고쳐도 대부분 무시되고,
+`data/visible/dataset` 이 남아 있으면 그 사이 검수한 라벨도 들어가지 않습니다(반영하려면 새로 학습).
+예외가 `--batch` 입니다. Windows 는 VRAM 이 모자라면 에러 없이 몇 배 느려지는데(CLAUDE.md 함정 9),
+epoch 시간이 갑자기 늘면 멈춘 뒤 배치를 줄여 이어가세요. 손실 누적(`nbs=64`)이 유효 배치를 맞춰 줍니다.
 
 ## 이미지를 밖에서 편집했다면 — `check`
 
@@ -446,14 +555,27 @@ train → label → review(수십~수백 장) → train → label → review →
 미배정 이미지를 배정해 DB 에 씁니다.
 
 ```bash
-.venv\Scripts\python.exe labeler.py split         # 미배정분을 배정하고 현황 표시
-.venv\Scripts\python.exe labeler.py split --leak  # val·test 가 train 과 얼마나 비슷한지
+.venv\Scripts\python.exe labeler.py split            # 미배정분을 배정하고 현황 표시
+.venv\Scripts\python.exe labeler.py split --leak     # val·test 가 train 과 얼마나 비슷한지
+.venv\Scripts\python.exe labeler.py split --regroup  # 같은 장면 묶음을 다시 계산 (이미 배정된 이미지는 그대로)
 ```
 
 test 점수는 `tools/test_baseline.py` 로 잽니다. DB 를 읽기만 하고, 지금 라벨로 test 를 따로
-만들어 잽니다. `--domains` 를 주면 **전체·드론·비CCTV·드론 제외** 를 한 번에 재고, 결과를
-`runs/test_baseline/history.jsonl` 에 **클래스별로** 쌓은 뒤 같은 도메인의 직전 기록과
+만들어 잽니다. `--domains` 를 주면 아래 여섯 도메인을 한 번에 재고(하나만은 `--domain <이름>`),
+결과를 `runs/test_baseline/history.jsonl` 에 **클래스별로** 쌓은 뒤 같은 도메인의 직전 기록과
 나란히 보여 줍니다(test 장수·박스 수가 달라졌으면 라벨이 바뀐 몫이 섞였다고 알립니다).
+
+| 도메인 | 고르는 이미지 (기본은 test 분할) |
+|---|---|
+| `all` 전체 | Objects365(`source='o365'`)를 뺀 전부 |
+| `drone` 드론 | 경로에 `stabilized_` 가 든 것 (드론 부감 영상) |
+| `noncctv` 비CCTV | `source='unlabeled'` — 나중에 미라벨 폴더로 넣은 이미지 |
+| `nodrone` 드론 제외 | 드론도 Objects365 도 아닌 것 |
+| `o365` Objects365 | `source='o365'` 만 |
+| `all_o365` 전체+O365 | 전부 |
+
+`all`·`nodrone` 이 Objects365 를 빼는 것은 2026-10-03 부터입니다 — 그 사진이 test 에 들어와도 09-27
+기준선과 같은 범위를 재도록. 이름표는 그대로라 `--history` 에서 옛 기록과 이어집니다.
 
 ```bash
 .venv\Scripts\python.exe tools/test_baseline.py --domains --note "메모"
@@ -499,10 +621,17 @@ ltrb 거리의 L1 손실에 곱해집니다. 0 으로 두면 에러 없이 학�
 ## 폴더 구조
 
 ```
+README.md              사용자 문서 (이 파일)
+CLAUDE.md              작업자 인수인계 — 실제로 겪은 함정, 라벨 판정 기준, 결정 기록
+requirements.txt       Windows .venv 패키지 (torch 는 cu130 인덱스에서 먼저 — '새 PC 에서 시작하기')
 projects.yaml          검수 UI 에 띄울 프로젝트 목록 (지금은 가시광 하나)
 config.yaml            설정 (가시광)
 labeler.py             진입점
 run.bat                검수 UI 실행
+.claude/               Claude Code 프로젝트 설정
+  settings.json        턴이 끝날 때 자동 커밋 훅을 부르는 Stop 훅
+  hooks/autocommit.sh  그 훅 — 바뀐 파일을 git add -A 로 커밋한다 (push 는 하지 않는다)
+  launch.json          데스크톱 앱 미리보기용 검수 서버 (포트 7861)
 data/
   visible/             가시광 프로젝트
     seed/seed1, seed2…   손라벨 시드 (Roboflow COCO 내보내기, 회차별)
@@ -521,13 +650,18 @@ wsl/                   WSL 학습 스크립트 (웹 UI 'WSL 학습' 버튼이 �
 docs/experiments.md    실험·비교 기록 (모델 선택 근거)
 src/autolabel/         소스
 tools/                 보조 도구 — 저장소 루트에서 `python tools/<이름>.py`
+  import_o365.py       Objects365 의 van·pickup 사진을 검수 대기로 넣는다 (기본은 보기만, --apply 로 넣음.
+                       Objects365 를 푼 폴더는 --root, 기본 E:\datasets\objects365)
   finetune.py          해상도를 올려 짧게 미세조정
   probe_scale.py       모델 크기 비교 실험
   scheduled_stop.py    정해진 시각에 학습 정상 중단
   test_baseline.py     지금 라벨로 test 점수를 다시 잰다 (DB 읽기 전용)
   label_qa.py          라벨과 모델 예측이 어긋나는 곳을 뽑는다 (DB 읽기 전용)
-  label_qa_claude.py   위 후보를 Claude API 로 거르는 파일럿 (API 키 필요)
+  label_qa_claude.py   위 후보를 Claude API 로 거르는 파일럿 (API 키와 anthropic 패키지 필요)
 ```
+
+`data/`·`models/`·`weights/`·`export/`·`.venv/` 는 git 에 없습니다(데이터·가중치는 백업으로 지킵니다).
+`runs/` 는 텍스트 기록(`results.csv`·`args.yaml`·`history.jsonl`·스크립트)만 git 에 있습니다.
 
 `data/visible/dataset` 은 학습할 때마다 새로 만들어집니다. 이미지는 **복사**합니다 — 하드링크로
 걸면 Ultralytics 가 깨진 JPEG 을 고쳐 저장할 때 원본까지 덮어써져서 끄고 있습니다.

@@ -89,7 +89,7 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
   대부분 사람을 라벨하지 않았고, 한 장에 박스 하나뿐인 것도 많다. Objects365 의 `Scooter` 는 오토바이형
   스쿠터이고 이 프로젝트의 scooter 는 전동 킥보드다(`Hoverboard` 는 세그웨이류).
 - **Objects365 v2 train 을 BAAI 에서 직접 받아 풀었다 (10-02~03).** `E:\datasets\objects365\` — 저장소
-  밖이다. 라벨 `zhiyuan_objv2_train.json`(5.14GB), 압축 `patchN.tar.gz`(v1 p0~15 약 3.4GB, v2 p16~50 약
+  밖이다. 라벨 `zhiyuan_objv2_train.json`(5.14GB), 압축 `patchN.tar.gz`(v1 p0\~15 약 3.4GB, v2 p16\~50 약
   7.7GB, 안에 `patchN/` 접두사)를 `train\patchN\` 으로 풀었다. json 은 51묶음 **1,742,292장**, 디스크에는
   **49묶음 1,686,812장** — p44·p45(55,477장)는 받지 않았고, 압축 자체에 3장이 없고(p6 `…00320532`·
   `…00320534`, p16 `…00908726`) p4 에 0바이트 쓰레기 `objects365_v1_00215749.jpg.ddEA04F9` 가 들어 있다.
@@ -149,6 +149,9 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
     git 에는 보이지 않는다**(status 가 깨끗하고 `git checkout --` 으로도 안 고쳐진다). WSL 은 이 작업 트리를 직접
     실행하므로, WSL 에서 `$'\r'` 오류가 나면 `git ls-files --eol -- '*.sh'` 의 `w/crlf` 로 찾아
     `sed -i 's/\r$//' <파일>` 로 CR 을 지운다.
+  - **GitHub 은 한 문단(표는 한 칸) 안의 `~` 두 개를 취소선으로 그린다**(10-31 에 이 파일·docs/experiments.md 의
+    6곳을 `\~` 로 고쳤다). 범위를 `~` 로 적을 때 같은 문단에 `~` 가 또 있으면 `\~` 로 쓸 것 — 인라인 코드와 코드
+    블록 안은 괜찮다. 확인은 그 파일을 `gh api markdown`(mode `markdown`)으로 그려 `<del>` 이 없는지 본다.
 
 **코드는 graft 로 먼저 찾는다 (2026-09-20 도입).** `graft/` 에 이 저장소의 코드 그래프가 있다
 (29개 파일·385 심볼·1,164 간선: `src/autolabel/`·`tools/`·`wsl/`·`labeler.py`·`app.js`).
@@ -458,7 +461,7 @@ Git Bash 에서 `wsl` 을 부를 때는 `MSYS_NO_PATHCONV=1` 을 앞에 붙일 �
 |---|---|---|
 | 조건 | yolo26s / 640 / batch 20 / Ultralytics 8.4.142 | 같음 |
 | epoch 소요 (중앙값) | 258초 (n=199) | **62초** (n=287, 61~78초) |
-| 스텝 (240 스텝/epoch) | 약 1 s/it | 0.25~0.29 s/it (3.5~4.0 it/s) |
+| 스텝 (240 스텝/epoch) | 약 1 s/it | 0.25\~0.29 s/it (3.5\~4.0 it/s) |
 | 캐시 | disk `.npy` 14GB, 준비 수 분 / 워커 4 | ram 5.3GB, 준비 11초 / 워커 8 |
 | 결과 | 202 epoch 에서 정지 파일로 멈춤 | 288 epoch 조기 종료, **5.0시간** |
 
@@ -1033,7 +1036,7 @@ false 면(저장 실패) **이미지를 넘기거나 승인하지 않는다** (`
   (visible-3 은 pickup·van 을 모른다 — `unknown_classes`).
   - **GPU 작업(학습·자동 라벨링)이 도는 중이면 CPU 로** 돈다(`jobs.gpu_busy`). Ultralytics 는
     첫 추론 때 장치를 정하고 바꾸지 않으므로 장치가 바뀌면 모델을 다시 올린다. 가중치 파일의
-    수정 시각이 바뀌어도 다시 올린다. 실측: GPU 65~160ms, CPU 100~280ms.
+    수정 시각이 바뀌어도 다시 올린다. 실측: GPU 65\~160ms, CPU 100\~280ms.
   - **올릴 때 빈 이미지로 예열한다.** 한 번은 첫 추론이 CUDA 초기화로 16초 걸리며 NMS 시간
     제한(2.05초)을 넘겨 **Ultralytics 가 검출을 도중에 잘랐다**('NMS time limit exceeded' 경고만).
     다시 재니 1.8초·잘림 없음이라 자동 라벨링(`AutoLabeler`)은 손대지 않았다 — 조건은 모른다.
