@@ -155,18 +155,28 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
     저장소라 그냥 돌리면 실제로 커밋한다).
 - 의미 있는 단위로 남기고 싶으면 턴이 끝나기 전에 직접 메시지를 붙여 커밋한다 — 그러면 훅은 할 일이 없다.
 - 코드 리뷰·수정 범위는 `git diff HEAD~N` 이나 `git log` 로 잡는다(작업 트리는 턴마다 비워진다).
-- **원격: GitHub `chisu0208/Local-Auto-Labeling` (private, 2026-10-31 연결, 사용자 허락).** 첫 push 때 GitHub 이
-  만든 'Initial commit'(README 한 줄)을 `--force-with-lease` 로 덮어써서, 로컬 이력이 해시 그대로 올라갔다.
+- **원격: GitHub `chisu0208/Local-Auto-Labeling` (private, 사용자 허락).** 10-31 에 연결했고, 11-02 에 커밋 메일을
+  감춘 이력으로 같은 이름의 새 저장소를 만들어 옮겼다(아래). 옛 저장소는 `Local-Auto-Labeling-old`(private)다.
   - **훅은 push 하지 않는다 — push 는 사용자가 요청할 때만.** 올린 커밋은 다시 쓰지 말 것(amend·rebase 뒤
-    force push 금지 — Gemini 칠판이 커밋을 해시로 가리킨다).
+    force push 금지 — Gemini 칠판이 커밋을 해시로 가리킨다). 11-02 의 메일 감추기만 사용자 결정으로 한 예외다.
   - **LICENSE 는 GNU AGPL-3.0 이다** (11-02, 사용자 결정 — 저장소 공개를 앞두고). 코드 9개 파일이 Ultralytics
     (AGPL-3.0)를 import 해서 그 조건에 맞췄다. 의존성 중 AGPL 은 ultralytics·ultralytics-thop 뿐이고 나머지는
     MIT·BSD·Apache 다. 본문은 GitHub `licenses/agpl-3.0` 그대로이고(Ultralytics 의 LICENSE 와 낱말까지 같다)
     고치면 안 된다 — 라이선스 머리에 그렇게 적혀 있다.
-  - **공개 전 점검 (11-02, `9a247aa` 까지):** push 된 22개 커밋의 모든 파일 버전(blob 136개)과 커밋 메시지에서
-    키 모양(개인키·`sk-ant-`·`rpa_`·`ghp_`·`AIza` 등)·바이너리·지운 파일이 하나도 없었다. 공개하면 커밋 작성자
-    메일이 보인다 — 이력을 다시 쓰지 않는 한 못 지운다. 점검 스크립트는 남기지 않았다(`git rev-list --objects`
-    로 모든 blob 을 꺼내 `git cat-file --batch` 로 읽고 키 패턴으로 훑었다).
+  - **공개 전 점검 (11-02, 메일을 바꾸기 전 이력의 `9a247aa` — 지금 `e174748` — 까지):** push 된 22개 커밋의 모든
+    파일 버전(blob 136개)과 커밋 메시지에서 키 모양(개인키·`sk-ant-`·`rpa_`·`ghp_`·`AIza` 등)·바이너리·지운 파일이
+    하나도 없었다. 걸린 것은 커밋 작성자 메일 하나라 이력을 다시 써서 감췄다(아래). 점검 스크립트는 남기지 않았다
+    (`git rev-list --objects` 로 모든 blob 을 꺼내 `git cat-file --batch` 로 읽고 키 패턴으로 훑었다).
+  - **커밋 메일을 감췄다 (11-02, 사용자 결정).** 커밋 23개의 작성자·커미터 메일을 GitHub noreply
+    (`42445310+chisu0208@users.noreply.github.com`)로 바꿔 이력을 다시 썼다 — 트리·이름·날짜·메시지는 그대로이고
+    (메시지 속 옛 해시 2개만 새 해시로) 해시는 전부 바뀌었다(`4832643` → `343950b`). 같은 저장소에 force push 하면
+    옛 커밋이 GitHub 안에 남아 해시로 열릴 수 있어서, 옛 저장소는 이름을 `Local-Auto-Labeling-old` 로 바꿔 두고
+    (private, 옛 이력 그대로 — 지울지는 사용자 몫) 같은 이름으로 새 저장소를 만들어 올렸다. GitHub 에서 23개 모두
+    noreply 로 보이고 계정에 연결되는 것을 확인했다.
+    - **이 저장소의 `user.email` 은 `.git/config` 의 noreply 다**(전역 `~/.gitconfig` 의 메일은 그대로). 새로 클론한
+      곳에서는 자동 커밋 훅이 돌기 전에 같은 설정을 할 것 — 안 하면 원래 메일이 다시 커밋에 들어간다.
+    - 옛 이력은 로컬 `refs/archive/pre-noreply/main` 에 남겨 옛 해시가 그대로 열린다(칠판·이 파일의 옛 해시용).
+      이 ref 는 **push 하지 말 것.** 옛→새 해시 대응표는 `.git/noreply-rewrite-20261102.map`(로컬).
   - **GitHub 은 개인 private 저장소에서 비밀을 걸러 주지 않는다**(push protection 은 public 저장소나 조직의 유료
     플랜 몫이고, 개인 Pro 로는 안 된다). 그래서 `.gitignore` 맨 끝에 비밀 파일 이름(`.env`·`*.pem`·`id_ed25519*`·
     `credentials.*`·`.mcp.json`·`**/.gemini/settings.json` 등)과 runs/ 밖의 데이터 사본(이미지·DB·`.npy`)·영상·
@@ -319,7 +329,7 @@ finetune 은 `models/best.pt` 를 건드리지 않고 `models/best_ft960.pt` 로
   연장형은 car 다.
 - **car 와 van 을 가르던 기준(09-24 사용자 결정 — 상자형 MPV·박스형 경차·소형 밴)은 11-02 로 필요 없어졌다.**
   레이·알파드·도커·스타리아는 van, 카니발·시에나·오딧세이·SUV 는 car 로 갈랐었다. van 을 다시 나누게 되면
-  그때의 기준 전문(`git show 92da519:CLAUDE.md` 의 이 절)과 합치기 직전 DB
+  그때의 기준 전문(`git show e788f84:CLAUDE.md` 의 이 절)과 합치기 직전 DB
   (`data/visible/labeling.db.bak_merge_20261102_133352`)를 볼 것.
 
 **눈으로 전수 검사했다 (2026-09-21).** 같은 묶음에서 위치·크기가 같은 박스를 같은 차로 접고
@@ -691,7 +701,7 @@ O365 원본(11-02 부터 `E:\datasets\objects365.tar`)은 저장소 밖이라 �
 (종료 코드 0\~7 이 성공) 뒤에 DB 를 sqlite `backup()` 으로 `$dst\data\visible\labeling.db` 에 뜬다 — 백업 폴더가
 사라져도 이 명령은 남게 여기 적어 둔다(11-01).
 **되살리기: 저장소(클론)가 있으면 README '새 PC 에서 시작하기' 4·5단계대로 네 폴더만 가져온다.** 백업 폴더를
-통째로 덮는 `BACKUP_INFO.txt` 1단계는 저장소까지 잃었을 때만이다 — 안의 `.git`(4b333c3)과 옛 문서·
+통째로 덮는 `BACKUP_INFO.txt` 1단계는 저장소까지 잃었을 때만이다 — 안의 `.git`(4b333c3 — 11-02 에 메일을 바꾸기 전 해시, 지금 이력의 `cbf1d49`)과 옛 문서·
 requirements.txt 까지 덮여 저장소가 백업 시점으로 돌아간다(11-01 에 BACKUP_INFO.txt 도 그렇게 고쳤다).
 **C: 는 남은 공간이 적다**(10-31 백업 뒤 25.2GB) — 다음 백업은 날짜 폴더를 새로 만들기 전에 이전 것을 지울지 물을 것.
 
