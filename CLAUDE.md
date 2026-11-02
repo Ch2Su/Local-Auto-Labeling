@@ -178,8 +178,10 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
       곳에서는 자동 커밋 훅이 돌기 전에 같은 설정을 할 것 — 안 하면 원래 메일이 다시 커밋에 들어간다.
     - 옛 이력은 로컬 `refs/archive/pre-noreply/main` 에 남겨 옛 해시가 그대로 열린다(칠판·이 파일의 옛 해시용).
       이 ref 는 **push 하지 말 것.** 옛→새 해시 대응표는 `.git/noreply-rewrite-20261102.map`(로컬).
-  - **GitHub 의 비밀 검사·push 보호는 꺼져 있다**(11-02 공개 직후 `gh api repos/chisu0208/Local-Auto-Labeling --jq
-    .security_and_analysis` 로 확인 — private 이던 10-31 에는 개인 계정이라 켤 수 없었다). 그래서 `.gitignore` 맨 끝에 비밀 파일 이름(`.env`·`*.pem`·`id_ed25519*`·
+  - **GitHub 의 비밀 검사·push 보호를 켰다** (11-02 공개 직후, 사용자 결정 — `gh api repos/chisu0208/Local-Auto-Labeling
+    --jq .security_and_analysis` 로 확인, 켠 직후 알림 0건). GitHub 이 아는 종류의 키가 든 push 는 막히고 저장소에
+    있으면 알림이 온다. 그 밖의 비밀은 못 잡으니 아래 장치도 그대로 둔다 —
+    `.gitignore` 맨 끝에 비밀 파일 이름(`.env`·`*.pem`·`id_ed25519*`·
     `credentials.*`·`.mcp.json`·`**/.gemini/settings.json` 등)과 runs/ 밖의 데이터 사본(이미지·DB·`.npy`)·영상·
     로그·압축을 막아 두었다(10-31, 이미지·`nul`·`*.orig` 는 11-01). 이름만으로는 다 못 막아서(추적되는
     `.claude/settings.json` 의 env, runs/ 화이트리스트의 .json·.yaml 메모 등) **자동 커밋 훅이 담을 내용에서 키
