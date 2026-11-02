@@ -155,8 +155,9 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
     저장소라 그냥 돌리면 실제로 커밋한다).
 - 의미 있는 단위로 남기고 싶으면 턴이 끝나기 전에 직접 메시지를 붙여 커밋한다 — 그러면 훅은 할 일이 없다.
 - 코드 리뷰·수정 범위는 `git diff HEAD~N` 이나 `git log` 로 잡는다(작업 트리는 턴마다 비워진다).
-- **원격: GitHub `chisu0208/Local-Auto-Labeling` (private, 사용자 허락).** 10-31 에 연결했고, 11-02 에 커밋 메일을
-  감춘 이력으로 같은 이름의 새 저장소를 만들어 옮겼다(아래). 옛 저장소는 `Local-Auto-Labeling-old`(private)다.
+- **원격: GitHub `chisu0208/Local-Auto-Labeling` — public (11-02 공개, 사용자 허락).** 10-31 에 연결했고, 11-02 에
+  커밋 메일을 감춘 이력으로 같은 이름의 새 저장소를 만들어 옮긴 뒤 공개했다(아래). 옛 저장소는
+  `Local-Auto-Labeling-old`(private)다. **push 하는 순간 누구나 본다** — 올리기 전에 담긴 내용을 볼 것.
   - **훅은 push 하지 않는다 — push 는 사용자가 요청할 때만.** 올린 커밋은 다시 쓰지 말 것(amend·rebase 뒤
     force push 금지 — Gemini 칠판이 커밋을 해시로 가리킨다). 11-02 의 메일 감추기만 사용자 결정으로 한 예외다.
   - **LICENSE 는 GNU AGPL-3.0 이다** (11-02, 사용자 결정 — 저장소 공개를 앞두고). 코드 9개 파일이 Ultralytics
@@ -177,8 +178,8 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
       곳에서는 자동 커밋 훅이 돌기 전에 같은 설정을 할 것 — 안 하면 원래 메일이 다시 커밋에 들어간다.
     - 옛 이력은 로컬 `refs/archive/pre-noreply/main` 에 남겨 옛 해시가 그대로 열린다(칠판·이 파일의 옛 해시용).
       이 ref 는 **push 하지 말 것.** 옛→새 해시 대응표는 `.git/noreply-rewrite-20261102.map`(로컬).
-  - **GitHub 은 개인 private 저장소에서 비밀을 걸러 주지 않는다**(push protection 은 public 저장소나 조직의 유료
-    플랜 몫이고, 개인 Pro 로는 안 된다). 그래서 `.gitignore` 맨 끝에 비밀 파일 이름(`.env`·`*.pem`·`id_ed25519*`·
+  - **GitHub 의 비밀 검사·push 보호는 꺼져 있다**(11-02 공개 직후 `gh api repos/chisu0208/Local-Auto-Labeling --jq
+    .security_and_analysis` 로 확인 — private 이던 10-31 에는 개인 계정이라 켤 수 없었다). 그래서 `.gitignore` 맨 끝에 비밀 파일 이름(`.env`·`*.pem`·`id_ed25519*`·
     `credentials.*`·`.mcp.json`·`**/.gemini/settings.json` 등)과 runs/ 밖의 데이터 사본(이미지·DB·`.npy`)·영상·
     로그·압축을 막아 두었다(10-31, 이미지·`nul`·`*.orig` 는 11-01). 이름만으로는 다 못 막아서(추적되는
     `.claude/settings.json` 의 env, runs/ 화이트리스트의 .json·.yaml 메모 등) **자동 커밋 훅이 담을 내용에서 키
