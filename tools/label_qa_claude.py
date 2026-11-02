@@ -67,7 +67,7 @@ CLASS_NOTES = {
     "scooter": "stand-up e-scooter / kick scooter",
     "pickup": "open cargo bed separate from the cab, up to 1-ton class",
     "truck": "larger open bed, or a closed box body on a cab-chassis",
-    "van": "one-box body, roof continuing straight from the windshield, vertical sides",
+    "car": "passenger cars, SUVs, minivans and one-box vans",   # 11-02 에 van 을 car 로 합쳤다
 }
 
 # 클래스 목록은 DB 에서 읽어 `set_classes()` 가 채운다. 예전에는 7개가 박혀 있어서

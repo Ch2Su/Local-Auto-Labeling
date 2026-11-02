@@ -211,7 +211,8 @@ epoch 3·30·53 에서 세 번 중단했다 이어서, **epoch 276 조기 종료
 
 라벨 수정과 분할 조정으로 test 가 바뀌어서 같은 가중치(visible-3 e156, `models/best_visible3.pt`)로
 단계마다 다시 쟀다. **7클래스 시절 값이다** — 09-20 에 pickup·van 이 생긴 뒤의 9클래스 기준선은
-`runs/test_baseline/history.jsonl` (CLAUDE.md '현재 데이터 상태').
+`runs/test_baseline/history.jsonl` (CLAUDE.md '현재 데이터 상태'). 11-02 에 van 을 car 로 합쳐 8클래스가
+됐으니, 그 뒤 기록의 car 는 9클래스 기록의 car 와 바로 견주지 말 것.
 
 | test 구성 | mAP50-95 | mAP50 |
 |---|---|---|

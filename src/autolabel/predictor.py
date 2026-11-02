@@ -268,7 +268,7 @@ class LiveDetector:
             "device": str(device),
             "ms": round(ms, 1),
             # 이 모델이 아는 프로젝트 클래스. 모르는 클래스의 라벨은 비교하지 않는다
-            # (예: visible-3 은 pickup·van 을 모른다 — 그 라벨을 '모델이 못 봄' 으로 띄우면 잡음이다).
+            # (예: visible-3 은 pickup 을 모른다 — 그 라벨을 '모델이 못 봄' 으로 띄우면 잡음이다).
             "model_classes": known,
             "unknown_classes": [c for i, c in enumerate(classes) if i not in known],
             "preds": preds,

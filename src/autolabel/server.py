@@ -379,7 +379,10 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
     @app.post("/api/history/batch/revert")
     def revert_batch(payload: BatchIn) -> dict:
         """일괄 수정 한 묶음을 되돌린다. 그 뒤 또 고친 이미지는 건너뛴다."""
-        reverted, skipped = store.revert_batch(payload.batch)
+        try:
+            reverted, skipped = store.revert_batch(payload.batch)
+        except ValueError as exc:   # 되돌리면 목록에 없는 클래스가 생긴다 (클래스를 합쳐 뺀 묶음)
+            raise HTTPException(409, str(exc)) from exc
         if not reverted and not skipped:
             raise HTTPException(404, "그 일괄 수정을 찾을 수 없습니다.")
         return {"reverted": reverted, "skipped": skipped}

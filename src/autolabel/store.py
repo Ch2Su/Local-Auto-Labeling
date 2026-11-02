@@ -571,13 +571,16 @@ class Store:
 
         **그 뒤에 또 고친 이미지는 건드리지 않는다** — 지금 박스가 일괄 수정 직후와 같을
         때만 그 전으로 돌린다. 되돌린 것도 이력(source='revert', batch='취소: …')에 남는다.
+        되돌릴 박스가 클래스 목록에 없는 번호를 쓰면 아무것도 바꾸지 않고 ValueError — 클래스를 합쳐
+        뺀 묶음(tools/merge_class.py, 2026-11-02 van → car)은 그 클래스를 먼저 되살려야 되돌린다.
         """
-        reverted = skipped = 0
+        skipped = 0
         with _write_lock, self.connect() as con:
             rows = con.execute(
                 "SELECT image_id, before, after FROM box_history"
                 " WHERE batch=? AND source='bulk' ORDER BY id", (batch,),
             ).fetchall()
+            todo = []
             for r in rows:
                 cur = con.execute(
                     "SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id",
@@ -587,11 +590,16 @@ class Store:
                 if [_box_key(b) for b in cur] != [_box_key(b) for b in after]:
                     skipped += 1
                     continue
-                self._replace_boxes(con, r["image_id"], _boxes_from_json(r["before"]),
-                                    source="revert", batch=f"취소: {batch}")
-                con.execute("UPDATE images SET updated_at=? WHERE id=?", (_now(), r["image_id"]))
-                reverted += 1
-        return reverted, skipped
+                todo.append((r["image_id"], _boxes_from_json(r["before"])))
+            known = {c["idx"] for c in con.execute("SELECT idx FROM classes")}
+            gone = sorted({b.cls for _, before in todo for b in before} - known)
+            if gone:
+                raise ValueError(f"되돌리면 클래스 목록에 없는 {', '.join(map(str, gone))}번 박스가 생깁니다"
+                                 " — '클래스 추가' 로 그 클래스를 먼저 되살리세요.")
+            for image_id, before in todo:
+                self._replace_boxes(con, image_id, before, source="revert", batch=f"취소: {batch}")
+                con.execute("UPDATE images SET updated_at=? WHERE id=?", (_now(), image_id))
+        return len(todo), skipped
 
     # ---------------------------------------------------------------- 변경 이력
 

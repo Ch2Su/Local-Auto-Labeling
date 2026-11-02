@@ -1,4 +1,4 @@
-"""Objects365 의 van·pickup 사진을 골라 **검수 대기(pending)** 로 넣는다 — 라벨은 우리 9클래스로 바꿔서.
+"""Objects365 의 Van·Pickup Truck 사진을 골라 **검수 대기(pending)** 로 넣는다 — 라벨은 우리 클래스로 바꿔서.
 
 **왜 scan 으로 안 넣나.** 시드(COCO) 경로는 라벨을 검수 없이 곧바로 승인하고, 이름이 우리 클래스와
 다른 카테고리(`SUV`·`Pickup Truck` 등)는 버린다. 미라벨 폴더로 넣으면 라벨을 아예 읽지 않는다.
@@ -6,15 +6,19 @@
 섞여 있었다(2026-10-03). 그래서 라벨을 살리되 사람이 한 장씩 보게 검수 대기로 넣는다.
 
 **고르는 기준.** 이미지에 '깨끗한' Van 또는 Pickup Truck 박스(iscrowd·isfake·isreflected 가 아니고,
-긴 변을 640 으로 줄였을 때 짧은 변 32px 이상)가 있어야 한다. 반은 van 이 든 사진, 반은 pickup 이 든
+긴 변을 640 으로 줄였을 때 짧은 변 32px 이상)가 있어야 한다. 반은 Van 이 든 사진, 반은 Pickup Truck 이 든
 사진에서 뽑는다. 아래 사진은 통째로 뺀다:
   - 우리 클래스에 iscrowd 박스(무리를 박스 하나로 묶은 것)가 있는 사진 — 우리는 하나씩 그린다.
-  - Ambulance 가 있는 사진 — 모양에 따라 van·truck 이 갈려 대응을 정하지 않았다.
+  - Ambulance 가 있는 사진 — 모양에 따라 car·truck 이 갈려 대응을 정하지 않았다.
   - 파일이 없거나, 실제 크기가 json 과 다르거나, EXIF 회전이 걸린 사진 — 좌표 기준이 애매하다.
 
 **클래스 대응** (2026-10-03 사용자 결정): Scooter(오토바이형)는 motorcycle, 포스터·장난감(isfake)과
 반사(isreflected) 박스는 버린다. 대응표에 없는 카테고리(굴착기·삼륜차·휠체어 등)는 우리 클래스가 아니라
 넣지 않는다. **O365 에는 전동 킥보드 클래스가 없다** — 사진에 있으면 검수 때 그려야 한다.
+**Van 은 car 로 넣는다** (2026-11-02 — 우리 van 을 car 로 합쳤다. 10-03 에 넣은 500장의 van 박스도 그때 car 가 됐다).
+
+**원본은 11-02 부터 `E:\\datasets\\objects365.tar` 하나다** (BAAI 에서 받은 patch 압축 51개·json·o365_index.pkl —
+풀어 둔 폴더는 없다). 다시 쓰려면 그 tar 를 풀고 patch 압축을 `train\\patchN\\` 으로 풀 것.
 
 **넣는 곳.** 이미지를 `<unlabeled>/o365/` 로 복사하고(원본은 그대로) DB 에 status='pending',
 source='o365', 박스 origin='o365' 로 넣는다. 승인하면 다른 사진처럼 tidy·분할을 탄다.
@@ -56,7 +60,7 @@ O365_ROOT = Path(r"E:\datasets\objects365")
 MAP = {
     "Person": "person",
     "Car": "car", "SUV": "car", "Sports Car": "car",
-    "Van": "van",
+    "Van": "car",   # 11-02 전에는 van — 우리 van 을 car 로 합쳤다
     "Pickup Truck": "pickup",
     "Truck": "truck", "Heavy Truck": "truck", "Fire Truck": "truck",
     "Bus": "bus",
@@ -195,7 +199,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--config", default=None)
     ap.add_argument("--root", type=Path, default=O365_ROOT, help="Objects365 를 푼 폴더")
-    ap.add_argument("--limit", type=int, default=500, help="넣을 장수 (van 반, pickup 반)")
+    ap.add_argument("--limit", type=int, default=500, help="넣을 장수 (Van 반, Pickup Truck 반)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--apply", action="store_true", help="실제로 복사하고 DB 에 넣는다")
     args = ap.parse_args()
@@ -210,7 +214,7 @@ def main() -> int:
 
     d = build_index(args.root)
     pools, why = candidates(d, args.root)
-    print(f"후보: van 이 든 사진 {len(pools['Van']):,} / pickup 이 든 사진 {len(pools['Pickup Truck']):,}")
+    print(f"후보: Van 이 든 사진 {len(pools['Van']):,} / Pickup Truck 이 든 사진 {len(pools['Pickup Truck']):,}")
     for k, v in why.most_common():
         print(f"  뺌 — {k}: {v:,}")
 
