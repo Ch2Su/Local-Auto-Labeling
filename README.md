@@ -647,6 +647,7 @@ ltrb 거리의 L1 손실에 곱해집니다. 0 으로 두면 에러 없이 학�
 ```
 README.md              사용자 문서 (이 파일)
 CLAUDE.md              작업자 인수인계 — 실제로 겪은 함정, 라벨 판정 기준, 결정 기록
+LICENSE                GNU AGPL-3.0 (아래 '라이선스')
 requirements.txt       Windows .venv 패키지 (torch 는 cu130 인덱스에서 먼저 — '새 PC 에서 시작하기')
 projects.yaml          검수 UI 에 띄울 프로젝트 목록 (지금은 가시광 하나)
 config.yaml            설정 (가시광)
@@ -704,3 +705,12 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
   것이라면 `scan` 출력의 경고를 확인하세요.
 - 학습(WSL 학습 포함)과 자동 라벨링은 동시에 실행되지 않습니다. 작업은 한 번에 하나씩
   돕니다. 8GB VRAM 을 나눠 쓰면 Windows 에서는 에러 없이 몇 배 느려지기 때문입니다.
+
+## 라이선스
+
+이 저장소의 코드는 [GNU AGPL-3.0](LICENSE) 으로 공개합니다. 학습·자동 라벨링·SAM 을 Ultralytics 로
+하는데, Ultralytics 가 AGPL-3.0 이기 때문입니다(나머지 의존성은 MIT·BSD·Apache 계열). 이 코드를 고쳐
+배포하거나 고친 것을 네트워크 서비스로 제공하면, 그 소스도 AGPL-3.0 으로 공개해야 합니다.
+
+이미지·라벨 DB·학습한 가중치는 저장소에 들어 있지 않습니다. 쓰는 데이터셋(Objects365 등)과 사전학습
+가중치에는 각자의 이용 조건이 따로 있습니다.

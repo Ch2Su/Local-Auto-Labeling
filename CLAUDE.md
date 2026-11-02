@@ -159,6 +159,14 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
   만든 'Initial commit'(README 한 줄)을 `--force-with-lease` 로 덮어써서, 로컬 이력이 해시 그대로 올라갔다.
   - **훅은 push 하지 않는다 — push 는 사용자가 요청할 때만.** 올린 커밋은 다시 쓰지 말 것(amend·rebase 뒤
     force push 금지 — Gemini 칠판이 커밋을 해시로 가리킨다).
+  - **LICENSE 는 GNU AGPL-3.0 이다** (11-02, 사용자 결정 — 저장소 공개를 앞두고). 코드 9개 파일이 Ultralytics
+    (AGPL-3.0)를 import 해서 그 조건에 맞췄다. 의존성 중 AGPL 은 ultralytics·ultralytics-thop 뿐이고 나머지는
+    MIT·BSD·Apache 다. 본문은 GitHub `licenses/agpl-3.0` 그대로이고(Ultralytics 의 LICENSE 와 낱말까지 같다)
+    고치면 안 된다 — 라이선스 머리에 그렇게 적혀 있다.
+  - **공개 전 점검 (11-02, `9a247aa` 까지):** push 된 22개 커밋의 모든 파일 버전(blob 136개)과 커밋 메시지에서
+    키 모양(개인키·`sk-ant-`·`rpa_`·`ghp_`·`AIza` 등)·바이너리·지운 파일이 하나도 없었다. 공개하면 커밋 작성자
+    메일이 보인다 — 이력을 다시 쓰지 않는 한 못 지운다. 점검 스크립트는 남기지 않았다(`git rev-list --objects`
+    로 모든 blob 을 꺼내 `git cat-file --batch` 로 읽고 키 패턴으로 훑었다).
   - **GitHub 은 개인 private 저장소에서 비밀을 걸러 주지 않는다**(push protection 은 public 저장소나 조직의 유료
     플랜 몫이고, 개인 Pro 로는 안 된다). 그래서 `.gitignore` 맨 끝에 비밀 파일 이름(`.env`·`*.pem`·`id_ed25519*`·
     `credentials.*`·`.mcp.json`·`**/.gemini/settings.json` 등)과 runs/ 밖의 데이터 사본(이미지·DB·`.npy`)·영상·
