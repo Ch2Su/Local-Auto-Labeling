@@ -5,8 +5,9 @@
 드론 부감·스크린샷·영화 장면도 운영 대상이라, 분할·평가에서 특정 도메인이 한쪽(train/val/test)에 몰리지 않게 할 것.
 
 사용자 문서는 [README.md](README.md). 이 파일은 작업자가 **매번** 알아야 할 규칙만 담는다(11-02 에 105KB 에서 줄였다).
-경위·실측·사건 기록은 줄이기 전 판 `git show f7ea49a:CLAUDE.md`(절 이름이 같다), 학습·평가 기록은
-[docs/experiments.md](docs/experiments.md), 라벨 판정 기준 전문과 차종별 실물 예시는 [docs/label-rules.md](docs/label-rules.md).
+경위·실측·사건 기록은 줄이기 전 판 `git show f7ea49a:CLAUDE.md`(함정 번호와 큰 절 이름은 같다 — SAM·변경 이력·check 는
+'UI 조작' 에 합쳤다), 학습·평가 기록은 [docs/experiments.md](docs/experiments.md), 라벨 판정 기준 전문과 차종별 실물 예시는
+[docs/label-rules.md](docs/label-rules.md).
 
 **Gemini 와 함께 쓴다 (2026-10-25 사용자 결정).** 코드·설정·DB 수정은 **Claude**, 코드 리뷰·읽기 전용 실측 검증·아이디어는
 **Gemini** 가 맡는다. 칠판은 `docs/collab.md` — git 에 담지 않는 로컬 파일이고 150줄 안쪽으로 유지한다. 턴을 시작할 때
@@ -21,7 +22,9 @@
   크레딧이 다시 나간다.
 - C: 에 백업을 새로 뜨기 전에 이전 날짜 폴더를 지울지(C: 는 남은 공간이 적다).
 - 로컬에서 x·l 960 을 재는 일 — VRAM 이 넘쳐 느려지니, 사용자가 GPU 를 쓰는 중이면.
-- `labeler.py split --reset` — 지금까지의 점수 비교가 끊긴다.
+- GitHub 의 옛 저장소 `Local-Auto-Labeling-old` 를 지우거나 공개로 바꾸는 일 — 옛 이력·원래 메일이 그대로다.
+- **`labeler.py split --reset --yes` 는 사용자가 직접 돌린다** — 리셋하면 학습에 쓴 이미지가 test 로 갈 수 있어 지금까지의
+  모델(visible-3 포함) test 점수를 쓸 수 없게 된다.
 
 키는 환경 변수에만 둔다 — **`RUNPOD_API_KEY` 같은 키 값을 읽거나 출력하지 말 것.**
 
@@ -56,7 +59,8 @@
 - 초 단위 과금이고 멈춘 pod 도 볼륨 요금($0.20/GB/월)이 나간다. **멈춘 pod 는 다시 안 켜질 수 있다** — 결과는 바로 받고 다
   쓰면 지운다. pod 는 스스로 못 멈춘다(pod 안의 키는 Unauthorized) — MCP 의 `pod-action stop` 이나 콘솔에서 멈춘다.
 - **고른다면 RTX 6000 Ada** — x960 b16 한 스텝이 A40 869ms / Ada 513ms / A100 423ms 라 A40 과 총비용은 같고 시간은 60%다
-  (스텝은 RAM 캐시로 잴 것 — 아니면 디코딩을 잰다). 09-18 A40 비교 결과는 `runs/compare_a40/`·docs/experiments.md.
+  (스텝은 RAM 캐시로 잴 것 — 아니면 디코딩을 잰다). 09-18 A40 비교(300 스케줄의 60 epoch) 결과는 `runs/compare_a40/`·
+  docs/experiments.md — resume.pt 는 pod 와 함께 사라져 300 epoch 은 처음부터다(비용도 그 기준으로 말할 것).
 - 절차는 `runs/runpod/`(묶음 tar → scp → `pod_probe.sh` → `pod_compare.sh`). 묶음을 만든 `make_bundle.py` 는 저장소에 없다 —
   DB 로 `data/visible/dataset` 을 만들어 tar 로 묶는 스크립트를 새로 짤 것.
 - 학습 전에 **`pip install --break-system-packages -U pillow` 와 `labels/*.cache` 삭제** — 이미지의 Pillow 11.0.0 은 확장자만
@@ -67,7 +71,7 @@
 **Roboflow.** 09-28 에 claude.ai 커넥터로 붙였는데 11-02 에는 커넥터 목록에 없다(다시 쓰려면 claude.ai 커넥터 설정에서).
 **워크스페이스는 비어 있다** — 스토리지 크레딧 때문에 사용자가 09-28 에 데이터를 전부 지웠고 휴지통도 10-02 에 비웠다.
 **그래서 로컬이 유일한 사본이다**(아래 '다른 디스크 백업').
-- 데이터를 받을 때는 **COCO 로**(함정 4). Universe 검색은 조회만 한다.
+- 데이터를 받을 때는 **COCO 로**(함정 4). Universe 검색은 조회만 한다(크레딧이 드는지는 확인하지 않았다).
 - **남의 데이터셋을 넣을 때:** 시드(COCO) 경로는 라벨을 **검수 없이 곧바로 approved** 로 넣고, config 의 `classes` 와 이름이
   다른 카테고리(`pedestrian`·`SUV`·`Pickup Truck` 등)는 **버린다**(`coco_io.read_coco`). 미라벨 폴더로 넣으면 라벨을 읽지
   않는다. 그래서 카테고리 이름을 먼저 우리 클래스로 바꾸고, 우리 클래스를 **빠짐없이** 라벨한 데이터인지 볼 것 — 사람이
@@ -81,7 +85,8 @@
   `include_pending: false` 라 안전하다).
 - 넣을 때의 사용자 결정: Scooter → motorcycle, isfake·isreflected 박스는 버리고, 우리 클래스에 iscrowd 가 있거나 Ambulance 가
   있는 사진은 뺀다. O365 의 Van 은 우리 기준과 다르고(SUV·캐노피 픽업·버스 뒷면이 섞임 — 11-02 부터 car 로 넣는다) Pickup
-  Truck 에도 세단·SUV 오표기가 있으니 **검수를 거칠 것.** 이미지는 Flickr CC 라 NonCommercial 이 섞여 있다.
+  Truck 에도 세단·SUV 오표기가 있으니 **검수를 거칠 것**(Van 으로 들어온 캐노피 픽업은 pickup, 버스 뒷면은 bus 로). O365 의
+  `Hoverboard`(세그웨이류)도 우리 scooter 가 아니다. 이미지는 Flickr CC 라 NonCommercial 이 섞여 있다.
 - `tools/test_baseline.py` 의 all·nodrone 은 source='o365' 를 뺀다(O365 만은 `o365`, 전부는 `all_o365`).
   `objects365_v1_…` 이름은 연번 계열로 묶지 않는다(`grouping._INDEPENDENT` — 아니면 전부 한 묶음이 된다).
 - json(5.14GB)을 흘려 읽을 때는 객체째 잘라 `json.loads` 할 것 — 뒤쪽 주석은 필드 순서가 다르다.
@@ -95,7 +100,8 @@
   내용을 볼 것. **올린 커밋은 다시 쓰지 말 것**(amend·rebase 뒤 force push 금지 — 칠판이 커밋을 해시로 가리킨다). 11-02 에
   커밋 메일을 감추느라 이력을 한 번 다시 쓴 것(사용자 결정)만 예외다. 그 옛 이력은 로컬 `refs/archive/pre-noreply/main` 에
   있다 — **이 ref 는 push 하지 말 것**(옛→새 해시 대응표 `.git/noreply-rewrite-20261102.map`, 옛 저장소
-  `Local-Auto-Labeling-old` 는 private).
+  `Local-Auto-Labeling-old` 는 private). **public 에 올라간 것은 이력을 고쳐 force push 해도 GitHub 에 옛 커밋이 해시로
+  남는다**(11-02 에 새 저장소로 옮긴 이유) — 키·개인정보가 올라갔으면 지워졌다고 여기지 말고 바로 사용자에게 알릴 것.
 - **이 저장소의 `user.email` 은 `.git/config` 의 noreply 다**(`42445310+chisu0208@users.noreply.github.com`). 새로 클론한 곳에서는
   자동 커밋 훅이 돌기 전에 같은 설정을 할 것 — 안 하면 원래 메일이 다시 커밋에 들어간다.
 - **턴이 끝날 때마다 자동 커밋된다**(`.claude/settings.json` 의 Stop 훅 → `.claude/hooks/autocommit.sh`, 추적 파일이라 클론한
@@ -108,10 +114,12 @@
 - 코드 리뷰·수정 범위는 `git diff HEAD~N`·`git log` 로 잡는다(작업 트리는 턴마다 비워진다).
 - **LICENSE 는 GNU AGPL-3.0 이다**(11-02 — 코드가 Ultralytics(AGPL-3.0)를 import 한다). 본문은 GitHub `licenses/agpl-3.0`
   그대로이고 고치면 안 된다.
-- **비밀:** GitHub 비밀 검사·push 보호를 켰다(11-02). 그것이 모르는 비밀은 `.gitignore` 맨 끝의 비밀 파일 이름 블록(`.env`·
-  `*.pem`·`id_ed25519*`·`credentials.*`·`.mcp.json`·`**/.gemini/settings.json` 등, runs/ 밖의 데이터 사본·영상·로그·압축)과 훅의
-  키 검사가 막는다. 새 비밀 패턴은 그 블록에 넣을 것 — runs/ 화이트리스트보다 **뒤에** 있어야 runs/ 아래에서도 먹는다. 손으로
-  하는 커밋은 훅을 거치지 않는다. `runs/runpod/` 의 json·`.claude/worktrees/` 도 뺀다.
+- **비밀:** GitHub 비밀 검사·push 보호를 켰다(11-02) — GitHub 이 아는 종류의 키만 막는다. 그 밖에는 `.gitignore` 맨 끝의 비밀
+  파일 이름 블록(`.env`·`*.pem`·`id_ed25519*`·`credentials.*`·`.mcp.json`·`**/.gemini/settings.json` 등, runs/ 밖의 데이터
+  사본·영상·로그·압축)과 자동 커밋 훅의 키 모양 검사(정해진 패턴만)뿐이다. **이름 블록은 추적되는 파일을 못 막는다** —
+  `.claude/settings.json` 의 `env`·runs/ 화이트리스트의 .json·.yaml 메모에 키를 적으면 훅의 검사만 남고, 손으로 하는 커밋은 그것도
+  거치지 않는다. 그래서 키는 환경 변수에만 둔다. 새 비밀 패턴은 그 블록에 넣을 것 — runs/ 화이트리스트보다 **뒤에** 있어야
+  runs/ 아래에서도 먹는다. `runs/runpod/` 의 json·`.claude/worktrees/` 도 뺀다.
 - **줄끝:** `.gitattributes` 가 `*.sh` 만 LF 로 고정하고, 나머지는 CRLF·LF 가 섞인 채 바이트 그대로다(이 파일은 CRLF).
   작업 트리의 .sh 를 CRLF 로 저장하면 git 에는 안 보이는데 WSL 이 `$'\r'` 오류를 낸다 — `git ls-files --eol -- '*.sh'` 의
   `w/crlf` 로 찾아 `sed -i 's/\r$//' <파일>`.
@@ -166,8 +174,8 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 
 ## 라벨 기준
 
-전문·차종별 실물 예시·전수 검사 기록은 [docs/label-rules.md](docs/label-rules.md). **배달 로봇은 라벨하지 않는다**(드론
-주차장 장면의 흰 소형 차량 — 모델이 car 로 잡아 missing 후보로 나와도 무시할 것).
+전문·차종별 실물 예시·전수 검사 기록은 [docs/label-rules.md](docs/label-rules.md) — 판정 기준을 바꾸면 그 파일도 같이 고칠
+것. **배달 로봇은 라벨하지 않는다**(드론 주차장 장면의 흰 소형 차량 — 모델이 car 로 잡아 missing 후보로 나와도 무시할 것).
 
 **차량 클래스 판정 순서** — 크기나 용도가 아니라 **차체가 한 덩어리인가**로 본다. 위에서부터 처음 걸리는 것으로 정한다.
 **11-02 에 van 을 car 로 합쳤다**(사용자 결정) — 가를 것은 pickup·truck·bus 와 그 밖(car)이다.
@@ -211,7 +219,8 @@ scooter 1,031  truck 1,047  pickup 730
   가리킨다). 맨 끝 클래스를 없앨 때는 `tools/merge_class.py` — van 합침 묶음은 van 을 되살리기 전에는 되돌리기가 409 로
   막힌다. 합치자 같은 자리에 car 가 둘이 된 5185(test)는 칠판 묶음 1 의 DB 6건에 들어 있다.
 - **점수는 클래스별로 비교할 것.** 7클래스 시절 점수(visible-3 0.6868, A40 비교)도, 9클래스 라벨로 잰 09-27 기준선(전체 0.5174)도
-  지금 라벨과 바로 견줄 수 없다 — 다음 모델과 견주려면 visible-3 을 **지금 라벨로 다시 잴 것**(기록은 `--history`). **비CCTV 가
+  지금 라벨과 바로 견줄 수 없다 — 다음 모델과 견주려면 visible-3 을 **지금 라벨로 다시 잴 것**(표는 docs/experiments.md
+  '9클래스 기준선', 기록은 `--history`). **비CCTV 가
   가장 약하다**(09-27 0.378) — 비CCTV 는 `source='unlabeled'` 로 가른다(옛 `--like "data\labeled"` 는 0장에 걸린다 — 쓰지 말 것).
 - car 의 약 14% 는 **고정 CCTV 한 대의 795프레임에 세워진 두 대**다(옛 van 쏠림 — 그 카메라는 통째로 train). 모델이 외울
   여지가 있다.
@@ -232,9 +241,12 @@ scooter 1,031  truck 1,047  pickup 730
   모델 모두 장면째 못 본 이미지로만 비교한다(docs/experiments.md).
 
 **폴더는 `data/visible/` 다.** DB 는 이미지를 **절대경로**로 들고 있어 폴더를 옮기면 `images.path` 도 치환해야 한다(스니펫은
-README '새 PC 에서 시작하기' 5단계). 스캔은 DB 의 절반 넘게 '파일 없음' 이면 멈춘다(`scan --force` 로 강행 — 경로를 고치기
-전 스캔은 시드를 검수 전 라벨로 다시 넣는다).
-- `seed/seed1`·`seed2` — 로보플로 COCO 내보내기(**유일한 사본**). `labeled/` — tidy 가 옮긴 검수분. `unlabeled/` — 새로 넣는 사진.
+README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 스캔·학습·`prune`·정리 버튼을 쓰지 말 것** — 스캔은 시드를 검수
+전 라벨로 다시 넣고(그래서 DB 의 절반 넘게 '파일 없음' 이면 멈춘다, `scan --force` 로 강행), 웹 UI 의 정리(tidy)는 뒤이어
+`prune` 을 돌려 '파일 없음' 행을 **검수 상태·라벨째 지운다**(절반 넘게 없을 때만 멈추니, 일부만 되살린 상태면 그만큼 지운다).
+- `seed/seed1`·`seed2` — 로보플로 COCO 내보내기(**유일한 사본**). `seed_coco: data/visible/seed` 는 하위 폴더까지 COCO 주석
+  json 을 **전부** 찾아(`coco_io.find_annotation_files`) 검수 없이 승인으로 넣으니, 검토 전 데이터나 json 사본을 `seed/` 아래에
+  두지 말 것(새 회차는 `seedN/` 에 `coco/*.json` + `images/`). `labeled/` — tidy 가 옮긴 검수분. `unlabeled/` — 새로 넣는 사진.
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개).
@@ -267,7 +279,8 @@ PC 에서 시작하기' 4·5단계대로 네 폴더만** 가져온다 — 백업
 
 학습은 WSL 이 **약 4배 빠르다**(09-12 같은 조건 전체 학습: epoch 258초 → 62초 — ram 캐시·워커 8·fork 덕인데 몫은 가르지
 않았다). 환경은 WSL Ubuntu 의 miniconda `~/miniconda3/envs/yolo_final`(ultralytics 8.4.142, torch 2.11+cu130). **패키지를 올릴
-때는 드라이런으로 torch 를 안 건드리는지 먼저 볼 것** — PyPI 의 torch 가 cu130 빌드를 덮어쓸 수 있다.
+때는 드라이런으로 torch 를 안 건드리는지 먼저 볼 것** — PyPI 의 torch 가 cu130 빌드를 덮어쓸 수 있다. 되돌릴 기준은
+`~/yolo_final_freeze_before_upgrade.txt`(09-11 업그레이드 전 freeze).
 
 버튼(`wsl_train.py`)은 DB 로 `data/visible/dataset` 을 만들고 → `sync_dataset.sh` 로 WSL 에 복사(`--delete`) → `train_wsl.py`
 를 돌리며 로그를 중계하고 → 끝나면 `promote_weights()` 로 `models/best.pt` 를 바꾼다. [중단] 은 WSL 쪽 `STOP` 파일을 만든다.
@@ -303,9 +316,10 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 
 실제로 겪고 원인까지 확인한 것들이다. 모두 **에러 없이 조용히 성능만 깎거나 데이터를 잃는** 종류라 재발하기 쉽다.
 
-1. **`dfl` 을 0으로 두지 말 것.** `train.overrides.dfl` 은 DFL 전용이 아니라 **박스 거리 손실 게인**이다(yolo26 은 ltrb 거리
-   L1 에 곱한다). 0이면 좌표 정밀도만 조용히 깎인다(합성 A/B: mAP50 은 같고 mAP50-95 가 0.953 대신 0.902).
-   `trainer.check_box_distance_gain()` 이 경고한다.
+1. **`dfl` 을 0으로 두지 말 것.** `train.overrides.dfl` 은 DFL 전용이 아니라 **박스 거리 손실 게인**이다 — yolo11(reg_max=16)은
+   DFL 에, yolo26(reg_max=1)은 ltrb 거리 L1 에 곱한다(근거: `ultralytics/cfg/default.yaml` 의 dfl 주석 *"DFL when reg_max > 1,
+   L1 on DFL-free YOLO26"*, `utils/loss.py` 의 `loss[2] *= hyp.dfl`). 0이면 좌표 정밀도만 조용히 깎인다(합성 A/B: mAP50 은 같고
+   mAP50-95 가 0.953 대신 0.902). `trainer.check_box_distance_gain()` 이 경고한다.
 2. **Windows 에서 `cache: ram` 금지.** spawn 이라 워커마다 RAM 캐시를 피클하다 `OSError: [Errno 22] … _ImageCache` 로 죽는다
    (뒤따르는 `_workers_status` 는 잡음). 지금 `cache: disk`. Linux(WSL·pod)에서는 ram 이 맞다. `trainer.check_ram_cache()` 가 경고한다.
 3. **하드링크 금지(`hardlink_images: false`).** Ultralytics 는 깨진 JPEG 을 그 자리에 다시 저장해서, 하드링크면 **원본이 덮인다**
@@ -319,9 +333,13 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    깨졌다(CR 이 섞이면 진단도 어렵다). 특히 문자열 리터럴이 있는 곳.
 7. **Windows 에서 Ultralytics `train()`/`val()` 을 부르는 스크립트는 `if __name__ == "__main__":` 가드 안에 둘 것** — 없으면 spawn
    워커가 스크립트를 다시 import 해 죽거나 CPU 0% 로 조용히 멈춘다. 일회용 분석이면 `workers=0` 이 간단하다.
-8. **끝난 학습의 `last.pt` 로는 이어 학습할 수 없다** — `final_eval()` 의 `strip_optimizer()` 가 `last.pt`·`best.pt` 를 덮는다
-   (epoch -1, yolo26s 60MB → 20MB). 그래서 `trainer.attach_callbacks()` 가 중단이 확정된 epoch 의 `last.pt` 를 `resume.pt` 로
-   복사해 둔다. 강제 종료(kill·정전)는 오히려 `last.pt` 가 온전하다.
+8. **학습이 끝나면 — 정지 파일·중단 버튼으로 멈춰도 — `last.pt` 로는 이어 학습할 수 없다.** 어느 쪽이든 `final_eval()` 의
+   `strip_optimizer()` 가 `last.pt`·`best.pt` 를 덮는다(epoch -1, yolo26s 60MB → 20MB). 그래서 `trainer.attach_callbacks()` 가
+   중단이 확정된 epoch 의 `last.pt` 를 `resume.pt` 로 복사해 두고, 이어하기는 그것으로 한다. 강제 종료(kill·정전)는 오히려
+   `last.pt` 가 온전하다.
+   - 복사할 수 있는 자리는 `on_fit_epoch_end`(`save_model()` 직후·`final_eval()` 전) 하나뿐이고, Ultralytics 는 patience 조기
+     종료에도 `trainer.stop` 을 세운다 — **Ultralytics 를 올리면 이 두 가지를 소스로 다시 볼 것**(requirements.txt 주석). 이
+     로직은 `trainer.py` 와 `train_wsl.py`(Windows 코드를 import 하지 않는다)에 따로 있어, 고칠 때는 둘 다 고친다.
    - **정상 중단은 정지 파일로** — `runs/STOP`(WSL 은 `~/new_env/yolo/runs_wsl/STOP`)을 만들면 다음 배치 경계에서 멈추고
      resume.pt 를 남긴다(그 epoch 의 나머지는 건너뛴다). 웹 UI 중단 버튼도 같다. **Ctrl+C 는 가로채지 않는다**(즉시 종료 —
      워커가 먼저 죽기 때문이다. epoch 하나만 잃는다).
@@ -391,7 +409,9 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 - 같은 자리 일괄 수정(`store.same_place` → `set_class_bulk`)은 적용 때 다시 찾아 미리 본 수와 다르면 409, 묶음째 되돌리기는 그
   뒤 손대지 않은 이미지만 되돌린다. 묶음(grp)이 정해지기 전의 새 이미지는 쓸 수 없다.
 - **예측 비교(P)** 는 운영 가중치로 한 장 추론만 하고 DB 에 쓰지 않는다(비교는 브라우저 `computeFindings`, 규칙은
-  `tools/label_qa.py` 와 같다). 모델이 모르는 클래스(visible-3 은 pickup)는 비교하지 않는다.
+  `tools/label_qa.py` 와 같고 예측 하한만 다르다 — label_qa 0.10, P 는 `predict.conf` 0.25). 모델이 모르는 클래스(visible-3 은
+  pickup)는 비교하지 않는다. 올릴 때 빈 이미지로 예열하는데, **자동 라벨링(`AutoLabeler`)은 예열하지 않는다** — 첫 추론이 CUDA
+  초기화로 길어지면 NMS 시간 제한에 걸려 검출이 'NMS time limit exceeded' 경고만 남기고 잘릴 수 있다(한 번 봤고 조건은 모른다).
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
   가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
   모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).

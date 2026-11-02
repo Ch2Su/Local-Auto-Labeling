@@ -211,7 +211,7 @@ epoch 3·30·53 에서 세 번 중단했다 이어서, **epoch 276 조기 종료
 
 라벨 수정과 분할 조정으로 test 가 바뀌어서 같은 가중치(visible-3 e156, `models/best_visible3.pt`)로
 단계마다 다시 쟀다. **7클래스 시절 값이다** — 09-20 에 pickup·van 이 생긴 뒤의 9클래스 기준선은
-`runs/test_baseline/history.jsonl` (CLAUDE.md '현재 데이터 상태'). 11-02 에 van 을 car 로 합쳐 8클래스가
+`runs/test_baseline/history.jsonl` (아래 '9클래스 기준선'). 11-02 에 van 을 car 로 합쳐 8클래스가
 됐으니, 그 뒤 기록의 car 는 9클래스 기록의 car 와 바로 견주지 말 것.
 
 | test 구성 | mAP50-95 | mAP50 |
@@ -265,6 +265,24 @@ bicycle −0.065, scooter −0.086, motorcycle −0.101. **7개 전부 visible-2
 - 그래서 **평가용 분할과 운영 모델 학습은 따로 생각할 것.** 분할은 모델끼리 비교하는
   잣대로 두고, 운영 가중치는 검증된 설정·epoch 수로 전체 데이터에 다시 학습하는 방법이
   있다 (아직 해 보지 않았다).
+
+### 9클래스 기준선 (2026-09-27, CLAUDE.md 에서 11-02 에 옮김)
+
+09-27 라벨로 다시 잰 visible-3 기준선이다(`tools/test_baseline.py --domains`, visible-3 = `models/best.pt` sha256
+`ca1f9f5c…`, 640). `runs/test_baseline/history.jsonl` 에 09-23 기록과 함께 있고 `--history` 로 볼 수 있다.
+
+| 도메인 | 장 / 박스 | mAP50-95 (9클래스 평균) | 09-23 | 클래스별 mAP50-95 (09-27) |
+|---|---|---|---|---|
+| 전체 | 968 / 6,508 | **0.5174** | 0.5208 | bus 0.887 · car 0.753 · person 0.625 · truck 0.618 · bicycle 0.611 · motorcycle 0.582 · scooter 0.581 · **pickup 0 (99) · van 0 (60)** |
+| 드론 | 36 / 491 | 0.5215 | 0.5215 | car 0.750 · **person 0.293** |
+| 비CCTV | 139 / 488 | 0.3780 | 0.3788 | bus 0.851 · bicycle 0.543 · car 0.530 · person 0.430 · truck 0.395 · motorcycle 0.355 · scooter 0.298 |
+| 드론 제외 | 932 / 6,017 | 0.5212 | 0.5251 | |
+
+**같은 가중치인데 09-23 보다 낮은 것은 라벨이 바뀐 몫이다** — car −0.025·truck −0.017 이 대부분이다. car·truck 박스를
+van·pickup 으로 옮기자, 그 둘을 모르는 visible-3 이 여전히 car·truck 으로 잡아서 오검출이 됐다. 평균에 pickup·van 의 0 이
+들어가 옛 7클래스 값보다 낮게 나온다. 드론 person 0.2929 는 09-18 부터 소수 4자리까지 같다. **이 표는 9클래스 라벨로 잰
+것이라 11-02(van → car) 뒤의 라벨과 맞지 않는다** — 다음 모델과 견주려면 visible-3 을 지금 라벨로 한 번 더 잴 것. 비CCTV 가
+가장 약하다 — 바뀐 방향(어떤 이미지든)에서는 여기가 가장 큰 약점이다.
 
 ## 모델 크기 × 해상도 × batch 별 학습 VRAM (2026-09-18, WSL)
 
