@@ -674,6 +674,7 @@ runs/                  Windows 학습 로그·그래프·체크포인트
                        (WSL 학습은 WSL 안의 ~/new_env/yolo/runs_wsl)
 wsl/                   WSL 학습 스크립트 (웹 UI 'WSL 학습' 버튼이 부른다)
 docs/experiments.md    실험·비교 기록 (모델 선택 근거)
+docs/label-rules.md    라벨 판정 기준 전문 (차종별 실물 예시·점검 기록)
 src/autolabel/         소스
 tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\python.exe tools\<이름>.py`
   import_o365.py       Objects365 의 Van·Pickup Truck 사진을 검수 대기로 넣는다 (기본은 보기만, --apply 로 넣음.
