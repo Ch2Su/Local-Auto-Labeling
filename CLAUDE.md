@@ -44,7 +44,11 @@ requirements.txt` 가 'No matching distribution' 으로 멈춘다. 이미 CPU �
 .venv/Scripts/python.exe -m pip install torch==2.14.0+cu130 torchvision==0.29.0+cu130 --index-url https://download.pytorch.org/whl/cu130
 ```
 
-**Runpod (클라우드 GPU 대여) — MCP 서버 `runpod` 로 붙어 있다 (2026-09-18).** 키는 Windows 사용자
+**Runpod (클라우드 GPU 대여) — MCP 서버 `runpod` 는 11-02 에 뺐다** (사용자가 필요 없는 MCP 를 정리해 달라고 해서 —
+도구 93개가 모든 세션에 붙었고, 그날 pod·볼륨 0개를 확인했다. 공식 플러그인 `runpod@runpod`·그 마켓플레이스도 같이
+빠졌다). 09-18 에 붙였던 것이고, 다시 쓰려면 PowerShell 에서
+`claude mcp add --scope user --transport http runpod https://mcp.getrunpod.io/ --header "Authorization: Bearer $env:RUNPOD_API_KEY"`
+로 붙이고 새 세션을 연다 — 키는 화면에 안 나오고 `~/.claude.json` 에 그대로 적힌다(09-18 판도 그랬다). 키는 Windows 사용자
 환경 변수 `RUNPOD_API_KEY` 에 사용자가 넣었다 — **키 값을 읽거나 출력하지 말 것.** 공식 플러그인의
 OAuth 는 이 데스크톱 앱에서 안 돼서(redirect_uri 가 claude.ai 라 거절) API 키 방식이다. MCP 는
 pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows 기본 `ssh`·`scp`·`tar` 로 한다
@@ -52,10 +56,10 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
 - **pod 를 만들기 전에 GPU·예상 시간·비용을 사용자에게 말하고 허락받을 것.** 초 단위 과금이고
   멈춘 pod 도 볼륨 요금($0.20/GB/월)이 나간다. **멈춘 pod 는 다시 안 켜질 수 있다**(09-20 '남는 GPU
   없음') — 결과는 바로 받고 다 쓰면 지운다. pod 는 스스로 못 멈추므로(pod 안의 키는 Unauthorized)
-  대화에서 `pod-action stop`.
-- **지금 pod·볼륨은 없다** (09-24 확인). A40 pod(09-18~20, 약 $4.2)는 지웠고 결과(best.pt 3개·
-  results.csv·로그)는 `runs/compare_a40/` 에 있다. resume.pt 는 pod 와 함께 사라졌다 — 300 epoch 을
-  돌리려면 처음부터.
+  대화에서 MCP 의 `pod-action stop` 으로 멈춘다(MCP 를 다시 붙이기 전에는 Runpod 콘솔에서).
+- **지금 pod·볼륨은 없다** (09-24 확인, 11-02 다시 확인). A40 pod(09-18~20, 약 $4.2)는 지웠고
+  결과(best.pt 3개·results.csv·로그)는 `runs/compare_a40/` 에 있다. resume.pt 는 pod 와 함께 사라졌다 —
+  300 epoch 을 돌리려면 처음부터.
 - **GPU 를 고른다면 RTX 6000 Ada.** x960 b16 한 스텝: A40 869ms / Ada 513ms($0.84/시간) / L40S
   582ms / A100 423ms — Ada 가 A40 과 총비용은 같고 시간은 60%. 표와 재는 법은 docs/experiments.md 끝
   (**RAM 캐시로 잴 것** — 아니면 디코딩을 잰다).
@@ -73,7 +77,8 @@ pod·볼륨 관리와 가격 조회만 한다. 파일 전송·SSH 는 Windows �
 - SSH 로 `a && b && setsid nohup ... &` 처럼 목록째 띄우면 ssh 가 안 돌아온다(학습은 산다).
 - 로컬에서 x·l 960 을 재면 VRAM 이 넘쳐 느리다 — 사용자가 GPU 를 쓰는 중이면 먼저 물을 것.
 
-**Roboflow MCP — claude.ai 커넥터로 붙어 있다 (2026-09-28).** 도구 이름은 `mcp__<커넥터 id>__projects_list`
+**Roboflow MCP — 09-28 에 claude.ai 커넥터로 붙였는데, 11-02 에는 커넥터 목록에 없다**(빠진 때는 모른다). 다시
+쓰려면 claude.ai 의 커넥터 설정에서 붙인다. 붙어 있을 때 도구 이름은 `mcp__<커넥터 id>__projects_list`
 꼴(프로젝트·이미지·라벨·버전 내보내기·학습·Universe 검색·휴지통 등). OAuth 라 키가 없다.
 - **워크스페이스는 비어 있다** — 스토리지만으로 크레딧이 나가 사용자가 09-28 에 데이터를 전부 지웠다.
   `projects_list` 0개. 휴지통에 남아 있던 'My First Project'(object-detection, 09-28 삭제)도 **10-02 에
