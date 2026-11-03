@@ -2120,6 +2120,8 @@ document.querySelectorAll(".domain-bar [data-domain]").forEach((b) => {
 });
 // 체크박스에 포커스가 남으면 Space·Q 가 단축키로 가지 않는다(입력 칸은 단축키를 건너뛴다)
 $("#domain-group").onchange = (e) => e.target.blur();
+// 목록 필터도 고른 뒤 포커스를 놓는다 — 남아 있으면 ↑·↓ 가 이미지 대신 필터 값을 바꾼다
+document.querySelectorAll(".panel-left select").forEach((s) => s.addEventListener("change", () => s.blur()));
 
 $("#cf-toggle").onclick = (e) => {
   e.stopPropagation();
@@ -2198,8 +2200,9 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault(); setStatus("approved"); break;
     case "s": case "S": case "ㄴ":
       e.preventDefault(); skipOrAdvance(); break;
-    case "ArrowRight": e.preventDefault(); step(1); break;
-    case "ArrowLeft":  e.preventDefault(); step(-1); break;
+    // 목록이 세로라 위·아래로 넘긴다 (2026-11-03 사용자 요청, 전에는 ←·→)
+    case "ArrowDown": e.preventDefault(); step(1); break;
+    case "ArrowUp":   e.preventDefault(); step(-1); break;
     case "Delete": case "Backspace":
       if (S.sel >= 0) { e.preventDefault(); pushUndo(); S.boxes.splice(S.sel, 1); S.sel = -1; markDirty(); refresh(); }
       break;
