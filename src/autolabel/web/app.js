@@ -798,13 +798,16 @@ function renderBoxList() {
   });
 }
 
-function itemRow(im) {
+/** pos = 지금 필터·정렬에서 몇 번째인지(1부터). 묶음을 나눠도 이어서 센다. */
+function itemRow(im, pos) {
   const li = document.createElement("li");
   li.className = "item" + (S.cur && im.id === S.cur.id ? " active" : "");
+  li.dataset.id = im.id;
   const hue = 120 - Math.round(im.uncertainty * 120); // 초록(확실) -> 빨강(애매)
   li.innerHTML =
     `<span class="unc" style="background:hsl(${hue} 70% 50%)" ` +
     `title="불확실도 ${im.uncertainty}"></span>` +
+    `<span class="pos" title="지금 필터·정렬에서 ${pos}번째">${pos}</span>` +
     `<span class="nm"></span>`
     + (im.rare_cls != null ? '<span class="rare"></span>' : "")
     + (im.domain ? `<span class="dom dom-${im.domain}">${DOMAIN_NAME[im.domain] || im.domain}</span>` : "")
@@ -846,8 +849,26 @@ function renderImageList() {
     head.onclick = () => toggleChunk(idx);
     ul.appendChild(head);
 
-    if (ch.open) ch.images.forEach((im) => ul.appendChild(itemRow(im)));
+    if (ch.open) ch.images.forEach((im, i) => ul.appendChild(itemRow(im, ch.start + i + 1)));
   });
+}
+
+/** 이미지를 바꿀 때: 목록을 다시 그리지 않고 지금 이미지 표시만 옮긴 뒤, 그 줄이 목록 밖에
+ * 있으면 보이는 곳까지 굴린다. '전체' 로 6천 줄을 펼치면 다시 그리기가 한 번에 0.1초쯤 걸려
+ * 화살표를 누를 때마다 끊겼다(2026-11-03). 이미지 항목(도메인 등)을 바꿨으면 부르는 쪽이
+ * 먼저 renderImageList 를 부른다. 묶음을 펼칠 때는 굴리지 않는다 — 손으로 내려 본 자리에서
+ * 튕겨 나간다. */
+function markCurrent() {
+  const ul = $("#image-list");
+  const id = S.cur ? S.cur.id : null;
+  ul.querySelectorAll("li.item.active").forEach((li) => li.classList.remove("active"));
+  const li = id == null ? null : ul.querySelector(`li.item[data-id="${id}"]`);
+  if (li) li.classList.add("active");
+  ul.querySelectorAll("li.group").forEach((head, i) => {
+    const ch = S.chunks[i];
+    head.classList.toggle("has-current", !!ch && ch.images.some((im) => im.id === id));
+  });
+  if (li) li.scrollIntoView({ block: "nearest" });
 }
 
 /** 열려 있는 묶음들의 이미지를 순서대로 이어붙인 것이 곧 탐색 대상이다. */
@@ -962,6 +983,7 @@ async function setDomain(domain) {
   if (group) toast(`${res.changed}장을 ${unset ? "미분류로 되돌렸습니다" : DOMAIN_NAME[domain] + " 로 정했습니다"}`);
   if (unset) { renderImageList(); return; }
   if (S.filterDomain) await loadImageList();   // 필터에서 빠졌을 수 있다
+  else renderImageList();                      // 목록의 도메인 꼬리표를 바꾼다(loadImage 는 다시 그리지 않는다)
   await advanceFrom(id, idx);
 }
 
@@ -1712,7 +1734,9 @@ async function refreshResumeButton() {
 /** 목록을 묶음 단위로 다시 구성한다. keepOpen 에 있는 묶음 번호는 열린 채로 둔다. */
 async function loadImageList(keepOpen = null) {
   const status = $("#filter-status").value;
-  const size = Number($("#chunk-size").value) || 500;
+  // '전체' 는 묶음 하나에 다 담는다 (2026-11-03 사용자 요청)
+  const chunkValue = $("#chunk-size").value;
+  const size = chunkValue === "all" ? 1e9 : Number(chunkValue) || 500;
   $("#filter-order").disabled = status === "ids";   // 지정한 id 는 넣은 순서 그대로
   $("#cf-toggle").disabled = status === "ids";      // id 목록은 클래스 필터를 무시한다
   $("#filter-camera").disabled = status === "ids";  // 카메라 필터도 마찬가지
@@ -1834,7 +1858,7 @@ async function loadImage(id) {
   const ver = encodeURIComponent(meta.updated_at || "");
   img.src = url(`/api/images/${id}/file${ver ? `?v=${ver}` : ""}`);
 
-  renderImageList();
+  markCurrent();
 }
 
 /* ───────────────────────── 검수 동작 ───────────────────────── */

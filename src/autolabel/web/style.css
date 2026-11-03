@@ -183,6 +183,12 @@ kbd {
   font-variant-numeric: tabular-nums; color: var(--fg-dim); font-size: 11px;
 }
 .image-list li.item.active .nb { color: #dbe6ff; }
+/* 지금 필터·정렬에서 몇 번째인지 */
+.image-list .pos {
+  flex: none; min-width: 3.2em; text-align: right;
+  font-variant-numeric: tabular-nums; color: var(--fg-dim); font-size: 11px;
+}
+.image-list li.item.active .pos { color: #dbe6ff; }
 /* '드문 클래스 먼저' 정렬에서 그 이미지를 앞으로 끌어온 클래스 */
 .image-list .rare { font-size: 10px; font-weight: 600; flex: none; }
 .image-list .dom { font-size: 10px; flex: none; color: var(--fg-dim); }
