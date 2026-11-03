@@ -103,6 +103,12 @@ class Config:
         return resolve(self.get("data.classes_txt", self.db.parent / "classes.txt"))
 
     @property
+    def cameras(self) -> Path:
+        """카메라(출처 단위) 등록 파일. 기본값은 DB 옆 — 실제 설치 장소를 담아 git 에 넣지 않는다
+        (provenance.py 머리말)."""
+        return resolve(self.get("data.cameras", self.db.parent / "cameras.yaml"))
+
+    @property
     def base_weights(self) -> str:
         return pretrained_path(str(self.get("model.base", "yolo26s.pt")))
 

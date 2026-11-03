@@ -245,9 +245,17 @@ scooter 1,031  truck 1,047  pickup 712
 README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 스캔·학습·`prune`·정리 버튼을 쓰지 말 것** — 스캔은 시드를 검수
 전 라벨로 다시 넣고(그래서 DB 의 절반 넘게 '파일 없음' 이면 멈춘다, `scan --force` 로 강행), 웹 UI 의 정리(tidy)는 뒤이어
 `prune` 을 돌려 '파일 없음' 행을 **검수 상태·라벨째 지운다**(절반 넘게 없을 때만 멈추니, 일부만 되살린 상태면 그만큼 지운다).
-- `seed/seed1`·`seed2` — 로보플로 COCO 내보내기(**유일한 사본**). `seed_coco: data/visible/seed` 는 하위 폴더까지 COCO 주석
-  json 을 **전부** 찾아(`coco_io.find_annotation_files`) 검수 없이 승인으로 넣으니, 검토 전 데이터나 json 사본을 `seed/` 아래에
-  두지 말 것(새 회차는 `seedN/` 에 `coco/*.json` + `images/`). `labeled/` — tidy 가 옮긴 검수분. `unlabeled/` — 새로 넣는 사진.
+- **`legacy/` (2026-11-03)** — 촬영 위치·카메라·시각 같은 출처 없이 모인 지난 수집분(`seed/` 5,849장 + `labeled/` 718장, DB
+  `images.path` 6,567행도 같이 치환했다. 옮기기 전 DB: `labeling.db.bak_legacy_20261103_124639`). **앞으로의 수집은 출처를 밝혀
+  `legacy/` 밖에 둔다.** 새 이미지의 tidy 결과는 `legacy/` 가 아니라 새 `labeled/` 에 쌓인다(`config.yaml` 의 `labeled`).
+- `legacy/seed/seed1`·`seed2` — 로보플로 COCO 내보내기(**유일한 사본**). `seed_coco: data/visible/legacy/seed` 는 하위 폴더까지 COCO 주석
+  json 을 **전부** 찾아(`coco_io.find_annotation_files`) 검수 없이 승인으로 넣으니, 검토 전 데이터나 json 사본을 `legacy/seed/` 아래에
+  두지 말 것(새 회차는 `seedN/` 에 `coco/*.json` + `images/`). `legacy/labeled/` — 11-03 전에 tidy 가 옮긴 검수분. `unlabeled/` — 새로 넣는 사진.
+- **출처 기록 (11-03, [docs/provenance.md](docs/provenance.md))** — 새 수집분은 `unlabeled/<카메라키>/…` 에 두고 카메라를
+  `data/visible/cameras.yaml`(실제 장소 — git 에 넣지 말 것)에 먼저 등록한다. 등록 안 된 폴더가 있으면 scan 이 아무것도 넣지
+  않고 멈춘다. 들어온 이미지는 `source='collected'`·`images.camera`·`captured_at`(파일 이름 → EXIF, 못 찾으면 NULL), tidy 는
+  `labeled/images/<카메라>/` 로 옮긴다. **분할이 카메라를 알게 되는 2단계 전에는 카메라 이미지로 학습·`split` 을 돌리지 말
+  것** — 배정이 DB 에 고정돼 카메라째 한 분할이 깨진 채 굳는다.
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개).

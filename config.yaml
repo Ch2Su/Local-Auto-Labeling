@@ -21,9 +21,10 @@ data:
   # COCO JSON 으로 시드를 읽으려면 여기에 폴더(또는 json 파일)를 지정합니다.
   # 지정하면 위의 seed_images/seed_labels 대신 이쪽을 사용합니다.
   #
-  # 현재 구조 (2026-09-09, 09-21 에 data/visible/ 아래로 옮김). 로보플로 내보내기를 회차별로 쌓습니다.
-  #   data/visible/seed/seed1/{coco/*.json, images/}   5,929장  최초 시드
-  #   data/visible/seed/seed2/{coco/*.json, images/}      26장  추가분
+  # 현재 구조 (2026-09-09, 09-21 에 data/visible/ 아래로, 2026-11-03 에 legacy/ 아래로 옮김).
+  # 로보플로 내보내기를 회차별로 쌓습니다.
+  #   data/visible/legacy/seed/seed1/{coco/*.json, images/}   5,929장  최초 시드
+  #   data/visible/legacy/seed/seed2/{coco/*.json, images/}      26장  추가분
   #
   # 루트만 지정하면 하위의 COCO json 을 전부 찾아 읽습니다. 다음 회차는
   # seed3 폴더를 같은 모양으로 넣고 scan 만 돌리면 됩니다.
@@ -32,9 +33,16 @@ data:
   seed_coco: data/visible/legacy/seed
 
   # 자동 라벨링할 이미지들 (하위 폴더까지 재귀 탐색)
+  # 2026-11-03 부터 새 수집분은 unlabeled/<카메라키>/[<YYYYMMDD>/]<파일> 에 둔다 — 첫 폴더가 카메라다.
+  # 카메라는 아래 cameras 파일에 먼저 등록해야 하고, 등록 안 된 폴더가 있으면 scan 이 아무것도 넣지 않고
+  # 멈춘다. 바로 아래 둔 파일은 출처 없이 들어간다. 규칙 전문은 docs/provenance.md.
   unlabeled: data/visible/unlabeled
+  # 카메라(출처 단위) 등록 파일. 실제 설치 장소를 담으니 data/ 밖(저장소)으로 옮기지 말 것.
+  cameras: data/visible/cameras.yaml
   # '정리' 버튼으로 검수 완료 이미지를 옮겨 모으는 곳.
   # 이미지와 라벨 .txt 가 함께 저장되므로 그 자체로 완결된 YOLO 데이터셋이 됩니다.
+  # 2026-11-03: 그때까지 정리된 718장은 data/visible/legacy/labeled 로 옮겼다. 여기는 그 뒤 새로
+  # 수집한 이미지의 정리 결과만 쌓인다(첫 '정리' 때 만들어진다).
   labeled: data/visible/labeled
   # 학습용으로 자동 빌드되는 데이터셋 (직접 건드릴 필요 없음)
   dataset: data/visible/dataset
