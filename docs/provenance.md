@@ -1,4 +1,4 @@
-# 출처 기록 설계 (2026-11-03 — 1·2단계 구현됨, 3단계부터 남음)
+# 출처 기록 설계 (2026-11-03 — 1~3단계 구현됨, 4단계부터 남음)
 
 11-03 에 그때까지 모인 이미지를 `data/visible/legacy/` 로 옮겼다(출처 모름). 그 뒤로 새로 모으는 이미지는
 **어느 출처 단위(카메라)에서 언제 찍혔는지** 를 DB 에 남긴다. 이 문서는 그 규칙과 구현 계획이다.
@@ -92,15 +92,21 @@ cameras:
 
 시간대가 없는 값은 카메라의 `tz` 로 해석한다.
 
-## 영상 → 프레임: `tools/extract_frames.py` (새로 만든다)
+## 영상 → 프레임: `tools/extract_frames.py`
 
 ```bash
-.venv/Scripts/python.exe tools/extract_frames.py <영상> --camera pg-cross-01 --start "2026-11-03 14:00:00" --every 5s
+.venv/Scripts/python.exe tools/extract_frames.py <영상> --camera pg-cross-01 --start "2026-11-03 14:00:00" --every 5
 ```
 
 - `unlabeled/<카메라>/<YYYYMMDD>/<카메라>_<YYYYMMDD_HHMMSS>_<mmm>.jpg` 로 쓴다(시각 = 시작 + 프레임 시각).
 - `--start` 를 빼면 영상 이름에서 시각을 찾고, 없으면 멈춘다(시각 없는 프레임을 만들지 않는다).
-- 간격은 기본 5초. 직전 저장 프레임과 dHash 거리가 2 이하면 건너뛴다(정지 화면이 수백 장 쌓이는 것을 막는다).
+- 간격은 기본 5초(`--every`, 0·5·10초… 격자). 같은 이름이 있으면 건너뛰어 다시 돌려도 결과가 같다. `--dry-run` 은 셈만 한다.
+- **거의 같은 프레임 건너뛰기는 기본으로 끈다.** dHash 거리 2 이하로 건너뛰게 짰다가, VIRAT 옥상 영상에서 5초 간격
+  138장 중 125장이 걸렸다 — 8x8 dHash 는 화면 속 작은 사람·차를 못 본다. 대신 `--min-change <퍼센트>` 를 주면 직전
+  저장 프레임과 비교해 밝기가 20 넘게 바뀐 픽셀 비율(가로 320px)이 그보다 작을 때 건너뛴다. 같은 영상 137쌍의 비율은
+  중앙값 0.77%, 0.05% 미만(사실상 같은 화면) 22쌍 — 똑같은 화면만 빼려면 0.05 정도다. 바이트까지 같은 프레임은
+  scan 의 중복 검사(dupcheck)가 어차피 막는다.
+- 실측(11-03): VIRAT `VIRAT_S_000001.mp4`(1080p, 29.97fps, 11.5분)를 끝까지 훑는 데 32초.
 
 ## 분할
 
@@ -129,7 +135,7 @@ legacy 와 새 수집분(`source='collected'`)도 따로 잰다.
    카메라로 들어가는 것을 막는다). tidy 가 카메라 폴더를 유지한다.
 2. **(11-03 구현)** `grouping.group_images` 가 같은 카메라를 한 묶음으로, `split.ensure_splits` 가 `split:` 고정과
    카메라별 보고를 한다.
-3. `tools/extract_frames.py`.
+3. **(11-03 구현)** `tools/extract_frames.py`.
 4. `tools/test_baseline.py` 도메인 · 검수 UI 에 카메라·시각 표시와 카메라 필터.
 5. (따로) 공개 데이터셋 가져오기 — VIRAT 은 장면(`XXYY`)을 카메라로, 라벨은 **검수 대기**로 넣는다
    (행동과 무관한 객체 박스가 빠져 있다 — VIRAT 배포본 `docs/VIRAT_Video_Dataset_Release2.0_Introduction_v1.0.pdf` 3.1).
