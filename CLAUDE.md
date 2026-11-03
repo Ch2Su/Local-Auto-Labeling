@@ -256,6 +256,8 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
   않고 멈춘다. 들어온 이미지는 `source='collected'`·`images.camera`·`captured_at`(파일 이름 → EXIF, 못 찾으면 NULL), tidy 는
   `labeled/images/<카메라>/` 로 옮긴다. 분할은 **카메라째 한 묶음**이고 `cameras.yaml` 의 `split:` 으로 고정할 수 있다
   (고정이 다른 카메라가 dHash 로 이어지면 분할이 멈춘다). split 보고의 `카메라별:` 줄로 어디로 갔는지 볼 것.
+  검수 UI 는 카메라 필터·카메라·촬영 시각을 보여 주고, `test_baseline.py --domains` 는 `legacy`·`collected`·`cam:<키>`·
+  `kind:`·`mount:` 를 잰다 — **09-27 기준선과 같은 범위는 이제 `all` 이 아니라 `legacy`** 다(`all` 은 새 수집분도 담는다).
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개).

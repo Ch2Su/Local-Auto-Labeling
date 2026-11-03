@@ -127,8 +127,11 @@ def _iou_xywh(a, b) -> float:
 _write_lock = threading.Lock()
 
 
+NO_CAMERA = "__none__"   # 카메라 필터에서 '출처 없음(legacy)' 을 뜻하는 값
+
+
 def _list_where(
-    status: str | None, classes: list[int] | None, empty: bool
+    status: str | None, classes: list[int] | None, empty: bool, camera: str | None = None
 ) -> tuple[str, list]:
     """목록·개수가 함께 쓰는 WHERE 절. 둘이 어긋나면 묶음 수가 틀어진다.
 
@@ -141,6 +144,11 @@ def _list_where(
     if status and status != "all":
         parts.append("i.status=?")
         args.append(status)
+    if camera == NO_CAMERA:          # 카메라(출처, docs/provenance.md) — 다른 조건과 AND
+        parts.append("i.camera IS NULL")
+    elif camera:
+        parts.append("i.camera=?")
+        args.append(camera)
     if empty:
         parts.append("NOT EXISTS (SELECT 1 FROM boxes b WHERE b.image_id=i.id)")
     elif classes:
@@ -292,6 +300,7 @@ class Store:
         ids: list[int] | None = None,
         classes: list[int] | None = None,
         empty: bool = False,
+        camera: str | None = None,
     ) -> list[dict]:
         """검수 대상 목록. 기본은 불확실도 높은 순(= 사람이 볼 가치가 큰 순).
 
@@ -317,7 +326,7 @@ class Store:
             return [by_id[i] for i in wanted if i in by_id][offset:offset + limit]
 
         if order == "rare":
-            return self._list_rare(status, classes, empty, limit, offset)
+            return self._list_rare(status, classes, empty, limit, offset, camera)
 
         order_sql = {
             "uncertainty": "i.uncertainty DESC, i.id ASC",
@@ -325,7 +334,7 @@ class Store:
             "recent": "i.updated_at DESC, i.id DESC",
         }.get(order, "i.uncertainty DESC, i.id ASC")
 
-        where, args = _list_where(status, classes, empty)
+        where, args = _list_where(status, classes, empty, camera)
         sql = (
             "SELECT i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes"
             f" FROM images i{where} ORDER BY {order_sql} LIMIT ? OFFSET ?"
@@ -357,7 +366,8 @@ class Store:
                     "weight": (least / groups[c]) if groups.get(c) else 1.0}
                 for c in range(max(n_classes, max(groups, default=-1) + 1))}
 
-    def _list_rare(self, status, classes, empty, limit: int, offset: int) -> list[dict]:
+    def _list_rare(self, status, classes, empty, limit: int, offset: int,
+                   camera: str | None = None) -> list[dict]:
         """'드문 클래스 먼저' 정렬. 이미지 점수 = 박스마다 (신뢰도 × 그 클래스의 희소도) 중 최댓값.
 
         자동 라벨이 van·pickup 처럼 드문 클래스를 확신하는 이미지가 맨 앞에 온다 — 검수할
@@ -366,7 +376,7 @@ class Store:
         목록 묶음(100개씩…)과 맞도록 같은 조건의 전체를 점수로 줄 세운 뒤 잘라 준다.
         """
         rarity = self.class_rarity()
-        where, args = _list_where(status, classes, empty)
+        where, args = _list_where(status, classes, empty, camera)
         with self.connect() as con:
             rows = con.execute(
                 "SELECT i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes"
@@ -399,15 +409,24 @@ class Store:
         status: str | None = None,
         classes: list[int] | None = None,
         empty: bool = False,
+        camera: str | None = None,
     ) -> int:
         """`list_images` 와 같은 조건으로 개수만 센다.
 
         클래스로 거르면 상태별 개수(`counts()`)를 쓸 수 없어서 따로 센다. 목록 UI 는
         이 수로 묶음(100개씩…)을 나누므로 필터와 정확히 같은 조건이어야 한다.
         """
-        where, args = _list_where(status, classes, empty)
+        where, args = _list_where(status, classes, empty, camera)
         with self.connect() as con:
             return int(con.execute(f"SELECT COUNT(*) FROM images i{where}", args).fetchone()[0])
+
+    def camera_counts(self) -> dict[str | None, int]:
+        """카메라별 이미지 수(휴지통 제외). 출처 없는 이미지는 키 None."""
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT camera, COUNT(*) AS n FROM images WHERE status != 'trashed' GROUP BY camera"
+            ).fetchall()
+        return {r["camera"]: int(r["n"]) for r in rows}
 
     def next_image_id(self, current_id: int, status: str = "pending") -> int | None:
         """현재 이미지 다음으로 검수할 이미지. 목록과 같은 정렬 기준을 쓴다."""

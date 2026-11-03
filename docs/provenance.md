@@ -1,4 +1,4 @@
-# 출처 기록 설계 (2026-11-03 — 1~3단계 구현됨, 4단계부터 남음)
+# 출처 기록 설계 (2026-11-03 — 1~4단계 구현됨, 5단계(공개 데이터셋 가져오기)는 따로)
 
 11-03 에 그때까지 모인 이미지를 `data/visible/legacy/` 로 옮겼다(출처 모름). 그 뒤로 새로 모으는 이미지는
 **어느 출처 단위(카메라)에서 언제 찍혔는지** 를 DB 에 남긴다. 이 문서는 그 규칙과 구현 계획이다.
@@ -125,8 +125,17 @@ cameras:
 
 ## 평가
 
-`tools/test_baseline.py --domains` 에 출처 기준을 더한다: 카메라별, `kind` 별, `mount` 별(예: `mount=rooftop`).
-legacy 와 새 수집분(`source='collected'`)도 따로 잰다.
+`tools/test_baseline.py --domains` 가 고정 도메인에 더해 `legacy`(seed·unlabeled)·`collected` 를 재고, 그 분할에 카메라
+이미지가 있으면 `cam:<키>`·`kind:<형태>`·`mount:<설치>` 도 잰다(`--domain cam:pg-cross-01` 처럼 하나만도 된다).
+`all` 은 collected 도 담으므로 09-27 기준선과 같은 범위는 `legacy` 로 견준다. 출처 열이 없는 옛 DB 도 그대로 읽는다.
+
+## 검수 UI
+
+- 왼쪽 목록 위에 **카메라 필터**(`카메라: 전체 / <키> · 장소 (장수) / 출처 없음`) — 카메라가 붙은 이미지가 하나라도
+  있을 때만 보인다. 상태·클래스 필터와 AND 로 걸린다(`GET /api/images?camera=<키>`, 출처 없음은 `__none__`).
+  목록은 `GET /api/cameras`(DB 의 카메라별 장수 + 등록 파일의 장소·형태·고정 분할)로 채운다.
+- 이미지 머리줄에 `카메라 <키>(장소) <촬영 시각>` — 시각은 카메라 현지 시각 그대로, 모르면 `촬영 시각 모름`.
+- 카메라 등록·수정 화면은 없다 — `cameras.yaml` 을 손으로 고친다(등록 파일이 깨지면 필터 툴팁에 오류가 뜬다).
 
 ## 구현 순서
 
@@ -136,7 +145,7 @@ legacy 와 새 수집분(`source='collected'`)도 따로 잰다.
 2. **(11-03 구현)** `grouping.group_images` 가 같은 카메라를 한 묶음으로, `split.ensure_splits` 가 `split:` 고정과
    카메라별 보고를 한다.
 3. **(11-03 구현)** `tools/extract_frames.py`.
-4. `tools/test_baseline.py` 도메인 · 검수 UI 에 카메라·시각 표시와 카메라 필터.
+4. **(11-03 구현)** `tools/test_baseline.py` 출처 도메인 · 검수 UI 카메라 필터와 카메라·시각 표시.
 5. (따로) 공개 데이터셋 가져오기 — VIRAT 은 장면(`XXYY`)을 카메라로, 라벨은 **검수 대기**로 넣는다
    (행동과 무관한 객체 박스가 빠져 있다 — VIRAT 배포본 `docs/VIRAT_Video_Dataset_Release2.0_Introduction_v1.0.pdf` 3.1).
 

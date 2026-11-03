@@ -78,6 +78,12 @@
       <button id="cf-clear" class="linkbtn hidden" title="클래스 필터 해제">해제</button>
       <div id="cf-panel" class="cf-panel hidden"></div>
     </div>
+    <!-- 카메라(출처)로 거르기. 카메라가 붙은 이미지가 하나라도 있을 때만 보인다 (docs/provenance.md). -->
+    <div id="camera-filter" class="camera-filter hidden">
+      <select id="filter-camera" title="카메라(출처)로 거릅니다. 상태·클래스 필터와 함께 걸립니다.">
+        <option value="">카메라: 전체</option>
+      </select>
+    </div>
     <div class="goto">
       <input id="goto-ids" type="text" autocomplete="off"
              placeholder="id 로 열기 — 812 또는 812, 904, …"

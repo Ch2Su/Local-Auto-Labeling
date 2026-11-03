@@ -21,11 +21,12 @@ from .export import default_export_dir, export_yolo
 from .ingest import discover_classes, ingest
 from .jobs import JobManager
 from .predictor import AutoLabeler, LiveDetector
+from .provenance import load_cameras
 from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
 from .stopper import StopSignal
-from .store import Store
+from .store import NO_CAMERA, Store
 from .tidy import prune_missing, purge_trashed, tidy_approved
 from .trainer import find_resume_point
 from .trainer import resume_train as run_resume
@@ -190,6 +191,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             "height": r["height"],
             "n_boxes": r["n_boxes"],
             "uncertainty": round(float(r["uncertainty"]), 4),
+            "camera": r.get("camera"),
         }
         if "rare_score" in r:      # '드문 클래스 먼저' 정렬일 때만
             out.update(rare_score=r["rare_score"], rare_cls=r["rare_cls"],
@@ -200,6 +202,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
     def list_images(
         status: str = "pending", limit: int = 300, offset: int = 0, order: str = "uncertainty",
         ids: str | None = None, cls: str | None = None, empty: bool = False,
+        camera: str | None = None,
     ) -> dict:
         """`cls=2,4` 는 **두 클래스를 모두 가진** 이미지만, `empty=1` 은 박스가 없는 이미지만.
 
@@ -230,17 +233,43 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             if any(c >= n_classes for c in wanted_cls):
                 raise HTTPException(400, f"없는 클래스 번호입니다: {wanted_cls}")
 
+        camera = camera or None     # `camera=__none__` 은 출처 없는 이미지(legacy) — store.NO_CAMERA
         rows = store.list_images(
             status=status, limit=limit, offset=offset, order=order,
-            classes=wanted_cls, empty=empty,
+            classes=wanted_cls, empty=empty, camera=camera,
         )
-        if empty or wanted_cls:
+        if empty or wanted_cls or camera:
             # 거르면 상태별 개수를 쓸 수 없다. 목록 묶음이 이 수로 나뉘므로 같은 조건으로 센다.
-            total = store.count_images(status=status, classes=wanted_cls, empty=empty)
+            total = store.count_images(status=status, classes=wanted_cls, empty=empty, camera=camera)
         else:
             counts = store.counts()
             total = counts["total"] if status in ("all", None) else counts.get(status, 0)
         return {"total": total, "offset": offset, "images": [_list_row(r) for r in rows]}
+
+    def _cameras() -> tuple[dict, str | None]:
+        """등록 파일의 카메라와 읽기 오류. 화면 표시용이라 오류가 나도 목록은 DB 로 보여 준다."""
+        try:
+            return load_cameras(cfg.cameras), None
+        except ValueError as exc:
+            return {}, str(exc)
+
+    def _camera_place(key: str | None) -> str | None:
+        if not key:
+            return None
+        cam = _cameras()[0].get(key)
+        return cam.place if cam else None
+
+    @app.get("/api/cameras")
+    def list_cameras() -> dict:
+        """카메라 필터용: DB 에 있는 카메라(휴지통 제외)와 등록 파일의 장소·형태 (docs/provenance.md)."""
+        reg, error = _cameras()
+        counts = store.camera_counts()
+        cams = [{"key": k, "n": n, "place": reg[k].place if k in reg else None,
+                  "kind": reg[k].kind if k in reg else None,
+                  "mount": reg[k].mount if k in reg else None,
+                  "split": reg[k].split if k in reg else None}
+                for k, n in sorted((k, n) for k, n in counts.items() if k)]
+        return {"cameras": cams, "no_camera": counts.get(None, 0), "none_key": NO_CAMERA, "error": error}
 
     @app.get("/api/images/{image_id}")
     def get_image(image_id: int) -> dict:
@@ -265,6 +294,9 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             "n_history": store.history_count(image_id),
             "grp": row["grp"],
             "split": row["split"],
+            "camera": row["camera"],
+            "captured_at": row["captured_at"],
+            "camera_place": _camera_place(row["camera"]),
         }
 
     @app.get("/api/images/{image_id}/file")

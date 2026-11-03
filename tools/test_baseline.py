@@ -23,6 +23,11 @@
   data/visible/ 로 옮긴 뒤로 그 조건은 **0장**에 걸린다 — 그래서 경로가 아니라 source 로 가른다.
   **2026-10-03 부터 all·nodrone 은 Objects365(source='o365')를 뺀다** — 그 사진이 test 로 들어와도
   09-27 기준선과 같은 범위를 잰다. Objects365 만은 o365, 전부 합친 것은 all_o365.
+  **출처 (2026-11-03, docs/provenance.md):** legacy(출처 없는 지난 수집분 — seed·unlabeled) / collected(카메라
+  폴더로 들어온 새 수집분). 그 분할에 카메라가 붙은 이미지가 있으면 `--domains` 가 `cam:<키>` 와 cameras.yaml 의
+  `kind:<형태>`·`mount:<설치>` 도 잰다(카메라째 한 분할이라 test 의 카메라 = 처음 보는 카메라다).
+  all 은 collected 도 담는다 — 새 수집분이 test 로 들어오면 장수가 바뀌었다고 알리니, 09-27 기준선과 같은
+  범위는 legacy 로 견줄 것.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
 from autolabel.config import Config, resolve
+from autolabel.provenance import load_cameras
 from autolabel.yolo_io import Box, write_yolo_txt
 
 HISTORY = "runs/test_baseline/history.jsonl"
@@ -54,7 +60,30 @@ DOMAINS = {
     "nodrone": ("드론 제외", lambda r: "stabilized_" not in r["path"].lower() and r["source"] != "o365"),
     "o365": ("Objects365", lambda r: r["source"] == "o365"),
     "all_o365": ("전체+O365", lambda r: True),
+    "legacy": ("출처 없음(legacy)", lambda r: r["source"] in ("seed", "unlabeled")),
+    "collected": ("새 수집분", lambda r: r["source"] == "collected"),
 }
+
+
+def source_domains(cfg: Config, items: list[dict]) -> dict:
+    """그 분할에 있는 카메라로 도메인을 만든다: cam:<키>, kind:<형태>, mount:<설치> (docs/provenance.md).
+
+    등록 파일을 못 읽으면 카메라별만 잰다(형태·설치는 등록 파일에만 있다).
+    """
+    keys = sorted({it["camera"] for it in items if it.get("camera")})
+    if not keys:
+        return {}
+    out = {f"cam:{k}": (f"카메라 {k}", lambda r, k=k: r.get("camera") == k) for k in keys}
+    try:
+        reg = load_cameras(cfg.cameras)
+    except ValueError as exc:
+        print(f"  [알림] 카메라 등록 파일을 못 읽어 형태·설치별은 건너뜁니다: {str(exc).splitlines()[0]}")
+        return out
+    for attr in ("kind", "mount"):
+        for v in sorted({getattr(reg[k], attr) for k in keys if k in reg}):
+            out[f"{attr}:{v}"] = (f"{attr} {v}", lambda r, a=attr, v=v:
+                                  r.get("camera") in reg and getattr(reg[r["camera"]], a) == v)
+    return out
 
 
 def parse_args():
@@ -67,7 +96,8 @@ def parse_args():
     p.add_argument("--out", default=None, help="만들 폴더 (기본: runs/test_baseline/<날짜>_<가중치>_<split>)")
     p.add_argument("--keep", action="store_true", help="만든 이미지 폴더를 지우지 않는다")
     p.add_argument("--domains", action="store_true", help="정해진 도메인(전체·드론·비CCTV·드론 제외·Objects365·전체+O365)을 한 번에 잰다")
-    p.add_argument("--domain", choices=sorted(DOMAINS), default=None, help="도메인 하나만")
+    p.add_argument("--domain", default=None,
+                   help=f"도메인 하나만: {', '.join(sorted(DOMAINS))}, 또는 cam:<카메라키>·kind:<형태>·mount:<설치>")
     p.add_argument("--like", default=None,
                    help="경로에 이 문자열이 든 이미지만 (임시 조건. 정해진 도메인은 --domain)")
     p.add_argument("--not-like", default=None, help="경로에 이 문자열이 든 이미지는 뺀다")
@@ -86,7 +116,9 @@ def build_split(cfg: Config, split: str, out: Path,
     """
     con = sqlite3.connect(f"file:{cfg.db.as_posix()}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
-    sql = "SELECT id, path, source FROM images WHERE status='approved' AND split=?"
+    cols = {r[1] for r in con.execute("PRAGMA table_info(images)")}
+    cam_sql = "camera" if "camera" in cols else "NULL AS camera"   # 출처 열이 생기기 전 DB 도 읽는다
+    sql = f"SELECT id, path, source, {cam_sql} FROM images WHERE status='approved' AND split=?"
     args: list = [split]
     if like:
         sql += " AND path LIKE ?"
@@ -121,8 +153,8 @@ def build_split(cfg: Config, split: str, out: Path,
         shutil.copy2(src, dst)
         bs = boxes.get(r["id"], [])
         write_yolo_txt(lab_dir / f"{stem}.txt", bs)
-        items.append({"id": r["id"], "path": r["path"], "source": r["source"], "img": dst,
-                      "counts": Counter(b.cls for b in bs)})
+        items.append({"id": r["id"], "path": r["path"], "source": r["source"], "camera": r["camera"],
+                      "img": dst, "counts": Counter(b.cls for b in bs)})
     return items
 
 
@@ -253,14 +285,17 @@ def main():
         items = build_split(cfg, args.split, out, args.like, args.not_like)
         n_box = sum(sum(it["counts"].values()) for it in items)
         print(f"{args.split} {len(items)}장 / 박스 {n_box}개 -> {out}")
+        domains = {**DOMAINS, **source_domains(cfg, items)}
         if args.like or args.not_like:
             keys = ["all"]          # 임시 조건은 그 조건 하나만 잰다 (아래서 이름을 custom 으로)
         elif args.domains or args.domain:
-            keys = list(DOMAINS) if args.domains else [args.domain]
+            keys = list(domains) if args.domains else [args.domain]
         else:
             keys = ["all"]
+        if args.domain and args.domain not in domains:
+            raise SystemExit(f"도메인 '{args.domain}' 이 없습니다 (이 분할에 있는 것: {', '.join(domains)})")
         for key in keys:
-            label, keep = DOMAINS[key]
+            label, keep = domains[key]
             if args.like or args.not_like:
                 key, label = "custom", f"조건 like={args.like} not_like={args.not_like}"
                 keep = lambda r: True       # noqa: E731  임시 조건은 출처를 가리지 않는다

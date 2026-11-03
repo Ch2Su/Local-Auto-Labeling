@@ -246,6 +246,14 @@ kbd {
 }
 .class-filter .btn { flex: 1; text-align: left; }
 .class-filter .btn.on { border-color: var(--accent); background: var(--accent-2); }
+.camera-filter { padding: 0 10px 8px; border-bottom: 1px solid var(--line); }
+.camera-filter select {
+  width: 100%;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 3px 4px; font: inherit;
+}
+.camera-filter select.on { border-color: var(--accent); background: var(--accent-2); }
 .cf-panel {
   position: absolute; z-index: 20; top: 100%; left: 10px; right: 10px;
   max-height: 300px; overflow: auto;

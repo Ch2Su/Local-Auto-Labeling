@@ -37,6 +37,7 @@ const S = {
   ids: null,          // 'id 로 열기' 로 지정한 목록 (필터가 "ids" 일 때 탐색 대상)
   filterClasses: new Set(),   // 클래스 필터: 고른 것을 **전부** 가진 이미지만 (교집합)
   filterEmpty: false,         // 박스가 하나도 없는 이미지만. 클래스 선택과 함께 못 쓴다
+  filterCamera: "",           // 카메라(출처) 필터: "" 전체 / 카메라키 / "__none__" 출처 없음
   loadedCount: 0,     // 이 이미지를 열었을 때의 박스 수. 저장 뒤 이보다 적으면 표시한다
   histOpen: false,    // 오른쪽 '변경 내역' 이 펼쳐져 있나
   history: [],        // 이 이미지의 변경 내역 (최근 것부터)
@@ -878,7 +879,34 @@ function listUrl(limit, offset) {
   let url = `/api/images?status=${status}&order=${order}&limit=${limit}&offset=${offset}`;
   if (S.filterEmpty) url += "&empty=1";
   else if (S.filterClasses.size) url += `&cls=${[...S.filterClasses].sort((a, b) => a - b).join(",")}`;
+  if (S.filterCamera) url += `&camera=${encodeURIComponent(S.filterCamera)}`;
   return url;
+}
+
+/* ── 카메라(출처) 필터 ── docs/provenance.md
+ * 카메라가 붙은 이미지가 하나도 없으면(legacy 뿐이면) 숨긴다. 고른 카메라가 사라지면 '전체' 로. */
+async function loadCameras() {
+  let data;
+  try { data = await api("/api/cameras"); } catch { return; }   // 실패해도 검수는 되어야 한다
+  const sel = $("#filter-camera");
+  const keep = S.filterCamera;
+  sel.innerHTML = "";
+  const add = (value, text, title = "") => {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = text; o.title = title;
+    sel.appendChild(o);
+  };
+  add("", "카메라: 전체");
+  for (const c of data.cameras) {
+    add(c.key, `${c.key}${c.place ? " · " + c.place : " · (등록 파일에 없음)"} (${c.n})`,
+        [c.kind, c.mount, c.split && `split 고정 ${c.split}`].filter(Boolean).join(" · "));
+  }
+  if (data.cameras.length) add(data.none_key, `출처 없음 (${data.no_camera})`);
+  $("#camera-filter").classList.toggle("hidden", !data.cameras.length);
+  sel.title = data.error ? `카메라 등록 파일 오류: ${data.error}` : "카메라(출처)로 거릅니다. 상태·클래스 필터와 함께 걸립니다.";
+  S.filterCamera = [...sel.options].some((o) => o.value === keep) ? keep : "";
+  sel.value = S.filterCamera;
+  sel.classList.toggle("on", !!S.filterCamera);
 }
 
 /* ── 클래스 필터 ──────────────────────────────────────
@@ -1573,6 +1601,7 @@ async function loadState() {
   // 클래스가 바뀌면(스캔·클래스 추가) 필터 목록도 다시 그린다. 없어진 클래스는 선택에서 뺀다.
   [...S.filterClasses].filter((i) => i >= S.classes.length).forEach((i) => S.filterClasses.delete(i));
   renderClassFilter();
+  loadCameras();        // 스캔으로 새 카메라가 들어올 수 있다. 실패해도 검수는 되어야 하므로 기다리지 않는다
   if (st.job && st.job.status === "running" && !S.jobPoll) watchJob(st.job.id);
 }
 
@@ -1602,6 +1631,7 @@ async function loadImageList(keepOpen = null) {
   const size = Number($("#chunk-size").value) || 500;
   $("#filter-order").disabled = status === "ids";   // 지정한 id 는 넣은 순서 그대로
   $("#cf-toggle").disabled = status === "ids";      // id 목록은 클래스 필터를 무시한다
+  $("#filter-camera").disabled = status === "ids";  // 카메라 필터도 마찬가지
   if (status === "ids") $("#cf-panel").classList.add("hidden");
 
   const openBefore = keepOpen ?? new Set(
@@ -1689,7 +1719,10 @@ async function loadImage(id) {
   $("#img-name").textContent = meta.name;
   $("#img-meta").textContent =
     `${meta.width}×${meta.height} · ${meta.status} · 불확실도 ${meta.uncertainty}` +
-    (meta.model_version ? ` · ${meta.model_version}` : "");
+    (meta.model_version ? ` · ${meta.model_version}` : "") +
+    // 출처(docs/provenance.md): 시각은 카메라 현지 시각 그대로(시간대 표기는 뗀다)
+    (meta.camera ? ` · 카메라 ${meta.camera}${meta.camera_place ? `(${meta.camera_place})` : ""}` +
+      (meta.captured_at ? ` ${meta.captured_at.replace("T", " ").slice(0, 19)}` : " · 촬영 시각 모름") : "");
   $("#save-state").textContent = "";
   $("#save-state").className = "save-state";
   $("#empty-hint").classList.add("hidden");
@@ -1976,6 +2009,11 @@ async function reloadList() {
 $("#filter-status").onchange = reloadList;
 $("#filter-order").onchange = reloadList;
 $("#chunk-size").onchange = reloadList;
+$("#filter-camera").onchange = () => {
+  S.filterCamera = $("#filter-camera").value;
+  $("#filter-camera").classList.toggle("on", !!S.filterCamera);
+  reloadList();
+};
 
 $("#cf-toggle").onclick = (e) => {
   e.stopPropagation();
