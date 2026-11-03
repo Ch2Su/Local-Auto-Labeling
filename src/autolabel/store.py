@@ -133,11 +133,12 @@ _write_lock = threading.Lock()
 NO_CAMERA = "__none__"   # 카메라 필터에서 '출처 없음(legacy)' 을 뜻하는 값
 DOMAINS = ("cctv", "noncctv", "drone")   # images.domain 에 넣을 수 있는 값 (NULL = 미분류)
 NO_DOMAIN = "__none__"   # 도메인 필터에서 '미분류' 를 뜻하는 값
+NO_SPLIT = "__none__"    # 분할 필터에서 '미배정'(다음 학습·split 때 배정)을 뜻하는 값
 
 
 def _list_where(
     status: str | None, classes: list[int] | None, empty: bool, camera: str | None = None,
-    domain: str | None = None,
+    domain: str | None = None, split: str | None = None,
 ) -> tuple[str, list]:
     """목록·개수가 함께 쓰는 WHERE 절. 둘이 어긋나면 묶음 수가 틀어진다.
 
@@ -160,6 +161,11 @@ def _list_where(
     elif domain:
         parts.append("i.domain=?")
         args.append(domain)
+    if split == NO_SPLIT:            # 분할(train·val·test) — 보기만 한다. 바꾸는 것은 split.py 뿐
+        parts.append("i.split IS NULL")
+    elif split:
+        parts.append("i.split=?")
+        args.append(split)
     if empty:
         parts.append("NOT EXISTS (SELECT 1 FROM boxes b WHERE b.image_id=i.id)")
     elif classes:
@@ -313,6 +319,7 @@ class Store:
         empty: bool = False,
         camera: str | None = None,
         domain: str | None = None,
+        split: str | None = None,
     ) -> list[dict]:
         """검수 대상 목록. 기본은 불확실도 높은 순(= 사람이 볼 가치가 큰 순).
 
@@ -338,7 +345,7 @@ class Store:
             return [by_id[i] for i in wanted if i in by_id][offset:offset + limit]
 
         if order == "rare":
-            return self._list_rare(status, classes, empty, limit, offset, camera, domain)
+            return self._list_rare(status, classes, empty, limit, offset, camera, domain, split)
 
         order_sql = {
             "uncertainty": "i.uncertainty DESC, i.id ASC",
@@ -346,7 +353,7 @@ class Store:
             "recent": "i.updated_at DESC, i.id DESC",
         }.get(order, "i.uncertainty DESC, i.id ASC")
 
-        where, args = _list_where(status, classes, empty, camera, domain)
+        where, args = _list_where(status, classes, empty, camera, domain, split)
         sql = (
             "SELECT i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes"
             f" FROM images i{where} ORDER BY {order_sql} LIMIT ? OFFSET ?"
@@ -379,7 +386,8 @@ class Store:
                 for c in range(max(n_classes, max(groups, default=-1) + 1))}
 
     def _list_rare(self, status, classes, empty, limit: int, offset: int,
-                   camera: str | None = None, domain: str | None = None) -> list[dict]:
+                   camera: str | None = None, domain: str | None = None,
+                   split: str | None = None) -> list[dict]:
         """'드문 클래스 먼저' 정렬. 이미지 점수 = 박스마다 (신뢰도 × 그 클래스의 희소도) 중 최댓값.
 
         자동 라벨이 van·pickup 처럼 드문 클래스를 확신하는 이미지가 맨 앞에 온다 — 검수할
@@ -388,7 +396,7 @@ class Store:
         목록 묶음(100개씩…)과 맞도록 같은 조건의 전체를 점수로 줄 세운 뒤 잘라 준다.
         """
         rarity = self.class_rarity()
-        where, args = _list_where(status, classes, empty, camera, domain)
+        where, args = _list_where(status, classes, empty, camera, domain, split)
         with self.connect() as con:
             rows = con.execute(
                 "SELECT i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes"
@@ -423,13 +431,14 @@ class Store:
         empty: bool = False,
         camera: str | None = None,
         domain: str | None = None,
+        split: str | None = None,
     ) -> int:
         """`list_images` 와 같은 조건으로 개수만 센다.
 
         클래스로 거르면 상태별 개수(`counts()`)를 쓸 수 없어서 따로 센다. 목록 UI 는
         이 수로 묶음(100개씩…)을 나누므로 필터와 정확히 같은 조건이어야 한다.
         """
-        where, args = _list_where(status, classes, empty, camera, domain)
+        where, args = _list_where(status, classes, empty, camera, domain, split)
         with self.connect() as con:
             return int(con.execute(f"SELECT COUNT(*) FROM images i{where}", args).fetchone()[0])
 
@@ -440,6 +449,14 @@ class Store:
                 "SELECT domain, COUNT(*) AS n FROM images WHERE status != 'trashed' GROUP BY domain"
             ).fetchall()
         return {r["domain"]: int(r["n"]) for r in rows}
+
+    def split_counts(self) -> dict[str | None, int]:
+        """분할별 이미지 수(휴지통 제외). 미배정은 키 None."""
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT split, COUNT(*) AS n FROM images WHERE status != 'trashed' GROUP BY split"
+            ).fetchall()
+        return {r["split"]: int(r["n"]) for r in rows}
 
     def group_ids(self, image_id: int) -> list[int]:
         """같은 장면 묶음(grp)의 이미지 id(휴지통 제외, 자기 포함). 묶음이 없으면 자기 하나."""

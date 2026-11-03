@@ -84,10 +84,14 @@
         <option value="">카메라: 전체</option>
       </select>
     </div>
-    <!-- 도메인(촬영 형태)으로 거르기. 미분류만 골라 놓고 Q·W·E 로 나누면 분류한 것이 목록에서 빠진다. -->
-    <div class="camera-filter">
+    <!-- 도메인(촬영 형태)으로 거르기. 미분류만 골라 놓고 Q·W·E 로 나누면 분류한 것이 목록에서 빠진다.
+         분할(train·val·test)은 보기만 한다 — 분할을 바꾸는 것은 labeler.py split 뿐이다. -->
+    <div class="camera-filter two">
       <select id="filter-domain" title="도메인(CCTV·비CCTV·드론)으로 거릅니다. 상태·클래스·카메라 필터와 함께 걸립니다.">
         <option value="">도메인: 전체</option>
+      </select>
+      <select id="filter-split" title="분할(train·val·test)로 거릅니다. 다른 필터와 함께 걸립니다. 분할은 여기서 바뀌지 않습니다.">
+        <option value="">분할: 전체</option>
       </select>
     </div>
     <div class="goto">

@@ -21,12 +21,12 @@ from .export import default_export_dir, export_yolo
 from .ingest import discover_classes, ingest
 from .jobs import JobManager
 from .predictor import AutoLabeler, LiveDetector
-from .provenance import load_cameras
+from .provenance import SPLITS, load_cameras
 from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
 from .stopper import StopSignal
-from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, Store
+from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, NO_SPLIT, Store
 from .tidy import prune_missing, purge_trashed, tidy_approved
 from .trainer import find_resume_point
 from .trainer import resume_train as run_resume
@@ -198,6 +198,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             "uncertainty": round(float(r["uncertainty"]), 4),
             "camera": r.get("camera"),
             "domain": r.get("domain"),
+            "split": r.get("split"),
         }
         if "rare_score" in r:      # '드문 클래스 먼저' 정렬일 때만
             out.update(rare_score=r["rare_score"], rare_cls=r["rare_cls"],
@@ -208,11 +209,12 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
     def list_images(
         status: str = "pending", limit: int = 300, offset: int = 0, order: str = "uncertainty",
         ids: str | None = None, cls: str | None = None, empty: bool = False,
-        camera: str | None = None, domain: str | None = None,
+        camera: str | None = None, domain: str | None = None, split: str | None = None,
     ) -> dict:
         """`cls=2,4` 는 **두 클래스를 모두 가진** 이미지만, `empty=1` 은 박스가 없는 이미지만.
 
-        둘을 같이 주면 `empty` 가 이긴다 (store.list_images 참고). `domain=__none__` 은 미분류.
+        둘을 같이 주면 `empty` 가 이긴다 (store.list_images 참고). `domain=__none__` 은 미분류,
+        `split=__none__` 은 미배정.
         """
         if ids is not None:
             # 'id 로 열기': 쉼표·공백으로 구분한 id 목록. 상태 필터를 무시하고 준 순서대로.
@@ -243,14 +245,17 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         domain = domain or None
         if domain and domain not in (*DOMAINS, NO_DOMAIN):
             raise HTTPException(400, f"알 수 없는 도메인: {domain}")
+        split = split or None
+        if split and split not in (*SPLITS, NO_SPLIT):
+            raise HTTPException(400, f"알 수 없는 분할: {split}")
         rows = store.list_images(
             status=status, limit=limit, offset=offset, order=order,
-            classes=wanted_cls, empty=empty, camera=camera, domain=domain,
+            classes=wanted_cls, empty=empty, camera=camera, domain=domain, split=split,
         )
-        if empty or wanted_cls or camera or domain:
+        if empty or wanted_cls or camera or domain or split:
             # 거르면 상태별 개수를 쓸 수 없다. 목록 묶음이 이 수로 나뉘므로 같은 조건으로 센다.
             total = store.count_images(status=status, classes=wanted_cls, empty=empty,
-                                       camera=camera, domain=domain)
+                                       camera=camera, domain=domain, split=split)
         else:
             counts = store.counts()
             total = counts["total"] if status in ("all", None) else counts.get(status, 0)
@@ -287,6 +292,13 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         counts = store.domain_counts()
         return {"domains": [{"key": d, "n": counts.get(d, 0)} for d in DOMAINS],
                 "none": counts.get(None, 0), "none_key": NO_DOMAIN}
+
+    @app.get("/api/splits")
+    def list_splits() -> dict:
+        """분할 필터용: 분할별 이미지 수(휴지통 제외)와 미배정 수. 분할은 여기서 바꾸지 않는다."""
+        counts = store.split_counts()
+        return {"splits": [{"key": s, "n": counts.get(s, 0)} for s in SPLITS],
+                "none": counts.get(None, 0), "none_key": NO_SPLIT}
 
     @app.post("/api/images/{image_id}/domain")
     def post_domain(image_id: int, payload: DomainIn) -> dict:

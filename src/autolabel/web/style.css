@@ -188,6 +188,9 @@ kbd {
 .image-list .dom { font-size: 10px; flex: none; color: var(--fg-dim); }
 .image-list .dom-cctv { color: var(--ok); }
 .image-list .dom-drone { color: var(--warn); }
+/* 분할 표시: test·val 만 붙인다(train 은 대부분이라 표시하지 않는다) */
+.image-list .spl { font-size: 10px; flex: none; color: var(--fg-dim); }
+.image-list .spl-test { color: var(--accent); font-weight: 600; }
 
 /* 불확실도 막대 */
 .unc { width: 3px; height: 18px; border-radius: 2px; background: var(--line); flex: none; }
@@ -257,6 +260,8 @@ kbd {
   padding: 3px 4px; font: inherit;
 }
 .camera-filter select.on { border-color: var(--accent); background: var(--accent-2); }
+.camera-filter.two { display: flex; gap: 6px; }
+.camera-filter.two select { flex: 1; min-width: 0; }
 .cf-panel {
   position: absolute; z-index: 20; top: 100%; left: 10px; right: 10px;
   max-height: 300px; overflow: auto;

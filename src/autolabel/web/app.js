@@ -39,6 +39,7 @@ const S = {
   filterEmpty: false,         // 박스가 하나도 없는 이미지만. 클래스 선택과 함께 못 쓴다
   filterCamera: "",           // 카메라(출처) 필터: "" 전체 / 카메라키 / "__none__" 출처 없음
   filterDomain: "",           // 도메인 필터: "" 전체 / cctv·noncctv·drone / "__none__" 미분류
+  filterSplit: "",            // 분할 필터: "" 전체 / train·val·test / "__none__" 미배정
   loadedCount: 0,     // 이 이미지를 열었을 때의 박스 수. 저장 뒤 이보다 적으면 표시한다
   histOpen: false,    // 오른쪽 '변경 내역' 이 펼쳐져 있나
   history: [],        // 이 이미지의 변경 내역 (최근 것부터)
@@ -807,6 +808,7 @@ function itemRow(im) {
     `<span class="nm"></span>`
     + (im.rare_cls != null ? '<span class="rare"></span>' : "")
     + (im.domain ? `<span class="dom dom-${im.domain}">${DOMAIN_NAME[im.domain] || im.domain}</span>` : "")
+    + (im.split === "test" || im.split === "val" ? `<span class="spl spl-${im.split}">${im.split}</span>` : "")
     + `<span class="nb">${im.n_boxes}</span>`;
   li.querySelector(".nm").textContent = im.name;
   // '드문 클래스 먼저' 정렬: 이 이미지를 앞으로 끌어온 클래스를 붙인다
@@ -883,7 +885,33 @@ function listUrl(limit, offset) {
   else if (S.filterClasses.size) url += `&cls=${[...S.filterClasses].sort((a, b) => a - b).join(",")}`;
   if (S.filterCamera) url += `&camera=${encodeURIComponent(S.filterCamera)}`;
   if (S.filterDomain) url += `&domain=${encodeURIComponent(S.filterDomain)}`;
+  if (S.filterSplit) url += `&split=${encodeURIComponent(S.filterSplit)}`;
   return url;
+}
+
+/** 개수를 붙인 필터 select 를 다시 채운다. 고른 값이 아직 있으면 그대로 두고, 없어졌으면 전체로. */
+function fillCountFilter(sel, keep, allText, items, names, noneText, none, noneKey) {
+  sel.innerHTML = "";
+  const add = (value, text) => {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = text;
+    sel.appendChild(o);
+  };
+  add("", allText);
+  for (const d of items) add(d.key, `${names[d.key] || d.key} (${d.n})`);
+  add(noneKey, `${noneText} (${none})`);
+  const value = [...sel.options].some((o) => o.value === keep) ? keep : "";
+  sel.value = value;
+  sel.classList.toggle("on", !!value);
+  return value;
+}
+
+/* ── 분할(train·val·test) ── 보기만 한다. 분할을 바꾸는 것은 labeler.py split 뿐이다(2026-11-03). */
+async function loadSplits() {
+  let data;
+  try { data = await api("/api/splits"); } catch { return; }    // 실패해도 검수는 되어야 한다
+  S.filterSplit = fillCountFilter($("#filter-split"), S.filterSplit, "분할: 전체",
+    data.splits, {}, "미배정", data.none, data.none_key);
 }
 
 /* ── 도메인(촬영 형태) ── images.domain, 2026-11-03
@@ -893,20 +921,8 @@ const DOMAIN_NAME = { cctv: "CCTV", noncctv: "비CCTV", drone: "드론" };
 async function loadDomains() {
   let data;
   try { data = await api("/api/domains"); } catch { return; }   // 실패해도 검수는 되어야 한다
-  const sel = $("#filter-domain");
-  const keep = S.filterDomain;
-  sel.innerHTML = "";
-  const add = (value, text) => {
-    const o = document.createElement("option");
-    o.value = value; o.textContent = text;
-    sel.appendChild(o);
-  };
-  add("", "도메인: 전체");
-  for (const d of data.domains) add(d.key, `${DOMAIN_NAME[d.key] || d.key} (${d.n})`);
-  add(data.none_key, `미분류 (${data.none})`);
-  S.filterDomain = [...sel.options].some((o) => o.value === keep) ? keep : "";
-  sel.value = S.filterDomain;
-  sel.classList.toggle("on", !!S.filterDomain);
+  S.filterDomain = fillCountFilter($("#filter-domain"), S.filterDomain, "도메인: 전체",
+    data.domains, DOMAIN_NAME, "미분류", data.none, data.none_key);
 }
 
 /** 지금 이미지의 도메인 버튼 표시와 '묶음째' 장수. */
@@ -1669,6 +1685,7 @@ async function loadState() {
   renderClassFilter();
   loadCameras();        // 스캔으로 새 카메라가 들어올 수 있다. 실패해도 검수는 되어야 하므로 기다리지 않는다
   loadDomains();
+  loadSplits();         // 학습·split 이 미배정을 배정하면 바뀐다
   if (st.job && st.job.status === "running" && !S.jobPoll) watchJob(st.job.id);
 }
 
@@ -1700,6 +1717,7 @@ async function loadImageList(keepOpen = null) {
   $("#cf-toggle").disabled = status === "ids";      // id 목록은 클래스 필터를 무시한다
   $("#filter-camera").disabled = status === "ids";  // 카메라 필터도 마찬가지
   $("#filter-domain").disabled = status === "ids";
+  $("#filter-split").disabled = status === "ids";
   if (status === "ids") $("#cf-panel").classList.add("hidden");
 
   const openBefore = keepOpen ?? new Set(
@@ -1786,7 +1804,7 @@ async function loadImage(id) {
 
   $("#img-name").textContent = meta.name;
   $("#img-meta").textContent =
-    `${meta.width}×${meta.height} · ${meta.status} · 불확실도 ${meta.uncertainty}` +
+    `${meta.width}×${meta.height} · ${meta.status} · ${meta.split || "미배정"} · 불확실도 ${meta.uncertainty}` +
     (meta.model_version ? ` · ${meta.model_version}` : "") +
     // 출처(docs/provenance.md): 시각은 카메라 현지 시각 그대로(시간대 표기는 뗀다)
     (meta.camera ? ` · 카메라 ${meta.camera}${meta.camera_place ? `(${meta.camera_place})` : ""}` +
@@ -2090,6 +2108,11 @@ $("#filter-camera").onchange = () => {
 $("#filter-domain").onchange = () => {
   S.filterDomain = $("#filter-domain").value;
   $("#filter-domain").classList.toggle("on", !!S.filterDomain);
+  reloadList();
+};
+$("#filter-split").onchange = () => {
+  S.filterSplit = $("#filter-split").value;
+  $("#filter-split").classList.toggle("on", !!S.filterSplit);
   reloadList();
 };
 document.querySelectorAll(".domain-bar [data-domain]").forEach((b) => {
