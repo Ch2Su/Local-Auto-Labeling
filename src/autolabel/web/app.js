@@ -41,6 +41,11 @@ const S = {
   filterDomain: "",           // 도메인 필터: "" 전체 / cctv·noncctv·drone / "__none__" 미분류
   filterSplit: "",            // 분할 필터: "" 전체 / train·val·test / "__none__" 미배정
   domainBusy: false,          // 도메인 지정이 도는 중 — 그동안의 Q·W·E(꾹 눌렀을 때 반복 입력)는 버린다
+  tags: [],                   // [{id, name, n}] 이름순 (/api/tags)
+  tagName: {},                // id -> 이름
+  curTag: null,               // T 로 붙일 태그 id (오른쪽 태그 목록에서 줄을 눌러 고른다)
+  filterTag: "",              // 태그 필터: "" 전체 / 태그 id / "__none__" 태그 없음
+  tagBusy: false,             // T 가 도는 중 — 꾹 눌렀을 때 반복 입력이 겹치지 않게
   loadedCount: 0,     // 이 이미지를 열었을 때의 박스 수. 저장 뒤 이보다 적으면 표시한다
   histOpen: false,    // 오른쪽 '변경 내역' 이 펼쳐져 있나
   history: [],        // 이 이미지의 변경 내역 (최근 것부터)
@@ -813,8 +818,15 @@ function itemRow(im, pos) {
     + (im.rare_cls != null ? '<span class="rare"></span>' : "")
     + (im.domain ? `<span class="dom dom-${im.domain}">${DOMAIN_NAME[im.domain] || im.domain}</span>` : "")
     + (im.split === "test" || im.split === "val" ? `<span class="spl spl-${im.split}">${im.split}</span>` : "")
+    + ((im.tags || []).length ? '<span class="tg"></span>' : "")
     + `<span class="nb">${im.n_boxes}</span>`;
   li.querySelector(".nm").textContent = im.name;
+  if ((im.tags || []).length) {   // 첫 태그 이름 + 나머지 개수. 전부는 마우스를 올리면
+    const names = im.tags.map((t) => S.tagName[t] || `#${t}`);
+    const tg = li.querySelector(".tg");
+    tg.textContent = `#${names[0]}${names.length > 1 ? ` +${names.length - 1}` : ""}`;
+    tg.title = names.map((n) => `#${n}`).join(" ");
+  }
   // '드문 클래스 먼저' 정렬: 이 이미지를 앞으로 끌어온 클래스를 붙인다
   if (im.rare_cls != null) {
     const tag = li.querySelector(".rare");
@@ -908,6 +920,7 @@ function listUrl(limit, offset) {
   if (S.filterCamera) url += `&camera=${encodeURIComponent(S.filterCamera)}`;
   if (S.filterDomain) url += `&domain=${encodeURIComponent(S.filterDomain)}`;
   if (S.filterSplit) url += `&split=${encodeURIComponent(S.filterSplit)}`;
+  if (S.filterTag) url += `&tag=${encodeURIComponent(S.filterTag)}`;
   return url;
 }
 
@@ -1010,6 +1023,174 @@ async function setDomainNow(domain) {
   if (S.filterDomain) await loadImageList();   // 필터에서 빠졌을 수 있다
   else refreshRows(res.ids);                   // 목록의 도메인 꼬리표를 바꾼다(loadImage 는 다시 그리지 않는다)
   await advanceFrom(id, idx);
+}
+
+/* ── 태그 ── 2026-11-03
+ * 비슷한 이미지끼리 사람이 이름을 붙여 묶는다(같은 카메라·같은 크롭 방식 등). 한 이미지에 여러 개.
+ * 라벨이 아니라 학습·변경 이력에는 들어가지 않는다. 오른쪽 목록: 줄을 누르면 T 로 붙일 태그로 고르고,
+ * 칸을 누르면 이 이미지에 붙이거나 뗀다. ✎ 이름 바꾸기, × 지우기(이미지는 그대로). */
+
+// T 로 붙일 태그는 다시 열어도 남긴다. 탭(프로젝트)마다 태그 번호가 따로라 주소별로 둔다.
+const CUR_TAG_KEY = `curTag:${BASE}`;
+function saveCurTag() {
+  try { localStorage.setItem(CUR_TAG_KEY, S.curTag == null ? "" : String(S.curTag)); } catch { /* 그만 */ }
+}
+
+async function loadTags() {
+  let data;
+  try { data = await api("/api/tags"); } catch { return; }      // 실패해도 검수는 되어야 한다
+  S.tags = data.tags;
+  S.tagName = Object.fromEntries(data.tags.map((t) => [t.id, t.name]));
+  if (S.curTag != null && !(S.curTag in S.tagName)) S.curTag = null;   // 다른 창에서 지웠다
+  S.filterTag = fillCountFilter($("#filter-tag"), S.filterTag, "태그: 전체",
+    data.tags.map((t) => ({ key: String(t.id), n: t.n })), S.tagName, "태그 없음", data.none, data.none_key);
+  renderTagList();
+}
+
+function renderTagList() {
+  const ul = $("#tag-list");
+  ul.innerHTML = "";
+  $("#tag-count").textContent = S.tags.length ? `${S.tags.length}개` : "";
+  const mine = new Set(S.cur ? S.cur.tags || [] : []);
+  $("#img-tags").textContent = S.cur && mine.size
+    ? [...mine].map((t) => `#${S.tagName[t] || t}`).join(" ") : "";
+  if (!S.tags.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "태그가 없습니다 — 아래에 이름을 넣어 만드세요";
+    ul.appendChild(li);
+    return;
+  }
+  for (const t of S.tags) {
+    const li = document.createElement("li");
+    li.className = t.id === S.curTag ? "active" : "";
+    li.title = `${t.name} — 붙은 이미지 ${t.n.toLocaleString()}장\n줄을 누르면 T 로 붙일 태그로 고릅니다. 칸은 이 이미지에 붙이기/떼기.`;
+    li.innerHTML =
+      `<input type="checkbox" title="이 이미지에 붙이기/떼기"${mine.has(t.id) ? " checked" : ""}${S.cur ? "" : " disabled"}>` +
+      `<span class="nm"></span><span class="cnt">${t.n.toLocaleString()}</span>` +
+      `<button class="linkbtn ed" title="이름 바꾸기">✎</button>` +
+      `<button class="linkbtn del" title="태그 지우기 (이미지는 그대로)">×</button>`;
+    li.querySelector(".nm").textContent = t.name;
+    const box = li.querySelector("input");
+    box.onclick = (e) => e.stopPropagation();
+    box.onchange = () => { box.blur(); toggleImageTag(t.id, box.checked); };
+    li.querySelector(".ed").onclick = (e) => { e.stopPropagation(); renameTag(t); };
+    li.querySelector(".del").onclick = (e) => { e.stopPropagation(); deleteTag(t); };
+    li.onclick = () => {
+      S.curTag = S.curTag === t.id ? null : t.id;
+      saveCurTag();
+      renderTagList();
+    };
+    ul.appendChild(li);
+  }
+}
+
+/** 붙이거나 뗀 결과를 화면에 반영한다(목록 줄·지금 이미지·개수). */
+function applyTagChange(tagId, on, ids) {
+  const hit = new Set(ids);
+  const upd = (im) => {
+    const cur = new Set(im.tags || []);
+    if (on) cur.add(tagId); else cur.delete(tagId);
+    im.tags = [...cur].sort((a, b) => a - b);
+  };
+  if (S.cur && hit.has(S.cur.id)) upd(S.cur);
+  for (const im of S.images) if (hit.has(im.id)) upd(im);
+  loadTags();               // 개수
+}
+
+/** 오른쪽 칸으로 이 이미지에 붙이거나 뗀다. 목록은 다시 받지 않는다(필터에서 빠져도 그 자리에 둔다). */
+async function toggleImageTag(tagId, on) {
+  if (!S.cur) return;
+  const id = S.cur.id;
+  let res;
+  try {
+    res = await api(`/api/images/${id}/tags`, { method: "POST", body: { tag_id: tagId, on } });
+  } catch (err) {
+    toast(`태그를 저장하지 못했습니다: ${err.message}`, true);
+    loadTags();
+    return;
+  }
+  applyTagChange(tagId, on, res.ids);
+  refreshRows(res.ids);
+}
+
+/** T: 고른 태그를 이 이미지에 붙이고 다음으로. 이미 붙어 있으면 넘어가기만 한다(떼지 않는다 —
+ * Q·W·E 와 같다). 꾹 누르면 하나씩 처리한다(setDomain 참고). */
+async function tagAndNext() {
+  if (!S.cur || S.tagBusy) return;
+  if (S.curTag == null) { toast("오른쪽 태그 목록에서 붙일 태그를 먼저 누르세요 (없으면 만드세요)", true); return; }
+  S.tagBusy = true;
+  try {
+    if (!(await saveBeforeLeaving())) return;
+    const id = S.cur.id, tagId = S.curTag;
+    const idx = S.images.findIndex((im) => im.id === id);
+    if (!(S.cur.tags || []).includes(tagId)) {
+      let res;
+      try {
+        res = await api(`/api/images/${id}/tags`, { method: "POST", body: { tag_id: tagId, on: true } });
+      } catch (err) {
+        toast(`태그를 저장하지 못했습니다: ${err.message}`, true);
+        loadTags();
+        return;
+      }
+      applyTagChange(tagId, true, res.ids);
+      if (S.filterTag) await loadImageList();   // '태그 없음' 등에서 빠졌을 수 있다
+      else refreshRows(res.ids);
+    }
+    await advanceFrom(id, idx);
+  } finally {
+    S.tagBusy = false;
+  }
+}
+
+async function createTag() {
+  const input = $("#new-tag");
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+  let res;
+  try {
+    res = await api("/api/tags", { method: "POST", body: { name } });
+  } catch (err) {
+    toast(err.message, true);
+    return;
+  }
+  input.value = "";
+  input.blur();
+  S.curTag = res.id;      // 만든 태그를 바로 T 로 붙일 수 있게
+  saveCurTag();
+  await loadTags();
+  toast(`태그 '${name}' 를 만들었습니다 — T 로 붙입니다`);
+}
+
+async function renameTag(t) {
+  const name = prompt(`'${t.name}' 의 새 이름`, t.name);
+  if (name == null || name.trim() === t.name) return;
+  try {
+    await api(`/api/tags/${t.id}`, { method: "PUT", body: { name } });
+  } catch (err) {
+    toast(err.message, true);
+    return;
+  }
+  await loadTags();
+  renderImageList();      // 목록 줄의 태그 이름
+}
+
+async function deleteTag(t) {
+  if (!confirm(`태그 '${t.name}' 를 지웁니다. 붙어 있던 이미지 ${t.n.toLocaleString()}장에서도 떨어집니다`
+    + " (이미지·라벨은 그대로입니다). 되돌릴 수 없습니다. 지울까요?")) return;
+  try {
+    await api(`/api/tags/${t.id}`, { method: "DELETE" });
+  } catch (err) {
+    toast(err.message, true);
+    return;
+  }
+  const drop = (im) => { if (im.tags) im.tags = im.tags.filter((x) => x !== t.id); };
+  if (S.cur) drop(S.cur);
+  S.images.forEach(drop);
+  const filtered = S.filterTag === String(t.id);
+  await loadTags();       // 고른 필터가 없어지면 '전체' 로 돌아간다
+  if (filtered) await loadImageList();
+  else renderImageList();
 }
 
 /* ── 카메라(출처) 필터 ── docs/provenance.md
@@ -1733,6 +1914,7 @@ async function loadState() {
   loadCameras();        // 스캔으로 새 카메라가 들어올 수 있다. 실패해도 검수는 되어야 하므로 기다리지 않는다
   loadDomains();
   loadSplits();         // 학습·split 이 미배정을 배정하면 바뀐다
+  loadTags();
   if (st.job && st.job.status === "running" && !S.jobPoll) watchJob(st.job.id);
 }
 
@@ -1767,6 +1949,7 @@ async function loadImageList(keepOpen = null) {
   $("#filter-camera").disabled = status === "ids";  // 카메라 필터도 마찬가지
   $("#filter-domain").disabled = status === "ids";
   $("#filter-split").disabled = status === "ids";
+  $("#filter-tag").disabled = status === "ids";
   if (status === "ids") $("#cf-panel").classList.add("hidden");
 
   const openBefore = keepOpen ?? new Set(
@@ -1859,6 +2042,7 @@ async function loadImage(id) {
     (meta.camera ? ` · 카메라 ${meta.camera}${meta.camera_place ? `(${meta.camera_place})` : ""}` +
       (meta.captured_at ? ` ${meta.captured_at.replace("T", " ").slice(0, 19)}` : " · 촬영 시각 모름") : "");
   renderDomainBar();
+  renderTagList();
   $("#save-state").textContent = "";
   $("#save-state").className = "save-state";
   $("#empty-hint").classList.add("hidden");
@@ -2164,6 +2348,16 @@ $("#filter-split").onchange = () => {
   $("#filter-split").classList.toggle("on", !!S.filterSplit);
   reloadList();
 };
+$("#filter-tag").onchange = () => {
+  S.filterTag = $("#filter-tag").value;
+  $("#filter-tag").classList.toggle("on", !!S.filterTag);
+  reloadList();
+};
+$("#btn-add-tag").onclick = createTag;
+$("#new-tag").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") createTag();
+  if (e.key === "Escape") e.target.blur();
+});
 document.querySelectorAll(".domain-bar [data-domain]").forEach((b) => {
   b.onclick = () => setDomain(b.dataset.domain);
 });
@@ -2267,6 +2461,7 @@ window.addEventListener("keydown", (e) => {
     case "q": case "Q": case "ㅂ": case "ㅃ": e.preventDefault(); setDomain("cctv"); break;
     case "w": case "W": case "ㅈ": case "ㅉ": e.preventDefault(); setDomain("noncctv"); break;
     case "e": case "E": case "ㄷ": case "ㄸ": e.preventDefault(); setDomain("drone"); break;
+    case "t": case "T": case "ㅅ": case "ㅆ": e.preventDefault(); tagAndNext(); break;
     case "a": case "A": case "ㅁ":
       // 예측 비교의 맨 위 항목 받기 (빠짐 = 추가, 클래스 = 바꾸기, 박스 = 맞추기)
       if (S.predOn) {
@@ -2331,6 +2526,7 @@ async function loadProjects() {
   renderMode();
   try { if (localStorage.getItem("histOpen") === "1") toggleHistory(true); } catch { /* 없으면 접힌 채로 */ }
   try { if (localStorage.getItem("predOn") === "1") togglePred(true); } catch { /* 없으면 꺼진 채로 */ }
+  try { const v = localStorage.getItem(CUR_TAG_KEY); if (v) S.curTag = Number(v); } catch { /* 없으면 안 고른 채로 */ }
   loadProjects();       // 실패해도 검수는 되어야 하므로 기다리지 않는다
   try {
     await loadState();

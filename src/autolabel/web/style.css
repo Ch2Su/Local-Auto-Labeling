@@ -246,6 +246,23 @@ kbd {
 }
 .class-list .idx { color: var(--fg-dim); font-size: 11px; width: 10px; text-align: right; }
 
+/* 태그 (2026-11-03). 줄 = T 로 붙일 태그 고르기, 칸 = 이 이미지에 붙이기/떼기 */
+.tag-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; max-height: 180px; }
+.tag-list li { display: flex; align-items: center; gap: 6px; padding: 4px 10px; cursor: pointer; }
+.tag-list li:hover { background: var(--bg-3); }
+.tag-list li.active { background: var(--bg-3); box-shadow: inset 3px 0 0 var(--accent); }
+.tag-list li.empty { color: var(--fg-dim); cursor: default; font-size: 12px; }
+.tag-list li.empty:hover { background: none; }
+.tag-list input { margin: 0; flex: none; }
+.tag-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-list .cnt { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.tag-list .linkbtn { padding: 0 2px; flex: none; }
+.img-tags { color: var(--accent); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.image-list .tg {
+  font-size: 10px; flex: none; color: var(--accent); max-width: 7em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .add-class, .goto {
   display: flex; gap: 5px; padding: 8px 10px;
   border-bottom: 1px solid var(--line);

@@ -95,6 +95,11 @@
         <option value="">분할: 전체</option>
       </select>
     </div>
+    <div class="camera-filter">
+      <select id="filter-tag" title="태그로 거릅니다. 다른 필터와 함께 걸립니다. '태그 없음' 을 고르고 T 로 붙이면 붙인 것이 목록에서 빠집니다.">
+        <option value="">태그: 전체</option>
+      </select>
+    </div>
     <div class="goto">
       <input id="goto-ids" type="text" autocomplete="off"
              placeholder="id 로 열기 — 812 또는 812, 904, …"
@@ -108,6 +113,7 @@
     <div class="stage-head">
       <span id="img-name" class="img-name">이미지를 선택하세요</span>
       <span id="img-meta" class="img-meta"></span>
+      <span id="img-tags" class="img-tags"></span>
       <span class="spacer"></span>
       <!-- 도메인 정하기 (2026-11-03). 누르면 정하고 다음 이미지로. 같은 버튼을 다시 눌러도 풀리지 않는다. -->
       <span class="domain-bar" title="이 이미지의 촬영 형태를 정하고 다음 이미지로 넘어갑니다. 이미 그 값이어도 풀리지 않습니다 — 바꾸려면 다른 버튼을 누르세요.">
@@ -154,6 +160,16 @@
     <div class="add-class">
       <input id="new-class" type="text" placeholder="새 클래스 이름" autocomplete="off">
       <button id="btn-add-class" class="btn btn-sm">추가</button>
+    </div>
+
+    <!-- 태그 (2026-11-03): 비슷한 이미지끼리 묶는 이름표. 라벨이 아니라 학습에는 쓰이지 않는다.
+         칸을 누르면 이 이미지에 붙이거나 떼고, 줄을 누르면 T 로 붙일 태그로 고른다. -->
+    <div class="panel-head"><span>태그</span><span id="tag-count" class="dim"></span>
+      <span class="spacer"></span><kbd title="고른 태그를 이 이미지에 붙이고 다음 이미지로">T</kbd></div>
+    <ul id="tag-list" class="tag-list"></ul>
+    <div class="add-class">
+      <input id="new-tag" type="text" placeholder="새 태그 이름" maxlength="40" autocomplete="off">
+      <button id="btn-add-tag" class="btn btn-sm">추가</button>
     </div>
 
     <div class="panel-head"><span>박스</span><span id="box-count" class="dim"></span>

@@ -26,7 +26,7 @@ from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
 from .stopper import StopSignal
-from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, NO_SPLIT, Store
+from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, Store
 from .tidy import prune_missing, purge_trashed, tidy_approved
 from .trainer import find_resume_point
 from .trainer import resume_train as run_resume
@@ -56,6 +56,16 @@ class StatusIn(BaseModel):
 
 class DomainIn(BaseModel):
     domain: str | None          # cctv | noncctv | drone, None = 미분류로 되돌림
+    group: bool = False         # 같은 장면 묶음(grp)의 이미지까지 한꺼번에
+
+
+class TagIn(BaseModel):
+    name: str
+
+
+class ImageTagIn(BaseModel):
+    tag_id: int
+    on: bool = True             # True 붙이기, False 떼기
     group: bool = False         # 같은 장면 묶음(grp)의 이미지까지 한꺼번에
 
 
@@ -199,6 +209,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             "camera": r.get("camera"),
             "domain": r.get("domain"),
             "split": r.get("split"),
+            "tags": sorted(int(t) for t in r["tag_ids"].split(",")) if r.get("tag_ids") else [],
         }
         if "rare_score" in r:      # '드문 클래스 먼저' 정렬일 때만
             out.update(rare_score=r["rare_score"], rare_cls=r["rare_cls"],
@@ -210,11 +221,12 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         status: str = "pending", limit: int = 300, offset: int = 0, order: str = "uncertainty",
         ids: str | None = None, cls: str | None = None, empty: bool = False,
         camera: str | None = None, domain: str | None = None, split: str | None = None,
+        tag: str | None = None,
     ) -> dict:
         """`cls=2,4` 는 **두 클래스를 모두 가진** 이미지만, `empty=1` 은 박스가 없는 이미지만.
 
         둘을 같이 주면 `empty` 가 이긴다 (store.list_images 참고). `domain=__none__` 은 미분류,
-        `split=__none__` 은 미배정.
+        `split=__none__` 은 미배정, `tag=<id>` 는 그 태그가 붙은 것, `tag=__none__` 은 태그 없는 것.
         """
         if ids is not None:
             # 'id 로 열기': 쉼표·공백으로 구분한 id 목록. 상태 필터를 무시하고 준 순서대로.
@@ -248,14 +260,22 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         split = split or None
         if split and split not in (*SPLITS, NO_SPLIT):
             raise HTTPException(400, f"알 수 없는 분할: {split}")
+        tag_f: int | str | None = None
+        if tag:
+            if tag == NO_TAG:
+                tag_f = NO_TAG
+            elif tag.isdigit():
+                tag_f = int(tag)
+            else:
+                raise HTTPException(400, f"알 수 없는 태그: {tag}")
         rows = store.list_images(
             status=status, limit=limit, offset=offset, order=order,
-            classes=wanted_cls, empty=empty, camera=camera, domain=domain, split=split,
+            classes=wanted_cls, empty=empty, camera=camera, domain=domain, split=split, tag=tag_f,
         )
-        if empty or wanted_cls or camera or domain or split:
+        if empty or wanted_cls or camera or domain or split or tag_f is not None:
             # 거르면 상태별 개수를 쓸 수 없다. 목록 묶음이 이 수로 나뉘므로 같은 조건으로 센다.
             total = store.count_images(status=status, classes=wanted_cls, empty=empty,
-                                       camera=camera, domain=domain, split=split)
+                                       camera=camera, domain=domain, split=split, tag=tag_f)
         else:
             counts = store.counts()
             total = counts["total"] if status in ("all", None) else counts.get(status, 0)
@@ -300,6 +320,50 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         return {"splits": [{"key": s, "n": counts.get(s, 0)} for s in SPLITS],
                 "none": counts.get(None, 0), "none_key": NO_SPLIT}
 
+    # ── 태그 (2026-11-03): 비슷한 이미지끼리 사람이 이름을 붙여 묶는다. 라벨이 아니다 ──
+
+    @app.get("/api/tags")
+    def list_tags() -> dict:
+        """태그(이름순)와 붙은 이미지 수, 태그 없는 이미지 수(모두 휴지통 제외)."""
+        return {"tags": store.list_tags(), "none": store.untagged_count(), "none_key": NO_TAG}
+
+    @app.post("/api/tags")
+    def create_tag(payload: TagIn) -> dict:
+        try:
+            tag_id = store.create_tag(payload.name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "id": tag_id}
+
+    @app.put("/api/tags/{tag_id}")
+    def rename_tag(tag_id: int, payload: TagIn) -> dict:
+        try:
+            found = store.rename_tag(tag_id, payload.name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not found:
+            raise HTTPException(404, "없는 태그입니다.")
+        return {"ok": True}
+
+    @app.delete("/api/tags/{tag_id}")
+    def delete_tag(tag_id: int) -> dict:
+        n = store.delete_tag(tag_id)
+        if n is None:
+            raise HTTPException(404, "없는 태그입니다.")
+        return {"ok": True, "detached": n}
+
+    @app.post("/api/images/{image_id}/tags")
+    def post_image_tag(image_id: int, payload: ImageTagIn) -> dict:
+        """태그를 붙이거나 뗀다. group 이면 같은 장면 묶음(휴지통 제외) 전체에."""
+        if store.get_image(image_id) is None:
+            raise HTTPException(404, "이미지를 찾을 수 없습니다.")
+        ids = store.group_ids(image_id) if payload.group else [image_id]
+        try:
+            n = store.set_image_tag(ids, payload.tag_id, payload.on)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {"ok": True, "changed": n, "ids": ids}
+
     @app.post("/api/images/{image_id}/domain")
     def post_domain(image_id: int, payload: DomainIn) -> dict:
         """도메인을 정한다. group 이면 같은 장면 묶음(휴지통 제외) 전체에."""
@@ -340,6 +404,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             "camera_place": _camera_place(row["camera"]),
             "domain": row["domain"],
             "grp_n": len(store.group_ids(image_id)),
+            "tags": store.image_tag_ids(image_id),
         }
 
     @app.get("/api/images/{image_id}/file")

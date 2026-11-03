@@ -94,6 +94,22 @@ CREATE TABLE IF NOT EXISTS box_history (
 );
 CREATE INDEX IF NOT EXISTS idx_hist_image ON box_history(image_id, id);
 CREATE INDEX IF NOT EXISTS idx_hist_batch ON box_history(batch);
+
+-- 태그 (2026-11-03). 비슷한 이미지끼리 사람이 이름을 붙여 묶는다(같은 카메라·크롭 방식 등 — legacy 는
+-- 출처가 없어 grp 만으로는 못 가른다). 한 이미지에 여러 개 붙일 수 있다. 라벨이 아니라서 updated_at·
+-- 변경 이력은 건드리지 않는다. id 는 AUTOINCREMENT — 지운 태그의 번호가 새 태그에 붙으면 열려 있던
+-- 화면이 엉뚱한 태그를 가리킨다(함정 11 과 같은 이유).
+CREATE TABLE IF NOT EXISTS tags (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL UNIQUE,
+    created_at TEXT    NOT NULL
+);
+CREATE TABLE IF NOT EXISTS image_tags (
+    image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+    tag_id   INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (image_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_image_tags_tag ON image_tags(tag_id, image_id);
 """
 
 # 이력에 남기는 박스 한 개의 모양. 순서를 바꾸면 옛 이력을 못 읽는다.
@@ -134,11 +150,29 @@ NO_CAMERA = "__none__"   # 카메라 필터에서 '출처 없음(legacy)' 을 �
 DOMAINS = ("cctv", "noncctv", "drone")   # images.domain 에 넣을 수 있는 값 (NULL = 미분류)
 NO_DOMAIN = "__none__"   # 도메인 필터에서 '미분류' 를 뜻하는 값
 NO_SPLIT = "__none__"    # 분할 필터에서 '미배정'(다음 학습·split 때 배정)을 뜻하는 값
+NO_TAG = "__none__"      # 태그 필터에서 '태그 없음' 을 뜻하는 값
+TAG_NAME_MAX = 40
+
+# 목록이 한 장마다 받는 열: 박스 수와 붙은 태그 id(쉼표로 이은 문자열, 없으면 NULL)
+_LIST_COLS = (
+    "i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes,"
+    " (SELECT GROUP_CONCAT(t.tag_id) FROM image_tags t WHERE t.image_id=i.id) AS tag_ids"
+)
+
+
+def clean_tag_name(name: str) -> str:
+    """태그 이름 다듬기. 앞뒤 공백을 떼고, 비었거나 너무 길면 ValueError."""
+    name = " ".join(str(name or "").split())
+    if not name:
+        raise ValueError("태그 이름을 넣어 주세요.")
+    if len(name) > TAG_NAME_MAX:
+        raise ValueError(f"태그 이름은 {TAG_NAME_MAX}자까지입니다.")
+    return name
 
 
 def _list_where(
     status: str | None, classes: list[int] | None, empty: bool, camera: str | None = None,
-    domain: str | None = None, split: str | None = None,
+    domain: str | None = None, split: str | None = None, tag: int | str | None = None,
 ) -> tuple[str, list]:
     """목록·개수가 함께 쓰는 WHERE 절. 둘이 어긋나면 묶음 수가 틀어진다.
 
@@ -166,6 +200,11 @@ def _list_where(
     elif split:
         parts.append("i.split=?")
         args.append(split)
+    if tag == NO_TAG:                # 태그 — 하나를 고르면 그 태그가 붙은 것, NO_TAG 면 하나도 없는 것
+        parts.append("NOT EXISTS (SELECT 1 FROM image_tags t WHERE t.image_id=i.id)")
+    elif tag is not None:
+        parts.append("EXISTS (SELECT 1 FROM image_tags t WHERE t.image_id=i.id AND t.tag_id=?)")
+        args.append(int(tag))
     if empty:
         parts.append("NOT EXISTS (SELECT 1 FROM boxes b WHERE b.image_id=i.id)")
     elif classes:
@@ -320,6 +359,7 @@ class Store:
         camera: str | None = None,
         domain: str | None = None,
         split: str | None = None,
+        tag: int | str | None = None,
     ) -> list[dict]:
         """검수 대상 목록. 기본은 불확실도 높은 순(= 사람이 볼 가치가 큰 순).
 
@@ -337,15 +377,14 @@ class Store:
             marks = ",".join("?" * len(wanted))
             with self.connect() as con:
                 rows = con.execute(
-                    "SELECT i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes"
-                    f" FROM images i WHERE i.id IN ({marks})",
+                    f"SELECT {_LIST_COLS} FROM images i WHERE i.id IN ({marks})",
                     wanted,
                 ).fetchall()
             by_id = {r["id"]: dict(r) for r in rows}
             return [by_id[i] for i in wanted if i in by_id][offset:offset + limit]
 
         if order == "rare":
-            return self._list_rare(status, classes, empty, limit, offset, camera, domain, split)
+            return self._list_rare(status, classes, empty, limit, offset, camera, domain, split, tag)
 
         order_sql = {
             "uncertainty": "i.uncertainty DESC, i.id ASC",
@@ -353,11 +392,8 @@ class Store:
             "recent": "i.updated_at DESC, i.id DESC",
         }.get(order, "i.uncertainty DESC, i.id ASC")
 
-        where, args = _list_where(status, classes, empty, camera, domain, split)
-        sql = (
-            "SELECT i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes"
-            f" FROM images i{where} ORDER BY {order_sql} LIMIT ? OFFSET ?"
-        )
+        where, args = _list_where(status, classes, empty, camera, domain, split, tag)
+        sql = f"SELECT {_LIST_COLS} FROM images i{where} ORDER BY {order_sql} LIMIT ? OFFSET ?"
         args += [limit, offset]
 
         with self.connect() as con:
@@ -387,7 +423,7 @@ class Store:
 
     def _list_rare(self, status, classes, empty, limit: int, offset: int,
                    camera: str | None = None, domain: str | None = None,
-                   split: str | None = None) -> list[dict]:
+                   split: str | None = None, tag: int | str | None = None) -> list[dict]:
         """'드문 클래스 먼저' 정렬. 이미지 점수 = 박스마다 (신뢰도 × 그 클래스의 희소도) 중 최댓값.
 
         자동 라벨이 van·pickup 처럼 드문 클래스를 확신하는 이미지가 맨 앞에 온다 — 검수할
@@ -396,12 +432,9 @@ class Store:
         목록 묶음(100개씩…)과 맞도록 같은 조건의 전체를 점수로 줄 세운 뒤 잘라 준다.
         """
         rarity = self.class_rarity()
-        where, args = _list_where(status, classes, empty, camera, domain, split)
+        where, args = _list_where(status, classes, empty, camera, domain, split, tag)
         with self.connect() as con:
-            rows = con.execute(
-                "SELECT i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes"
-                f" FROM images i{where}", args,
-            ).fetchall()
+            rows = con.execute(f"SELECT {_LIST_COLS} FROM images i{where}", args).fetchall()
             boxes = con.execute(
                 "SELECT bx.image_id, bx.cls, bx.conf FROM boxes bx"
                 f" WHERE bx.image_id IN (SELECT i.id FROM images i{where})", args,
@@ -432,13 +465,14 @@ class Store:
         camera: str | None = None,
         domain: str | None = None,
         split: str | None = None,
+        tag: int | str | None = None,
     ) -> int:
         """`list_images` 와 같은 조건으로 개수만 센다.
 
         클래스로 거르면 상태별 개수(`counts()`)를 쓸 수 없어서 따로 센다. 목록 UI 는
         이 수로 묶음(100개씩…)을 나누므로 필터와 정확히 같은 조건이어야 한다.
         """
-        where, args = _list_where(status, classes, empty, camera, domain, split)
+        where, args = _list_where(status, classes, empty, camera, domain, split, tag)
         with self.connect() as con:
             return int(con.execute(f"SELECT COUNT(*) FROM images i{where}", args).fetchone()[0])
 
@@ -468,6 +502,71 @@ class Store:
                 return [image_id]
             return [int(r["id"]) for r in con.execute(
                 "SELECT id FROM images WHERE grp=? AND status != 'trashed' ORDER BY id", (row["grp"],))]
+
+    # ── 태그 (2026-11-03) ── 라벨이 아니라 updated_at·변경 이력은 건드리지 않는다
+
+    def list_tags(self) -> list[dict]:
+        """태그 목록(이름순)과 붙은 이미지 수(휴지통 제외)."""
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT t.id, t.name, (SELECT COUNT(*) FROM image_tags it JOIN images i ON i.id=it.image_id"
+                "  WHERE it.tag_id=t.id AND i.status != 'trashed') AS n"
+                " FROM tags t ORDER BY t.name COLLATE NOCASE, t.id"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def untagged_count(self) -> int:
+        """태그가 하나도 없는 이미지 수(휴지통 제외)."""
+        with self.connect() as con:
+            return int(con.execute(
+                "SELECT COUNT(*) FROM images i WHERE i.status != 'trashed'"
+                " AND NOT EXISTS (SELECT 1 FROM image_tags t WHERE t.image_id=i.id)").fetchone()[0])
+
+    def create_tag(self, name: str) -> int:
+        """새 태그. 이름이 겹치면 ValueError (대소문자는 가린다)."""
+        name = clean_tag_name(name)
+        with _write_lock, self.connect() as con:
+            if con.execute("SELECT 1 FROM tags WHERE name=?", (name,)).fetchone():
+                raise ValueError(f"같은 이름의 태그가 있습니다: {name}")
+            return int(con.execute("INSERT INTO tags(name, created_at) VALUES(?, ?)",
+                                   (name, _now())).lastrowid)
+
+    def rename_tag(self, tag_id: int, name: str) -> bool:
+        """태그 이름을 바꾼다. 없는 태그면 False, 다른 태그와 이름이 겹치면 ValueError."""
+        name = clean_tag_name(name)
+        with _write_lock, self.connect() as con:
+            other = con.execute("SELECT id FROM tags WHERE name=?", (name,)).fetchone()
+            if other and int(other["id"]) != tag_id:
+                raise ValueError(f"같은 이름의 태그가 있습니다: {name}")
+            return con.execute("UPDATE tags SET name=? WHERE id=?", (name, tag_id)).rowcount > 0
+
+    def delete_tag(self, tag_id: int) -> int | None:
+        """태그를 지운다(붙어 있던 것도 함께 떨어진다 — 이미지는 그대로). 떨어진 이미지 수, 없는 태그면 None."""
+        with _write_lock, self.connect() as con:
+            if not con.execute("SELECT 1 FROM tags WHERE id=?", (tag_id,)).fetchone():
+                return None
+            n = int(con.execute("SELECT COUNT(*) FROM image_tags WHERE tag_id=?", (tag_id,)).fetchone()[0])
+            con.execute("DELETE FROM image_tags WHERE tag_id=?", (tag_id,))
+            con.execute("DELETE FROM tags WHERE id=?", (tag_id,))
+            return n
+
+    def image_tag_ids(self, image_id: int) -> list[int]:
+        with self.connect() as con:
+            return [int(r[0]) for r in con.execute(
+                "SELECT tag_id FROM image_tags WHERE image_id=? ORDER BY tag_id", (image_id,))]
+
+    def set_image_tag(self, image_ids: list[int], tag_id: int, on: bool) -> int:
+        """이미지들에 태그를 붙이거나(on) 뗀다. 실제로 바뀐 이미지 수. 없는 태그면 ValueError."""
+        if not image_ids:
+            return 0
+        with _write_lock, self.connect() as con:
+            if not con.execute("SELECT 1 FROM tags WHERE id=?", (tag_id,)).fetchone():
+                raise ValueError("없는 태그입니다(다른 창에서 지웠을 수 있습니다).")
+            sql = ("INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?, ?)" if on
+                   else "DELETE FROM image_tags WHERE image_id=? AND tag_id=?")
+            before = con.total_changes
+            con.executemany(sql, [(i, tag_id) for i in image_ids])
+            return con.total_changes - before
 
     def set_domain(self, image_ids: list[int], domain: str | None) -> int:
         """도메인을 정한다(None = 미분류로 되돌림). 라벨이 아니라서 updated_at 은 건드리지 않는다 —
