@@ -68,6 +68,8 @@ def parse_args():
     p.add_argument("--edge-px", type=int, default=3, help="타일 안쪽 경계에서 이 px 안에 닿은 박스를 '잘린 것' 으로 본다")
     p.add_argument("--op-conf", type=float, default=0.25,
                    help="운영 조건 P·R·FP 를 셀 신뢰도 (기본 0.25 = predict.conf). 올리면 FP 가 같은 수준에서 재현율을 견줄 수 있다")
+    p.add_argument("--merge-iou", type=float, default=None,
+                   help="타일·통째 검출을 합치는 NMS 의 IoU (모든 변형에 적용). 기본: mAP 0.7 / 운영 0.6. 낮추면 겹친 중복이 줄어든다")
     p.add_argument("--limit", type=int, default=0, help="앞 N장만 (맛보기)")
     p.add_argument("--out", default=None, help="만들 폴더 (기본: runs/test_tiles/<날짜>_<가중치>_<split>)")
     p.add_argument("--keep", action="store_true", help="복사한 이미지 폴더를 지우지 않는다")
@@ -306,7 +308,8 @@ def main():
             d = compose(v, comps, w, h)
             used = ["full"] if v["big"] and max(w, h) <= BIG_SIDE else v["comps"]
             secs[v["name"]] += sum(ctime[c] for c in used)
-            recs[v["name"]].append((eval_image(merge(d, MAP_IOU, MAP_MAXDET, 0.0), merge(d, 0.6, 100, args.op_conf),
+            map_iou, op_iou = args.merge_iou or MAP_IOU, args.merge_iou or 0.6
+            recs[v["name"]].append((eval_image(merge(d, map_iou, MAP_MAXDET, 0.0), merge(d, op_iou, 100, args.op_conf),
                                                gt, w, h, imgsz, known), doms))
         if n % 100 == 0 or n == len(items):
             print(f"  {n}/{len(items)}장 ({time.perf_counter() - t_start:.0f}초)", flush=True)
