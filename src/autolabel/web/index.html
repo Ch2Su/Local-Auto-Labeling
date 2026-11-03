@@ -14,18 +14,36 @@
   <!-- 프로젝트 탭. 목록은 /api/projects 가 준다 (projects.yaml). 하나뿐이면 숨는다. -->
   <nav class="tabs hidden" id="projects"></nav>
 
+  <!-- 보기 전환 (2026-11-04): 라벨링 ↔ 이미지 보기. 같은 페이지라 왼쪽 필터와 지금 이미지가 그대로 남는다. V 로도 바꾼다 -->
+  <div class="seg" id="view-switch">
+    <button class="seg-btn on" data-view="label" title="라벨링 — 한 장씩 박스를 고치고 승인합니다 (V)">라벨링</button>
+    <button class="seg-btn" data-view="gallery" title="이미지 보기 — 여러 장을 한눈에 보고 골라서 태그·도메인을 한꺼번에 바꿉니다 (V)">이미지 보기</button>
+  </div>
+
   <div class="counts" id="counts"></div>
 
+  <!-- 작업 버튼은 메뉴 둘로 묶는다 (2026-11-04) — 자주 누르지 않고, 학습·정리는 잘못 누르면 오래 걸린다 -->
   <div class="actions">
-    <button id="btn-scan"    class="btn"      title="시드/미라벨 폴더를 다시 훑어 DB에 등록">폴더 스캔</button>
-    <button id="btn-predict" class="btn"      title="미라벨 이미지에 모델을 돌려 자동 라벨 생성">자동 라벨링</button>
-    <button id="btn-train"   class="btn"      title="승인된 라벨로 모델 재학습">학습</button>
-    <button id="btn-resume"  class="btn hidden" title="중단된 학습을 이어서 진행">이어서 학습</button>
-    <button id="btn-train-wsl"  class="btn" title="WSL(Linux)에서 학습합니다. 같은 설정에서 epoch 258초 → 62초로 약 4배 빠릅니다.">WSL 학습</button>
-    <button id="btn-resume-wsl" class="btn hidden" title="WSL 에서 중단된 학습을 이어서 진행">WSL 이어하기</button>
-    <button id="btn-tidy"    class="btn"      title="검수 완료된 이미지를 자동 라벨링 폴더 밖으로 옮겨 정리">정리</button>
-    <button id="btn-export"  class="btn"      title="승인된 라벨을 YOLO 포맷으로 내보내기">내보내기</button>
-    <button id="btn-audit"   class="btn"      title="최근 박스 변경을 이미지를 가로질러 봅니다. 여러 장을 고친 뒤 박스가 사라진 곳이 없는지 확인할 때 씁니다.">변경 기록</button>
+    <div class="menu">
+      <button class="btn menu-btn" aria-haspopup="true" aria-expanded="false">데이터 <span class="caret">▾</span></button>
+      <div class="menu-list hidden">
+        <button id="btn-scan"   class="menu-item" title="시드/미라벨 폴더를 다시 훑어 DB에 등록">폴더 스캔</button>
+        <button id="btn-tidy"   class="menu-item" title="검수 완료된 이미지를 자동 라벨링 폴더 밖으로 옮겨 정리">정리</button>
+        <button id="btn-export" class="menu-item" title="승인된 라벨을 YOLO 포맷으로 내보내기">내보내기</button>
+      </div>
+    </div>
+    <div class="menu">
+      <button class="btn menu-btn" aria-haspopup="true" aria-expanded="false">모델 <span id="model-dot" class="dot hidden" title="이어서 학습할 체크포인트가 있습니다"></span><span class="caret">▾</span></button>
+      <div class="menu-list hidden">
+        <button id="btn-predict"    class="menu-item" title="미라벨 이미지에 모델을 돌려 자동 라벨 생성">자동 라벨링</button>
+        <div class="menu-sep"></div>
+        <button id="btn-train"      class="menu-item" title="승인된 라벨로 모델 재학습">학습</button>
+        <button id="btn-resume"     class="menu-item hidden" title="중단된 학습을 이어서 진행">이어서 학습</button>
+        <button id="btn-train-wsl"  class="menu-item" title="WSL(Linux)에서 학습합니다. 같은 설정에서 epoch 258초 → 62초로 약 4배 빠릅니다.">WSL 학습</button>
+        <button id="btn-resume-wsl" class="menu-item hidden" title="WSL 에서 중단된 학습을 이어서 진행">WSL 이어하기</button>
+      </div>
+    </div>
+    <button id="btn-audit" class="btn" title="최근 박스 변경을 이미지를 가로질러 봅니다. 여러 장을 고친 뒤 박스가 사라진 곳이 없는지 확인할 때 씁니다.">변경 기록</button>
   </div>
 </header>
 
@@ -61,45 +79,58 @@
         <option value="uncertainty">불확실한 순</option>
         <option value="rare" title="드문 클래스(나온 장면 묶음이 적은 클래스)를 확신하는 이미지부터. 자동 라벨링 뒤 검수 대기에서 쓴다">드문 클래스 먼저</option>
       </select>
-      <select id="chunk-size" title="묶음 크기">
-        <option value="100">100개씩</option>
-        <option value="200">200개씩</option>
-        <option value="500">500개씩</option>
-        <option value="1000">1000개씩</option>
-        <option value="all">전체</option>
-      </select>
     </div>
 
-    <!-- 클래스로 거르기. 둘 이상 고르면 '전부 들어 있는' 이미지만 남는다. -->
-    <div class="class-filter">
-      <button id="cf-toggle" class="btn btn-sm" aria-expanded="false"
-              title="특정 클래스가 있는 이미지만 봅니다. 둘 이상 고르면 그 클래스가 모두 있는 이미지만 남습니다.">
-        클래스: 전체
-      </button>
-      <button id="cf-clear" class="linkbtn hidden" title="클래스 필터 해제">해제</button>
-      <div id="cf-panel" class="cf-panel hidden"></div>
-    </div>
-    <!-- 카메라(출처)로 거르기. 카메라가 붙은 이미지가 하나라도 있을 때만 보인다 (docs/provenance.md). -->
-    <div id="camera-filter" class="camera-filter hidden">
-      <select id="filter-camera" title="카메라(출처)로 거릅니다. 상태·클래스 필터와 함께 걸립니다.">
-        <option value="">카메라: 전체</option>
-      </select>
-    </div>
-    <!-- 도메인(촬영 형태)으로 거르기. 미분류만 골라 놓고 Q·W·E 로 나눠도 그 줄은 목록에 그대로 둔다
-         (목록이 움직이지 않게, 2026-11-04). 아래 '↻ 새로 받기' 를 누르면 빠진다.
-         분할(train·val·test)은 보기만 한다 — 분할을 바꾸는 것은 labeler.py split 뿐이다. -->
-    <div class="camera-filter two">
-      <select id="filter-domain" title="도메인(CCTV·비CCTV·드론)으로 거릅니다. 상태·클래스·카메라 필터와 함께 걸립니다.">
-        <option value="">도메인: 전체</option>
-      </select>
-      <select id="filter-split" title="분할(train·val·test)로 거릅니다. 다른 필터와 함께 걸립니다. 분할은 여기서 바뀌지 않습니다.">
-        <option value="">분할: 전체</option>
-      </select>
-    </div>
-    <div class="camera-filter">
-      <select id="filter-tag" title="태그로 거릅니다. 다른 필터와 함께 걸립니다. '태그 없음' 에서 T 로 붙여도 그 줄은 목록에 그대로 둡니다 — 아래 '↻ 새로 받기' 를 누르면 빠집니다.">
-        <option value="">태그: 전체</option>
-      </select>
+    <!-- 필터 (2026-11-04): 접히는 한 칸. 접혀 있으면 고른 필터만 한 줄로 보인다. 이미지 보기에서는 늘 펼친다 -->
+    <div class="filters" id="filters">
+      <div class="filters-head" id="filters-head" title="필터를 펼치거나 접습니다">
+        <span class="caret" id="filters-caret">▸</span>
+        <span class="filters-sum" id="filters-sum">필터 없음</span>
+        <button id="filters-clear" class="linkbtn hidden" title="클래스·카메라·도메인·분할·태그 필터를 모두 풉니다">모두 해제</button>
+      </div>
+      <div class="filters-body hidden" id="filters-body">
+        <!-- 클래스로 거르기. 둘 이상 고르면 '전부 들어 있는' 이미지만 남는다. -->
+        <div class="class-filter">
+          <button id="cf-toggle" class="btn btn-sm" aria-expanded="false"
+                  title="특정 클래스가 있는 이미지만 봅니다. 둘 이상 고르면 그 클래스가 모두 있는 이미지만 남습니다.">
+            클래스: 전체
+          </button>
+          <button id="cf-clear" class="linkbtn hidden" title="클래스 필터 해제">해제</button>
+          <div id="cf-panel" class="cf-panel hidden"></div>
+        </div>
+        <!-- 카메라(출처)로 거르기. 카메라가 붙은 이미지가 하나라도 있을 때만 보인다 (docs/provenance.md). -->
+        <div id="camera-filter" class="camera-filter hidden">
+          <select id="filter-camera" title="카메라(출처)로 거릅니다. 상태·클래스 필터와 함께 걸립니다.">
+            <option value="">카메라: 전체</option>
+          </select>
+        </div>
+        <!-- 도메인(촬영 형태)으로 거르기. 미분류만 골라 놓고 Q·W·E 로 나눠도 그 줄은 목록에 그대로 둔다
+             (목록이 움직이지 않게, 2026-11-04). 아래 '↻ 새로 받기' 를 누르면 빠진다.
+             분할(train·val·test)은 보기만 한다 — 분할을 바꾸는 것은 labeler.py split 뿐이다. -->
+        <div class="camera-filter two">
+          <select id="filter-domain" title="도메인(CCTV·비CCTV·드론)으로 거릅니다. 상태·클래스·카메라 필터와 함께 걸립니다.">
+            <option value="">도메인: 전체</option>
+          </select>
+          <select id="filter-split" title="분할(train·val·test)로 거릅니다. 다른 필터와 함께 걸립니다. 분할은 여기서 바뀌지 않습니다.">
+            <option value="">분할: 전체</option>
+          </select>
+        </div>
+        <div class="camera-filter">
+          <select id="filter-tag" title="태그로 거릅니다. 다른 필터와 함께 걸립니다. '태그 없음' 에서 T 로 붙여도 그 줄은 목록에 그대로 둡니다 — 아래 '↻ 새로 받기' 를 누르면 빠집니다.">
+            <option value="">태그: 전체</option>
+          </select>
+        </div>
+        <div class="camera-filter two">
+          <span class="lbl">목록 묶음</span>
+          <select id="chunk-size" title="왼쪽 목록을 이만큼씩 접어 보여 줍니다 (이미지 보기는 늘 전체)">
+            <option value="100">100개씩</option>
+            <option value="200">200개씩</option>
+            <option value="500">500개씩</option>
+            <option value="1000">1000개씩</option>
+            <option value="all">전체</option>
+          </select>
+        </div>
+      </div>
     </div>
     <div class="goto">
       <input id="goto-ids" type="text" autocomplete="off"
@@ -155,30 +186,45 @@
   </section>
 
   <!-- ── 우: 클래스 / 박스 ────────────────────────────── -->
-  <aside class="panel panel-right">
-    <div class="panel-head"><span>클래스</span></div>
-    <ul id="class-list" class="class-list"></ul>
-    <div class="add-class">
-      <input id="new-class" type="text" placeholder="새 클래스 이름" autocomplete="off">
-      <button id="btn-add-class" class="btn btn-sm">추가</button>
-    </div>
+  <!-- 칸마다 머리를 누르면 접고 편다 (2026-11-04). 접은 것은 다시 열어도 남는다 -->
+  <aside class="panel panel-right" id="panel-label">
+    <section class="sec" data-sec="classes">
+      <div class="panel-head sec-head"><span class="caret">▾</span><span>클래스</span></div>
+      <div class="sec-body">
+        <ul id="class-list" class="class-list"></ul>
+        <div class="add-class">
+          <input id="new-class" type="text" placeholder="새 클래스 이름" autocomplete="off">
+          <button id="btn-add-class" class="btn btn-sm">추가</button>
+        </div>
+      </div>
+    </section>
 
     <!-- 태그 (2026-11-03): 비슷한 이미지끼리 묶는 이름표. 라벨이 아니라 학습에는 쓰이지 않는다.
          칸을 누르면 이 이미지에 붙이거나 떼고, 줄을 누르면 T 로 붙일 태그로 고른다. -->
-    <div class="panel-head"><span>태그</span><span id="tag-count" class="dim"></span>
-      <span class="spacer"></span><kbd title="고른 태그를 이 이미지에 붙이고 다음 이미지로">T</kbd></div>
-    <ul id="tag-list" class="tag-list"></ul>
-    <div class="add-class">
-      <input id="new-tag" type="text" placeholder="새 태그 이름" maxlength="40" autocomplete="off">
-      <button id="btn-add-tag" class="btn btn-sm">추가</button>
-    </div>
+    <section class="sec" data-sec="tags">
+      <div class="panel-head sec-head"><span class="caret">▾</span><span>태그</span><span id="tag-count" class="dim"></span>
+        <span class="spacer"></span><span id="tag-cur" class="tag-cur"></span>
+        <kbd title="고른 태그를 이 이미지에 붙이고 다음 이미지로">T</kbd></div>
+      <div class="sec-body">
+        <div class="tag-search"><input id="tag-q" type="search" placeholder="태그 찾기" autocomplete="off"></div>
+        <ul id="tag-list" class="tag-list"></ul>
+        <div class="add-class">
+          <input id="new-tag" type="text" placeholder="새 태그 이름" maxlength="40" autocomplete="off">
+          <button id="btn-add-tag" class="btn btn-sm">추가</button>
+        </div>
+      </div>
+    </section>
 
-    <div class="panel-head"><span>박스</span><span id="box-count" class="dim"></span>
-      <span class="spacer"></span>
-      <button id="btn-same" class="btn btn-sm" disabled
-              title="고른 박스의 클래스를 같은 묶음(같은 장면)의 같은 자리 박스에 한꺼번에 적용합니다. 바꿀 대상을 먼저 보여 줍니다 (G)">같은 자리 <kbd>G</kbd></button>
-    </div>
-    <ul id="box-list" class="box-list"></ul>
+    <section class="sec grow" data-sec="boxes">
+      <div class="panel-head sec-head"><span class="caret">▾</span><span>박스</span><span id="box-count" class="dim"></span>
+        <span class="spacer"></span>
+        <button id="btn-same" class="btn btn-sm" disabled
+                title="고른 박스의 클래스를 같은 묶음(같은 장면)의 같은 자리 박스에 한꺼번에 적용합니다. 바꿀 대상을 먼저 보여 줍니다 (G)">같은 자리 <kbd>G</kbd></button>
+      </div>
+      <div class="sec-body">
+        <ul id="box-list" class="box-list"></ul>
+      </div>
+    </section>
 
     <!-- 예측 비교(P): 운영 모델이 라벨과 다르게 본 곳. 켜져 있을 때만 보인다. -->
     <div class="panel-head pred-head hidden" id="pred-head">
@@ -193,6 +239,46 @@
       <span id="hist-count" class="dim"></span><span class="spacer"></span><kbd>H</kbd>
     </div>
     <ul id="hist-list" class="hist-list hidden"></ul>
+  </aside>
+
+  <!-- ── 이미지 보기 (2026-11-04, gallery.js) ── 왼쪽 필터를 라벨링과 함께 쓴다 -->
+  <section class="gallery" id="gallery">
+    <div class="gallery-head">
+      <span id="g-count" class="g-count"></span>
+      <span class="spacer"></span>
+      <span class="g-sel">선택 <b id="g-sel-n">0</b>장</span>
+      <button id="g-select-all" class="btn btn-sm" title="지금 필터의 이미지를 모두 고릅니다 (Ctrl+A)">전체 선택</button>
+      <button id="g-select-none" class="btn btn-sm" title="고른 것을 모두 풉니다 (Esc)">선택 해제</button>
+      <button id="g-open" class="btn btn-sm" title="고른 이미지만 라벨링 목록으로 넘겨 한 장씩 봅니다 (Enter)">라벨링에서 열기</button>
+      <label class="g-size" title="썸네일 크기">크기 <input id="g-size" type="range" min="120" max="320" step="20" value="180"></label>
+    </div>
+    <div class="gallery-grid" id="g-grid"></div>
+    <div class="g-hint">
+      클릭 = 고르기 · <kbd>Ctrl</kbd>+클릭 = 더하기/빼기 · <kbd>Shift</kbd>+클릭 = 범위 · 더블클릭 = 라벨링에서 열기 ·
+      <kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> 옮기기 · <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd> 도메인 · <kbd>T</kbd> 태그 붙이기 · <kbd>V</kbd> 라벨링으로
+    </div>
+  </section>
+
+  <aside class="panel panel-right gallery-side" id="gallery-side">
+    <div class="panel-head"><span>고른 이미지</span><span id="gs-n" class="dim"></span></div>
+    <div class="gs-preview" id="gs-preview"></div>
+    <div class="panel-head"><span>도메인</span><span id="gs-dom" class="dim"></span></div>
+    <div class="gs-domain">
+      <button class="btn btn-sm" data-gdomain="cctv" title="고른 이미지를 모두 CCTV 로 (Q)">CCTV <kbd>Q</kbd></button>
+      <button class="btn btn-sm" data-gdomain="noncctv" title="고른 이미지를 모두 비CCTV 로 (W)">비CCTV <kbd>W</kbd></button>
+      <button class="btn btn-sm" data-gdomain="drone" title="고른 이미지를 모두 드론으로 (E)">드론 <kbd>E</kbd></button>
+    </div>
+    <!-- 칸: 고른 이미지 모두에 붙어 있으면 ✓, 일부면 −. 누르면 모두에 붙이고, 모두에 붙어 있었으면 모두에서 뗀다.
+         줄을 누르면 T 로 붙일 태그로 고른다(라벨링과 같은 태그) -->
+    <div class="panel-head"><span>태그</span><span id="gs-tag-count" class="dim"></span>
+      <span class="spacer"></span><span id="gs-tag-cur" class="tag-cur"></span>
+      <kbd title="고른 태그를 고른 이미지에 붙입니다">T</kbd></div>
+    <div class="tag-search"><input id="gs-tag-q" type="search" placeholder="태그 찾기" autocomplete="off"></div>
+    <ul id="gs-tags" class="tag-list gs-tags"></ul>
+    <div class="add-class">
+      <input id="gs-new-tag" type="text" placeholder="새 태그 이름" maxlength="40" autocomplete="off">
+      <button id="gs-add-tag" class="btn btn-sm">추가</button>
+    </div>
   </aside>
 
 </main>
@@ -211,5 +297,6 @@
 </div>
 
 <script src="app.js"></script>
+<script src="gallery.js"></script>
 </body>
 </html>

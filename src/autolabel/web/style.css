@@ -77,6 +77,34 @@ kbd {
 
 .actions { margin-left: auto; display: flex; gap: 6px; }
 
+/* 보기 전환 (2026-11-04): 라벨링 ↔ 이미지 보기 */
+.seg { display: flex; flex: none; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.seg-btn {
+  background: var(--bg-3); color: var(--fg-dim); border: none;
+  padding: 5px 13px; font: inherit; cursor: pointer; white-space: nowrap;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+.seg-btn:hover { color: var(--fg); }
+.seg-btn.on { background: var(--accent-2); color: var(--fg); font-weight: 600; }
+
+/* 상단 메뉴 (2026-11-04): 작업 버튼을 '데이터'·'모델' 로 묶었다 */
+.menu { position: relative; }
+.menu-btn .caret { color: var(--fg-dim); margin-left: 2px; }
+.menu-list {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40; min-width: 170px;
+  display: flex; flex-direction: column; padding: 4px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+.menu-item {
+  background: none; border: none; color: var(--fg); text-align: left;
+  padding: 6px 10px; border-radius: 4px; font: inherit; cursor: pointer; white-space: nowrap;
+}
+.menu-item:hover:not(:disabled) { background: var(--bg-3); }
+.menu-item:disabled { opacity: .45; cursor: not-allowed; }
+.menu-sep { height: 1px; background: var(--line); margin: 4px 2px; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin: 0 2px 1px; }
+
 .btn {
   background: var(--bg-3);
   color: var(--fg);
@@ -147,6 +175,16 @@ kbd {
   padding: 3px 4px; font: inherit; flex: 1; min-width: 0;
 }
 
+/* 오른쪽 칸 (2026-11-04): 머리를 누르면 접고 편다. 박스 칸(grow)이 남는 높이를 갖는다 */
+.sec { display: flex; flex-direction: column; flex: none; min-height: 0; }
+.sec-head { cursor: pointer; user-select: none; }
+.sec-head:hover { background: var(--bg-3); }
+.sec-head .caret { width: 9px; color: var(--fg-dim); flex: none; }
+.sec.collapsed .sec-body { display: none; }
+.sec.grow { flex: 1; }
+.sec.grow.collapsed { flex: none; }
+.sec.grow .sec-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
 /* ── 이미지 목록 ──────────────────────────────────── */
 .image-list, .class-list, .box-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
 .image-list { flex: 1; }
@@ -203,12 +241,12 @@ kbd {
 .image-list li.item.active .pos { color: #dbe6ff; }
 /* '드문 클래스 먼저' 정렬에서 그 이미지를 앞으로 끌어온 클래스 */
 .image-list .rare { font-size: 10px; font-weight: 600; flex: none; }
-.image-list .dom { font-size: 10px; flex: none; color: var(--fg-dim); }
-.image-list .dom-cctv { color: var(--ok); }
-.image-list .dom-drone { color: var(--warn); }
+.image-list .dom, .g-meta .dom { font-size: 10px; flex: none; color: var(--fg-dim); }
+.image-list .dom-cctv, .g-meta .dom-cctv { color: var(--ok); }
+.image-list .dom-drone, .g-meta .dom-drone { color: var(--warn); }
 /* 분할 표시: test·val 만 붙인다(train 은 대부분이라 표시하지 않는다) */
-.image-list .spl { font-size: 10px; flex: none; color: var(--fg-dim); }
-.image-list .spl-test { color: var(--accent); font-weight: 600; }
+.image-list .spl, .g-meta .spl { font-size: 10px; flex: none; color: var(--fg-dim); }
+.image-list .spl-test, .g-meta .spl-test { color: var(--accent); font-weight: 600; }
 
 /* 불확실도 막대 */
 .unc { width: 3px; height: 18px; border-radius: 2px; background: var(--line); flex: none; }
@@ -261,6 +299,16 @@ kbd {
 .tag-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag-list .cnt { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .tag-list .linkbtn { padding: 0 2px; flex: none; }
+/* 태그가 백 개를 넘어 찾는 칸을 둔다 (2026-11-04). T 로 붙일 태그는 머리에 이름을 보인다 */
+.tag-search { padding: 6px 10px 2px; }
+.tag-search input {
+  width: 100%; background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; font: inherit;
+}
+.tag-cur {
+  font-size: 11px; font-weight: normal; color: var(--accent);
+  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .img-tags { color: var(--accent); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .image-list .tg {
   font-size: 10px; flex: none; color: var(--accent); max-width: 7em;
@@ -298,6 +346,22 @@ kbd {
 .camera-filter select.on { border-color: var(--accent); background: var(--accent-2); }
 .camera-filter.two { display: flex; gap: 6px; }
 .camera-filter.two select { flex: 1; min-width: 0; }
+.camera-filter .lbl { flex: none; align-self: center; color: var(--fg-dim); font-size: 12px; }
+
+/* 필터 (2026-11-04): 접히는 한 칸. 접혀 있으면 고른 필터만 한 줄로 */
+.filters { border-bottom: 1px solid var(--line); }
+.filters-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px; cursor: pointer; user-select: none; font-size: 12px;
+}
+.filters-head:hover { background: var(--bg-3); }
+.filters-head .caret { width: 9px; color: var(--fg-dim); flex: none; }
+.filters-sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); }
+.filters-sum.on { color: var(--accent); font-weight: 600; }
+.filters-head .linkbtn { flex: none; font-size: 11px; }
+.filters-body { border-top: 1px solid var(--line); padding: 2px 0 4px; }
+.filters-body .class-filter { border-bottom: none; padding: 6px 10px; }
+.filters-body .camera-filter { border-bottom: none; padding: 3px 10px; }
 .cf-panel {
   position: absolute; z-index: 20; top: 100%; left: 10px; right: 10px;
   max-height: 300px; overflow: auto;
@@ -479,3 +543,81 @@ kbd {
   max-width: 70vw;
 }
 .toast.err { border-color: var(--err); color: #ffd9dc; }
+
+/* ── 이미지 보기 (2026-11-04, gallery.js) ─────────────── */
+/* body.view-gallery 일 때 가운데·오른쪽을 바꿔 끼운다. 왼쪽은 필터만 남기고 목록을 숨긴다(그리드가 목록이다) */
+body:not(.view-gallery) #gallery, body:not(.view-gallery) #gallery-side { display: none; }
+body.view-gallery .stage, body.view-gallery #panel-label, body.view-gallery #image-list { display: none; }
+body.view-gallery .filters-body.hidden { display: block !important; }
+body.view-gallery .filters-head .caret { visibility: hidden; }
+
+.gallery { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.gallery-head {
+  display: flex; align-items: center; gap: 6px 8px; flex: none; flex-wrap: wrap;   /* 좁으면 두 줄로 */
+  padding: 7px 12px; background: var(--bg-2); border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.g-count { color: var(--fg-dim); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.g-sel { font-size: 12px; color: var(--fg-dim); }
+.g-sel b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.g-size { display: flex; align-items: center; gap: 4px; color: var(--fg-dim); font-size: 12px; }
+.g-size input { width: 90px; }
+.gallery-grid {
+  --g-size: 180px;
+  flex: 1; min-height: 0; overflow-y: auto; outline: none;
+  display: grid; gap: 8px; padding: 10px;
+  grid-template-columns: repeat(auto-fill, var(--g-size)); justify-content: start; align-content: start;
+  background: #0e1013;
+}
+/* 칸 크기를 못 박는다 — 화면 밖 칸은 배치를 건너뛰어도(content-visibility) 높이가 그대로다 */
+.g-cell {
+  position: relative; width: var(--g-size); height: calc(var(--g-size) + 40px);
+  display: flex; flex-direction: column; overflow: hidden; cursor: pointer; user-select: none;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius);
+  content-visibility: auto;
+}
+.g-cell:hover { border-color: #46505f; }
+.g-cell.sel { border-color: var(--accent); background: #1d2940; box-shadow: inset 0 0 0 1px var(--accent); }
+.g-cell.focus { outline: 2px solid #ffffffaa; outline-offset: 1px; }
+.g-img {
+  height: var(--g-size); flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: #0b0d10; color: var(--fg-dim); font-size: 11px;
+}
+.g-img img { max-width: 100%; max-height: 100%; display: block; }
+.g-meta {
+  display: flex; align-items: center; gap: 5px; height: 19px; padding: 2px 6px 0;
+  font-size: 11px; white-space: nowrap; overflow: hidden;
+}
+.g-id { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.g-meta .nb { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.g-tags {
+  height: 19px; padding: 0 6px; font-size: 11px; color: var(--accent);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.g-tags.none { color: var(--line); }
+.g-check {
+  position: absolute; top: 5px; left: 5px; width: 18px; height: 18px; border-radius: 50%;
+  display: none; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: 700;
+}
+.g-cell.sel .g-check { display: flex; }
+.g-empty, .g-more { grid-column: 1 / -1; color: var(--fg-dim); text-align: center; padding: 18px; }
+.g-hint {
+  flex: none; padding: 5px 12px; font-size: 11px; color: var(--fg-dim);
+  background: var(--bg-2); border-top: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.gs-preview { padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.gs-preview img {
+  display: block; width: 100%; height: 180px; object-fit: contain;
+  background: #0b0d10; border-radius: 4px;
+}
+.gs-preview .nm { margin-top: 6px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-preview .meta { color: var(--fg-dim); font-size: 11px; }
+.gs-preview .tags { color: var(--accent); font-size: 11px; word-break: break-all; }
+.gs-preview .empty { color: var(--fg-dim); }
+.gs-domain { display: flex; gap: 4px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.gs-domain .btn.on { border-color: var(--accent); background: var(--accent-2); }
+.gs-tags { flex: 1; max-height: none; min-height: 0; }
+.gs-tags .cnt b { color: var(--accent); font-weight: 600; }

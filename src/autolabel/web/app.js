@@ -59,6 +59,9 @@ const S = {
   findHot: -1,        // 목록에서 마우스를 올린 항목 (캔버스에서 굵게)
 };
 
+// 지금 보기: "label" 라벨링 / "gallery" 이미지 보기(gallery.js). setView 로만 바꾼다 (2026-11-04)
+let VIEW = "label";
+
 const canvas = $("#canvas");
 const ctx = canvas.getContext("2d");
 
@@ -1106,12 +1109,19 @@ async function loadTags() {
   S.filterTag = fillCountFilter($("#filter-tag"), S.filterTag, "태그: 전체",
     data.tags.map((t) => ({ key: String(t.id), n: t.n })), S.tagName, "태그 없음", data.none, data.none_key);
   renderTagList();
+  if (VIEW === "gallery") galleryTagsChanged();   // 이름·개수가 바뀌었을 수 있다 (gallery.js)
+}
+
+/** 태그 찾기 칸의 글자를 담은 태그만 (대소문자 무시). 비었으면 전부. */
+function tagMatches(t, q) {
+  return !q || t.name.toLowerCase().includes(q.trim().toLowerCase());
 }
 
 function renderTagList() {
   const ul = $("#tag-list");
   ul.innerHTML = "";
   $("#tag-count").textContent = S.tags.length ? `${S.tags.length}개` : "";
+  $("#tag-cur").textContent = S.curTag != null && S.tagName[S.curTag] ? `→ #${S.tagName[S.curTag]}` : "";
   const mine = new Set(S.cur ? S.cur.tags || [] : []);
   $("#img-tags").textContent = S.cur && mine.size
     ? [...mine].map((t) => `#${S.tagName[t] || t}`).join(" ") : "";
@@ -1122,7 +1132,9 @@ function renderTagList() {
     ul.appendChild(li);
     return;
   }
+  const q = $("#tag-q").value;
   for (const t of S.tags) {
+    if (!tagMatches(t, q)) continue;
     const li = document.createElement("li");
     li.className = t.id === S.curTag ? "active" : "";
     li.title = `${t.name} — 붙은 이미지 ${t.n.toLocaleString()}장\n줄을 누르면 T 로 붙일 태그로 고릅니다. 칸은 이 이미지에 붙이기/떼기.`;
@@ -1207,8 +1219,8 @@ async function tagAndNext() {
   }
 }
 
-async function createTag() {
-  const input = $("#new-tag");
+/** input = 이름을 넣은 칸 (라벨링 오른쪽 #new-tag, 이미지 보기 #gs-new-tag). */
+async function createTag(input = $("#new-tag")) {
   const name = input.value.trim();
   if (!name) { input.focus(); return; }
   let res;
@@ -1354,6 +1366,46 @@ function renderClassFilter() {
   row.title = "박스가 하나도 없는 이미지만 봅니다. 클래스 선택과 함께 쓸 수 없습니다.";
   panel.appendChild(row);
   syncClassFilter();
+}
+
+/* ── 필터 칸 (2026-11-04) ── 클래스·카메라·도메인·분할·태그·목록 묶음을 접히는 한 칸에 모았다. 접혀 있으면
+ * 고른 필터만 한 줄로 보인다(상태·정렬은 늘 위에). 이미지 보기에서는 늘 펼친다(style.css). */
+function optText(sel) {        // 고른 항목의 글자에서 끝의 '(장수)' 를 뗀다
+  const o = sel.selectedOptions[0];
+  return o ? o.textContent.replace(/\s*\([\d,]+\)$/, "") : "";
+}
+
+function renderFilterSummary() {
+  const parts = [];
+  if (S.filterEmpty || S.filterClasses.size) parts.push(cfLabel());
+  if (S.filterCamera) parts.push(`카메라 ${optText($("#filter-camera"))}`);
+  if (S.filterDomain) parts.push(`도메인 ${optText($("#filter-domain"))}`);
+  if (S.filterSplit) parts.push(`분할 ${optText($("#filter-split"))}`);
+  if (S.filterTag) parts.push(S.filterTag === "__none__" ? "태그 없음" : `#${optText($("#filter-tag"))}`);
+  const sum = $("#filters-sum");
+  sum.textContent = parts.length ? parts.join(" · ") : "필터 없음";
+  sum.title = parts.length ? `걸린 필터: ${sum.textContent}` : "";
+  sum.classList.toggle("on", parts.length > 0);
+  $("#filters-clear").classList.toggle("hidden", !parts.length);
+}
+
+function toggleFilters(open = $("#filters-body").classList.contains("hidden")) {
+  $("#filters-body").classList.toggle("hidden", !open);
+  $("#filters-caret").textContent = open ? "▾" : "▸";
+  try { localStorage.setItem("filtersOpen", open ? "1" : "0"); } catch { /* 저장 못 해도 그만 */ }
+}
+
+/** 클래스·카메라·도메인·분할·태그 필터를 모두 푼다(상태·정렬은 그대로). */
+function clearFilters() {
+  S.filterClasses.clear();
+  S.filterEmpty = false;
+  S.filterCamera = S.filterDomain = S.filterSplit = S.filterTag = "";
+  for (const s of ["#filter-camera", "#filter-domain", "#filter-split", "#filter-tag"]) {
+    $(s).value = "";
+    $(s).classList.remove("on");
+  }
+  syncClassFilter();
+  reloadList();
 }
 
 /** "812, 904 1001" -> [812, 904, 1001]. 숫자가 아닌 조각이 있으면 null. */
@@ -2003,6 +2055,13 @@ async function refreshResumeButton() {
     btn.textContent = `이어서 학습 (${S.resume.epoch}/${S.resume.total})`;
     btn.title = S.resume.summary;
   }
+  syncModelDot();
+}
+
+/** '모델' 메뉴 단추의 점 — 이어서 학습할 것이 있으면 메뉴를 열지 않아도 보이게 (2026-11-04). */
+function syncModelDot() {
+  const any = ["#btn-resume", "#btn-resume-wsl"].some((s) => !$(s).classList.contains("hidden"));
+  $("#model-dot").classList.toggle("hidden", !any);
 }
 
 /** 목록을 묶음 단위로 다시 구성한다. keepOpen 에 있는 묶음 번호는 열린 채로 둔다. */
@@ -2018,6 +2077,7 @@ async function loadImageList(keepOpen = null) {
   $("#filter-split").disabled = status === "ids";
   $("#filter-tag").disabled = status === "ids";
   if (status === "ids") $("#cf-panel").classList.add("hidden");
+  renderFilterSummary();
 
   const openBefore = keepOpen ?? new Set(
     S.chunks.filter((c) => c.open).map((c) => c.start)
@@ -2052,6 +2112,7 @@ async function loadImageList(keepOpen = null) {
 
   S.images = flatImages();
   renderImageList();
+  if (VIEW === "gallery") await galleryLoad();   // 두 보기는 같은 필터를 쓴다 — 다시 받을 때 함께
   return S.images;
 }
 
@@ -2311,6 +2372,7 @@ async function refreshWslButtons() {
   const r = S.wsl.available ? S.wsl.resume : null;
   resume.classList.toggle("hidden", !r);
   if (r) resume.textContent = `WSL 이어하기 (${r.epoch}/${r.total})`;
+  syncModelDot();
 }
 
 /* ───────────────────────── 이벤트 배선 ───────────────────────── */
@@ -2458,10 +2520,81 @@ $("#filter-tag").onchange = () => {
   $("#filter-tag").classList.toggle("on", !!S.filterTag);
   reloadList();
 };
-$("#btn-add-tag").onclick = createTag;
+$("#btn-add-tag").onclick = () => createTag();
 $("#new-tag").addEventListener("keydown", (e) => {
   if (e.key === "Enter") createTag();
   if (e.key === "Escape") e.target.blur();
+});
+$("#tag-q").addEventListener("input", renderTagList);
+$("#tag-q").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.target.value = ""; renderTagList(); e.target.blur(); }
+});
+$("#filters-head").onclick = (e) => { if (!e.target.closest("button")) toggleFilters(); };
+$("#filters-clear").onclick = clearFilters;
+
+/* 상단 메뉴 (2026-11-04) — 항목을 누르면 닫히고, 밖을 누르거나 Esc 로도 닫힌다. 항목의 onclick(위
+ * btn-scan 등)이 먼저 돌고 그 뒤 닫는다. 포커스도 놓는다 — 남으면 Space·Enter 가 그 항목을 또 누를 수 있다. */
+function closeMenus(except = null) {
+  document.querySelectorAll(".menu").forEach((m) => {
+    if (m === except) return;
+    m.querySelector(".menu-list").classList.add("hidden");
+    m.querySelector(".menu-btn").setAttribute("aria-expanded", "false");
+  });
+}
+document.querySelectorAll(".menu").forEach((m) => {
+  const btn = m.querySelector(".menu-btn"), list = m.querySelector(".menu-list");
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const open = list.classList.contains("hidden");
+    closeMenus(m);
+    list.classList.toggle("hidden", !open);
+    btn.setAttribute("aria-expanded", String(open));
+    btn.blur();
+  };
+  list.addEventListener("click", (e) => {
+    const item = e.target.closest(".menu-item");
+    if (item) { item.blur(); closeMenus(); }
+  });
+});
+document.addEventListener("click", (e) => { if (!e.target.closest(".menu")) closeMenus(); });
+
+/* 오른쪽 칸 접기 (2026-11-04) — 머리를 누르면 접고 편다. 접은 것은 다시 열어도 남는다(변경 내역은 따로 H). */
+const SEC_KEY = "secClosed";
+function loadSecClosed() {
+  try { return JSON.parse(localStorage.getItem(SEC_KEY) || "{}") || {}; } catch { return {}; }
+}
+function setSecClosed(sec, closed) {
+  sec.classList.toggle("collapsed", closed);
+  sec.querySelector(".sec-head .caret").textContent = closed ? "▸" : "▾";
+}
+document.querySelectorAll(".sec").forEach((sec) => {
+  setSecClosed(sec, !!loadSecClosed()[sec.dataset.sec]);
+  sec.querySelector(".sec-head").addEventListener("click", (e) => {
+    if (e.target.closest("button, input, kbd")) return;   // 머리 안의 '같은 자리' 단추 등
+    const closed = !sec.classList.contains("collapsed");
+    setSecClosed(sec, closed);
+    const all = loadSecClosed();
+    all[sec.dataset.sec] = closed;
+    try { localStorage.setItem(SEC_KEY, JSON.stringify(all)); } catch { /* 저장 못 해도 그만 */ }
+  });
+});
+
+/* 보기 전환 (2026-11-04) — 라벨링 ↔ 이미지 보기(gallery.js). 한 페이지 안이라 필터·지금 이미지·되돌리기가
+ * 그대로 남는다. 마지막 보기는 다시 열어도 남긴다(프로젝트마다). */
+const VIEW_KEY = `view:${BASE}`;
+async function setView(v) {
+  if (v === VIEW) return;
+  if (VIEW === "gallery") galleryHide();
+  VIEW = v;
+  document.body.classList.toggle("view-gallery", v === "gallery");
+  document.querySelectorAll("#view-switch .seg-btn").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
+  try { localStorage.setItem(VIEW_KEY, v); } catch { /* 저장 못 해도 그만 */ }
+  closeMenus();
+  if (v === "gallery") await galleryShow();
+  else { resizeCanvas(); markCurrent(); }
+}
+document.querySelectorAll("#view-switch .seg-btn").forEach((b) => {
+  b.onclick = () => { b.blur(); setView(b.dataset.view); };
 });
 document.querySelectorAll(".domain-bar [data-domain]").forEach((b) => {
   b.onclick = () => setDomain(b.dataset.domain);
@@ -2530,6 +2663,15 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "Escape" && document.querySelector(".menu-list:not(.hidden)")) { closeMenus(); return; }
+  // V: 라벨링 ↔ 이미지 보기. 이미지 보기에서는 키를 그쪽(gallery.js)에 넘긴다 — Space 가 뒤에 숨은
+  // 라벨링 이미지를 승인하면 안 된다 (2026-11-04)
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "v" || e.key === "V" || e.key === "ㅍ")) {
+    e.preventDefault();
+    setView(VIEW === "gallery" ? "label" : "gallery");
+    return;
+  }
+  if (VIEW === "gallery") { galleryKey(e); return; }
 
   // Ctrl 을 누르고 있는 동안만 모드를 반대로. (누르는 순간부터 커서도 바뀐다)
   if (e.key === "Control" || e.ctrlKey) {
@@ -2630,6 +2772,7 @@ async function loadProjects() {
   try { if (localStorage.getItem("histOpen") === "1") toggleHistory(true); } catch { /* 없으면 접힌 채로 */ }
   try { if (localStorage.getItem("predOn") === "1") togglePred(true); } catch { /* 없으면 꺼진 채로 */ }
   try { const v = localStorage.getItem(CUR_TAG_KEY); if (v) S.curTag = Number(v); } catch { /* 없으면 안 고른 채로 */ }
+  try { if (localStorage.getItem("filtersOpen") === "1") toggleFilters(true); } catch { /* 없으면 접힌 채로 */ }
   loadProjects();       // 실패해도 검수는 되어야 하므로 기다리지 않는다
   try {
     await loadState();
@@ -2658,6 +2801,10 @@ async function loadProjects() {
     }
 
     if (S.images.length) await loadImage(S.images[0].id);
+    // 지난번에 이미지 보기에서 닫았으면 그대로 연다(#ids= 로 연 때는 라벨링 그대로)
+    let last = null;
+    try { last = localStorage.getItem(VIEW_KEY); } catch { /* 없으면 라벨링 */ }
+    if (last === "gallery") await setView("gallery");
   } catch (err) {
     toast(`초기화 실패: ${err.message}`, true);
   }

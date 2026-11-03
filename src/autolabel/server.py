@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 from collections import Counter
 from datetime import datetime
@@ -14,6 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from .config import ROOT, Config, resolve
@@ -65,6 +67,17 @@ class TagIn(BaseModel):
 class ImageTagIn(BaseModel):
     tag_id: int
     on: bool = True             # True 붙이기, False 떼기
+
+
+class BulkTagIn(BaseModel):     # 이미지 보기 탭에서 여러 장을 골라 한꺼번에 (2026-11-04)
+    ids: list[int]
+    tag_id: int
+    on: bool = True
+
+
+class BulkDomainIn(BaseModel):
+    ids: list[int]
+    domain: str | None
 
 
 class ClassIn(BaseModel):
@@ -372,6 +385,32 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         return {"ok": True, "changed": n}
 
+    # ── 이미지 보기 탭(2026-11-04): 여러 장을 골라 태그·도메인을 한꺼번에 바꾼다 ──
+    # /api/images/... 밑에 두지 않는다 — /api/images/{image_id}/... 와 겹치면 FastAPI 는 그 경로로 들어가
+    # image_id 검사(422)에서 멈추고 다음 경로를 찾지 않는다.
+
+    @app.post("/api/bulk/tag")
+    def bulk_tag(payload: BulkTagIn) -> dict:
+        """이미지 여러 장에 태그를 붙이거나 뗀다. changed = 실제로 바뀐 장수."""
+        if not payload.ids:
+            raise HTTPException(400, "이미지를 고르세요.")
+        try:
+            n = store.set_image_tag(sorted(set(payload.ids)), payload.tag_id, payload.on)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {"ok": True, "changed": n}
+
+    @app.post("/api/bulk/domain")
+    def bulk_domain(payload: BulkDomainIn) -> dict:
+        """이미지 여러 장의 도메인을 정한다(None = 미분류). changed = 바꾼 행 수."""
+        if not payload.ids:
+            raise HTTPException(400, "이미지를 고르세요.")
+        try:
+            n = store.set_domain(sorted(set(payload.ids)), payload.domain)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "changed": n}
+
     @app.get("/api/images/{image_id}")
     def get_image(image_id: int) -> dict:
         row = store.get_image(image_id)
@@ -415,6 +454,46 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         # 그대로인데 내용만 바뀌어 브라우저가 예전 이미지를 보여준다. 겹겹이 막는 한 겹이다.
         # no-cache = "쓰기 전에 반드시 물어봐라". ETag 가 같으면 304 라 재전송은 없다.
         return FileResponse(path, headers={"Cache-Control": "no-cache"})
+
+    thumb_dir = cfg.db.parent / "thumbs"
+    thumb_sizes = (160, 256, 384)       # 받는 크기를 정해 둔다 — 아무 값이나 받으면 캐시가 끝없이 는다
+
+    @app.get("/api/images/{image_id}/thumb")
+    def get_image_thumb(image_id: int, s: int = 256):
+        """이미지 보기 탭의 썸네일(JPEG, 긴 변 s). 원본(폰 사진 4000×3000, PNG 크롭도 수 MB)을 수백 장 그대로
+        받으면 느려서 줄여 보낸다. `<DB 폴더>/thumbs/` 에 남겨 다시 쓴다 — 이름에 원본의 수정 시각·크기를 넣어
+        원본이 바뀌면 새로 만든다. 지워도 다시 만들어지는 캐시다(백업에서 뺀다)."""
+        if s not in thumb_sizes:
+            raise HTTPException(400, f"썸네일 크기는 {thumb_sizes} 가운데 하나입니다.")
+        row = store.get_image(image_id)
+        if row is None:
+            raise HTTPException(404, "이미지를 찾을 수 없습니다.")
+        path = Path(row["path"])
+        try:
+            st = path.stat()
+        except OSError:
+            raise HTTPException(410, f"원본 파일이 사라졌습니다: {path}") from None
+        out = thumb_dir / f"{image_id}_{s}_{st.st_mtime_ns}_{st.st_size}.jpg"
+        if not out.exists():
+            thumb_dir.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_name(f"{out.stem}.{secrets.token_hex(4)}.tmp")
+            try:
+                with Image.open(path) as im:
+                    im.draft("RGB", (s, s))                              # JPEG 은 1/2·1/4·1/8 로 풀어 빠르다
+                    im = ImageOps.exif_transpose(im).convert("RGB")      # 화면처럼 회전(CLAUDE.md 'EXIF 회전')
+                    im.thumbnail((s, s))
+                    im.save(tmp, "JPEG", quality=82)
+            except OSError as exc:
+                tmp.unlink(missing_ok=True)
+                raise HTTPException(415, f"썸네일을 만들지 못했습니다: {exc}") from exc
+            try:
+                os.replace(tmp, out)            # 반쯤 쓴 파일이 보이지 않게
+            except PermissionError:
+                # Windows: 다른 요청이 같은 썸네일을 보내는 중이면 바꿔 끼울 수 없다 — 그쪽이 만든 것을 쓴다
+                tmp.unlink(missing_ok=True)
+                if not out.exists():
+                    raise
+        return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
 
     # ------------------------------------------------------------------ 편집
 
