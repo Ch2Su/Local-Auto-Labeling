@@ -33,7 +33,12 @@ data:
   seed_coco: data/visible/legacy/seed
 
   # 자동 라벨링할 이미지들 (하위 폴더까지 재귀 탐색)
+  # 2026-11-03 부터 새 수집분은 unlabeled/<카메라키>/[<YYYYMMDD>/]<파일> 에 둔다 — 첫 폴더가 카메라다.
+  # 카메라는 아래 cameras 파일에 먼저 등록해야 하고, 등록 안 된 폴더가 있으면 scan 이 아무것도 넣지 않고
+  # 멈춘다. 바로 아래 둔 파일은 출처 없이 들어간다. 규칙 전문은 docs/provenance.md.
   unlabeled: data/visible/unlabeled
+  # 카메라(출처 단위) 등록 파일. 실제 설치 장소를 담으니 data/ 밖(저장소)으로 옮기지 말 것.
+  cameras: data/visible/cameras.yaml
   # '정리' 버튼으로 검수 완료 이미지를 옮겨 모으는 곳.
   # 이미지와 라벨 .txt 가 함께 저장되므로 그 자체로 완결된 YOLO 데이터셋이 됩니다.
   # 2026-11-03: 그때까지 정리된 718장은 data/visible/legacy/labeled 로 옮겼다. 여기는 그 뒤 새로

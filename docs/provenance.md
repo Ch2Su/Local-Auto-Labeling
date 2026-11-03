@@ -1,4 +1,4 @@
-# 출처 기록 설계 (2026-11-03, 초안 — 아직 구현 전)
+# 출처 기록 설계 (2026-11-03 — 1단계 구현됨, 2단계부터 남음)
 
 11-03 에 그때까지 모인 이미지를 `data/visible/legacy/` 로 옮겼다(출처 모름). 그 뒤로 새로 모으는 이미지는
 **어느 출처 단위(카메라)에서 언제 찍혔는지** 를 DB 에 남긴다. 이 문서는 그 규칙과 구현 계획이다.
@@ -53,7 +53,7 @@ cameras:
     mount: pole           # pole | rooftop | wall | indoor | drone | handheld | unknown
     view: 교차로 북쪽, 부감 약 30도   # 자유 서술
     resolution: 1920x1080
-    tz: Asia/Seoul        # 시각 해석 기준. 기본 Asia/Seoul
+    tz: '+09:00'          # 시각 해석 기준. 기본 +09:00 (이 PC 의 Python 에 tzdata 가 없어 Asia/Seoul 같은 이름은 안 풀린다)
     rights: 직접 촬영      # 권리자·라이선스·사용 조건
     split:                # 비우면 자동(카메라째 한 분할). train|val|test 로 고정할 수 있다
     note:
@@ -119,14 +119,16 @@ legacy 와 새 수집분(`source='collected'`)도 따로 잰다.
 
 ## 구현 순서
 
-1. `store.py` 열 추가 · `config.yaml` 에 `data.cameras` · `ingest.py` 가 카메라 폴더와 등록 파일을 읽고 시각을 채운다.
-   등록 파일에 없는 카메라키가 있으면 **그 scan 전체를 멈춘다**(오타가 새 카메라로 들어가는 것을 막는다).
-   tidy 가 카메라 폴더를 유지하게 한다.
+1. **(11-03 구현)** `store.py` 열 추가 · `config.yaml` 에 `data.cameras` · `provenance.py`(등록 파일·시각) · `ingest.py`
+   가 카메라 폴더를 읽고 시각을 채운다. 등록 파일에 없는 카메라키가 있으면 **그 scan 전체를 멈춘다**(오타가 새
+   카메라로 들어가는 것을 막는다). tidy 가 카메라 폴더를 유지한다.
+   - **2단계 전에는 카메라 폴더 이미지로 학습·`split` 을 돌리지 말 것** — 지금 `split.py` 는 카메라를 모르고, 한 번
+     배정된 분할은 DB 에 고정돼 다시 움직이지 않는다(카메라째 한 분할이 깨진 채 굳는다). 스캔·자동 라벨링·검수는 괜찮다.
 2. `grouping.py`·`split.py` — 카메라 합치기, `split:` 고정, 카메라별 배정 보고.
 3. `tools/extract_frames.py`.
 4. `tools/test_baseline.py` 도메인 · 검수 UI 에 카메라·시각 표시와 카메라 필터.
 5. (따로) 공개 데이터셋 가져오기 — VIRAT 은 장면(`XXYY`)을 카메라로, 라벨은 **검수 대기**로 넣는다
-   (행동과 무관한 객체 박스가 빠져 있다 — `docs/` 의 VIRAT 소개 문서 3.1).
+   (행동과 무관한 객체 박스가 빠져 있다 — VIRAT 배포본 `docs/VIRAT_Video_Dataset_Release2.0_Introduction_v1.0.pdf` 3.1).
 
 ## 정하지 않은 것
 
