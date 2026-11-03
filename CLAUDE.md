@@ -164,7 +164,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 
 | | |
 |---|---|
-| `tools/test_baseline.py` | 지금 DB 라벨로 test 를 잰다(DB 읽기 전용). `--domains` 로 전체·CCTV·드론·비CCTV·드론 제외를 한 번에 재 `runs/test_baseline/history.jsonl` 에 클래스별로 쌓고, `--history` 로 표를 본다 |
+| `tools/test_baseline.py` | 지금 DB 라벨로 test 를 잰다(DB 읽기 전용). `--domains` 로 전체·CCTV·드론·비CCTV·드론 제외를 한 번에 재 `runs/test_baseline/history.jsonl` 에 클래스별로 쌓고, `--history` 로 표를 본다. CCTV·드론·비CCTV 는 11-04 부터 `images.domain`(손 분류) |
 | `tools/label_qa.py` | 승인 라벨과 예측이 어긋나는 곳, 라벨끼리 겹친 곳(IoU ≥ 0.85 — `--dup-only` 면 모델 없이)을 후보 CSV·대조 시트로(DB 읽기 전용) |
 | `tools/label_qa_claude.py` | missing 후보를 Claude API 로 거르는 파일럿 — API 키 필요, 아직 한 번도 호출 안 함 |
 | `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
@@ -226,7 +226,8 @@ scooter 1,026  truck 1,046  pickup 713
 - **점수는 클래스별로 비교할 것.** 7클래스 시절 점수(visible-3 0.6868, A40 비교)도, 9클래스 라벨로 잰 09-27 기준선(전체 0.5174)도
   지금 라벨과 바로 견줄 수 없다 — 다음 모델과 견주려면 visible-3 을 **지금 라벨로 다시 잴 것**(표는 docs/experiments.md
   '9클래스 기준선', 기록은 `--history`). **비CCTV 가
-  가장 약하다**(09-27 0.378) — 비CCTV 는 `source='unlabeled'` 로 가른다(옛 `--like "data\labeled"` 는 0장에 걸린다 — 쓰지 말 것).
+  가장 약했다**(09-27 0.378 — 그때는 비CCTV 를 `source='unlabeled'` 로 갈랐다). **11-04 부터 test_baseline 의 CCTV·드론·
+  비CCTV 는 사람이 정한 `images.domain`** 이다 — 이름표에 '(손 분류)' 가 붙고 기록에 `domain_rule` 이 남아 옛 기록과 견주지 않는다.
 - car 의 약 14% 는 **고정 CCTV 한 대의 795프레임에 세워진 두 대**다(옛 van 쏠림 — 그 카메라는 통째로 train). 모델이 외울
   여지가 있다.
 - `labeler.py split` 은 읽기 전용이 아니다(미배정을 배정해 DB 에 쓴다) — DB 만 보려면 `sqlite3` 를 `mode=ro` 로 열 것.
@@ -261,7 +262,7 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
   `labeled/images/<카메라>/` 로 옮긴다. 분할은 **카메라째 한 묶음**이고 `cameras.yaml` 의 `split:` 으로 고정할 수 있다
   (고정이 다른 카메라가 dHash 로 이어지면 분할이 멈춘다). split 보고의 `카메라별:` 줄로 어디로 갔는지 볼 것.
   검수 UI 는 카메라 필터·카메라·촬영 시각을 보여 주고, `test_baseline.py --domains` 는 `legacy`·`collected`·`cam:<키>`·
-  `kind:`·`mount:` 를 잰다 — **09-27 기준선과 같은 범위는 이제 `all` 이 아니라 `legacy`** 다(`all` 은 새 수집분도 담는다). `cctv` 는 legacy CCTV(seed 중 드론 아님)에 `kind: cctv` 카메라만 더한다.
+  `kind:`·`mount:` 를 잰다 — **09-27 기준선과 같은 범위는 이제 `all` 이 아니라 `legacy`** 다(`all` 은 새 수집분도 담는다). `cctv`·`drone`·`noncctv` 는 `images.domain`, 비어 있으면 카메라 등록으로 짐작한다(설치 drone → 드론, kind cctv → CCTV, phone → 비CCTV, 그 밖은 `undomain`).
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개).
@@ -478,7 +479,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
      새 기준선의 CCTV 도메인은 분류가 끝난 뒤 그 결과로 다시 정할 것.
    - **분류는 `images.domain`(cctv·noncctv·drone, NULL=미분류)에 담는다** — 검수 UI 의 Q·W·E 버튼과 도메인 필터(같은 장면
      묶음째 정하던 `묶음째` 는 11-04 사용자 결정으로 뺐다). 라벨이 아니라 `updated_at`·변경 이력에 남기지 않는다.
-     아직 `test_baseline.py`·분할은 이 칸을 보지 않는다 — 분류가 끝나면 도메인 판정을 이 칸으로 바꿀 것.
+     `test_baseline.py` 는 11-04 부터 이 칸으로 가른다. 분할(`split.py`)은 아직 이 칸을 보지 않는다.
    - **11-04 점검(`tools/domain_review.py`, 시트로 눈 확인)** — 손으로 나눈 도메인은 거의 일관됐다. 의심 456장을 보니
      오류 후보는 5장(1038·1553·1554 창밖 폰 사진 계열인데 CCTV, 6689·6697 경찰 추격 헬기 화면인데 비CCTV)이고, 나머지는
      임베딩이 기기(폰·라이브캠)를 못 가린 것이다. 기준을 물을 것: 영화 공중 장면(El Camino 6473 드론 · Tenet 6246 비CCTV),

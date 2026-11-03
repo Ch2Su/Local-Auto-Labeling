@@ -18,9 +18,13 @@
 평균만으로는 모델을 견줄 수 없게 돼서(CLAUDE.md '현재 데이터 상태') 클래스별로 남긴다.
 
 **도메인** (`--domains`, 또는 `--domain 이름` 하나만):
-  all 전체 / cctv CCTV(드론·비CCTV·o365 를 뺀 나머지 = seed 중 드론 아님, 11-03 에 방향이 CCTV 검출로 바뀌어 추가 — 새 수집분은 cameras.yaml 의 kind: cctv 카메라만 더한다) / drone 드론(경로에 stabilized_) / noncctv 비CCTV(source='unlabeled', 나중에 넣은 이미지)
-  / nodrone 드론 제외. 비CCTV 는 예전에 `--like "data\\labeled"` 로 쟀는데, 09-21 에 폴더를
-  data/visible/ 로 옮긴 뒤로 그 조건은 **0장**에 걸린다 — 그래서 경로가 아니라 source 로 가른다.
+  all 전체 / cctv·drone·noncctv 사람이 검수 UI 에서 정한 images.domain(Q·W·E) / nodrone 드론 제외 /
+  undomain 아직 도메인이 없는 것. **2026-11-04 부터 images.domain 으로 가른다** — 그 전에는 경로·출처로
+  갈랐는데(드론=경로에 stabilized_, CCTV=seed 중 드론 아님, 비CCTV=source 'unlabeled') 사람이 다 나누고 보니
+  옛 CCTV 5,312장 중 909장이 비CCTV·128장이 드론이었다(tools/domain_review.py). 뜻이 바뀐 다섯 도메인은 기록에
+  `domain_rule: images.domain` 을 남기고 이름표에 '(손 분류)' 를 붙여, 직전 기록과 견주기·--history 표에서 옛 것과
+  섞이지 않게 한다. 도메인이 없는 새 수집분은 cameras.yaml 로 짐작한다(설치 drone → 드론, kind cctv → CCTV,
+  kind phone → 비CCTV, 그 밖은 미분류).
   **2026-10-03 부터 all·nodrone 은 Objects365(source='o365')를 뺀다** — 그 사진이 test 로 들어와도
   09-27 기준선과 같은 범위를 잰다. Objects365 만은 o365, 전부 합친 것은 all_o365.
   **출처 (2026-11-03, docs/provenance.md):** legacy(출처 없는 지난 수집분 — seed·unlabeled) / collected(카메라
@@ -50,44 +54,64 @@ from autolabel.yolo_io import Box, write_yolo_txt
 
 HISTORY = "runs/test_baseline/history.jsonl"
 
-# 이름: (보여 줄 이름, 이미지 한 장을 받을지 가르는 함수). 판정은 DB 행(path, source)으로 한다.
+# 이름: (보여 줄 이름, 이미지 한 장을 받을지 가르는 함수). 판정은 DB 행(path, source)과 dom(아래
+# fill_domains — images.domain, 없으면 카메라 등록 파일로 짐작한 것)으로 한다.
 # 'all'·'nodrone' 은 Objects365(source='o365', 10-03 부터)를 뺀다 — 09-27 기준선과 비교가 이어지게.
-# 이름표는 그대로 둔다(--history 가 이름표로 묶는다).
+# --history 가 이름표로 묶으니, 뜻이 바뀌면 이름표도 바꾼다(11-04 '(손 분류)').
 DOMAINS = {
     "all": ("전체", lambda r: r["source"] != "o365"),
-    # legacy 의 CCTV(seed 중 드론 아님). 새 수집분은 cameras.yaml 의 kind 가 cctv 인 카메라만 더한다 —
-    # source_domains 가 등록 파일을 읽어 이 항목을 바꿔 끼운다(폰·화면 캡처가 CCTV 로 섞이지 않게).
-    "cctv": ("CCTV", lambda r: r["source"] == "seed" and "stabilized_" not in r["path"].lower()),
-    "drone": ("드론", lambda r: "stabilized_" in r["path"].lower()),
-    "noncctv": ("비CCTV", lambda r: r["source"] == "unlabeled"),
-    "nodrone": ("드론 제외", lambda r: "stabilized_" not in r["path"].lower() and r["source"] != "o365"),
+    "cctv": ("CCTV(손 분류)", lambda r: r["dom"] == "cctv"),
+    "drone": ("드론(손 분류)", lambda r: r["dom"] == "drone"),
+    "noncctv": ("비CCTV(손 분류)", lambda r: r["dom"] == "noncctv"),
+    "nodrone": ("드론 제외(손 분류)", lambda r: r["dom"] != "drone" and r["source"] != "o365"),
+    "undomain": ("도메인 미분류", lambda r: r["dom"] is None),
     "o365": ("Objects365", lambda r: r["source"] == "o365"),
     "all_o365": ("전체+O365", lambda r: True),
     "legacy": ("출처 없음(legacy)", lambda r: r["source"] in ("seed", "unlabeled")),
     "collected": ("새 수집분", lambda r: r["source"] == "collected"),
 }
+# 11-04 에 images.domain 으로 뜻이 바뀐 도메인 — 기록에 규칙을 남기고 같은 규칙의 기록끼리만 견준다
+DOMAIN_RULE = "images.domain"
+MANUAL = {"cctv", "drone", "noncctv", "nodrone", "undomain"}
 
 
-def source_domains(cfg: Config, items: list[dict]) -> dict:
+def registry(cfg: Config, items: list[dict]) -> dict | None:
+    """그 분할에 카메라가 붙은 이미지가 있으면 카메라 등록 파일. 없거나 못 읽으면 None."""
+    if not any(it.get("camera") for it in items):
+        return None
+    try:
+        return load_cameras(cfg.cameras)
+    except ValueError as exc:
+        print(f"  [알림] 카메라 등록 파일을 못 읽어 형태·설치로는 가르지 않습니다: {str(exc).splitlines()[0]}")
+        return None
+
+
+def fill_domains(items: list[dict], reg: dict | None) -> None:
+    """it['dom'] = 사람이 정한 images.domain. 없으면 카메라 등록 파일로 짐작한다 — 드론에 단 카메라는 drone,
+    kind cctv 는 cctv, 폰은 noncctv, 그 밖(화면 캡처·데이터셋)은 모른다(None, '도메인 미분류')."""
+    for it in items:
+        dom = it.get("domain")
+        cam = reg.get(it.get("camera")) if reg and it.get("camera") else None
+        if dom is None and cam is not None:
+            dom = "drone" if cam.mount == "drone" else {"cctv": "cctv", "phone": "noncctv"}.get(cam.kind)
+        it["dom"] = dom
+
+
+def source_domains(items: list[dict], reg: dict | None) -> dict:
     """그 분할에 있는 카메라로 도메인을 만든다: cam:<키>, kind:<형태>, mount:<설치> (docs/provenance.md).
 
-    등록 파일을 못 읽으면 카메라별만 잰다(형태·설치는 등록 파일에만 있다).
+    등록 파일을 못 읽었으면(reg None) 카메라별만 잰다(형태·설치는 등록 파일에만 있다).
     """
     keys = sorted({it["camera"] for it in items if it.get("camera")})
     if not keys:
         return {}
     out = {f"cam:{k}": (f"카메라 {k}", lambda r, k=k: r.get("camera") == k) for k in keys}
-    try:
-        reg = load_cameras(cfg.cameras)
-    except ValueError as exc:
-        print(f"  [알림] 카메라 등록 파일을 못 읽어 형태·설치별은 건너뜁니다: {str(exc).splitlines()[0]}")
+    if reg is None:
         return out
     for attr in ("kind", "mount"):
         for v in sorted({getattr(reg[k], attr) for k in keys if k in reg}):
             out[f"{attr}:{v}"] = (f"{attr} {v}", lambda r, a=attr, v=v:
                                   r.get("camera") in reg and getattr(reg[r["camera"]], a) == v)
-    legacy_cctv = DOMAINS["cctv"][1]
-    out["cctv"] = ("CCTV", lambda r: legacy_cctv(r) or (r.get("camera") in reg and reg[r["camera"]].kind == "cctv"))
     return out
 
 
@@ -100,7 +124,7 @@ def parse_args():
     p.add_argument("--imgsz", type=int, default=None, help="기본: model.imgsz (학습 해상도)")
     p.add_argument("--out", default=None, help="만들 폴더 (기본: runs/test_baseline/<날짜>_<가중치>_<split>)")
     p.add_argument("--keep", action="store_true", help="만든 이미지 폴더를 지우지 않는다")
-    p.add_argument("--domains", action="store_true", help="정해진 도메인(전체·CCTV·드론·비CCTV·드론 제외·Objects365·전체+O365·legacy·새 수집분)과 그 분할의 카메라 도메인을 한 번에 잰다")
+    p.add_argument("--domains", action="store_true", help="정해진 도메인(전체·CCTV·드론·비CCTV·드론 제외·미분류 — 넷은 images.domain 손 분류, Objects365·전체+O365·legacy·새 수집분)과 그 분할의 카메라 도메인을 한 번에 잰다")
     p.add_argument("--domain", default=None,
                    help=f"도메인 하나만: {', '.join(sorted(DOMAINS))}, 또는 cam:<카메라키>·kind:<형태>·mount:<설치>")
     p.add_argument("--like", default=None,
@@ -123,7 +147,8 @@ def build_split(cfg: Config, split: str, out: Path,
     con.row_factory = sqlite3.Row
     cols = {r[1] for r in con.execute("PRAGMA table_info(images)")}
     cam_sql = "camera" if "camera" in cols else "NULL AS camera"   # 출처 열이 생기기 전 DB 도 읽는다
-    sql = f"SELECT id, path, source, {cam_sql} FROM images WHERE status='approved' AND split=?"
+    dom_sql = "domain" if "domain" in cols else "NULL AS domain"   # 도메인 열(11-03)도 마찬가지
+    sql = f"SELECT id, path, source, {cam_sql}, {dom_sql} FROM images WHERE status='approved' AND split=?"
     args: list = [split]
     if like:
         sql += " AND path LIKE ?"
@@ -159,7 +184,7 @@ def build_split(cfg: Config, split: str, out: Path,
         bs = boxes.get(r["id"], [])
         write_yolo_txt(lab_dir / f"{stem}.txt", bs)
         items.append({"id": r["id"], "path": r["path"], "source": r["source"], "camera": r["camera"],
-                      "img": dst, "counts": Counter(b.cls for b in bs)})
+                      "domain": r["domain"], "img": dst, "counts": Counter(b.cls for b in bs)})
     return items
 
 
@@ -290,7 +315,9 @@ def main():
         items = build_split(cfg, args.split, out, args.like, args.not_like)
         n_box = sum(sum(it["counts"].values()) for it in items)
         print(f"{args.split} {len(items)}장 / 박스 {n_box}개 -> {out}")
-        domains = {**DOMAINS, **source_domains(cfg, items)}
+        reg = registry(cfg, items)
+        fill_domains(items, reg)
+        domains = {**DOMAINS, **source_domains(items, reg)}
         if args.like or args.not_like:
             keys = ["all"]          # 임시 조건은 그 조건 하나만 잰다 (아래서 이름을 custom 으로)
         elif args.domains or args.domain:
@@ -337,8 +364,11 @@ def main():
             **summarize(res, names, counts),
             "note": args.note,
         }
-        prev = next((r for r in reversed(history)
-                     if r["domain"] == key and r["split"] == args.split), None)
+        if key in MANUAL:
+            rec["domain_rule"] = DOMAIN_RULE
+        prev = next((r for r in reversed(history)       # 같은 규칙으로 가른 기록끼리만 (11-04 전 cctv 는 옛 규칙)
+                     if r["domain"] == key and r["split"] == args.split
+                     and r.get("domain_rule") == rec.get("domain_rule")), None)
         print_result(rec, prev, names)
         new_recs.append(rec)
 
