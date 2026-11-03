@@ -56,7 +56,6 @@ class StatusIn(BaseModel):
 
 class DomainIn(BaseModel):
     domain: str | None          # cctv | noncctv | drone, None = 미분류로 되돌림
-    group: bool = False         # 같은 장면 묶음(grp)의 이미지까지 한꺼번에
 
 
 class TagIn(BaseModel):
@@ -66,7 +65,6 @@ class TagIn(BaseModel):
 class ImageTagIn(BaseModel):
     tag_id: int
     on: bool = True             # True 붙이기, False 떼기
-    group: bool = False         # 같은 장면 묶음(grp)의 이미지까지 한꺼번에
 
 
 class ClassIn(BaseModel):
@@ -354,27 +352,25 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
 
     @app.post("/api/images/{image_id}/tags")
     def post_image_tag(image_id: int, payload: ImageTagIn) -> dict:
-        """태그를 붙이거나 뗀다. group 이면 같은 장면 묶음(휴지통 제외) 전체에."""
+        """이 이미지에 태그를 붙이거나 뗀다. (같은 장면 묶음째 하기는 2026-11-04 사용자 결정으로 뺐다.)"""
         if store.get_image(image_id) is None:
             raise HTTPException(404, "이미지를 찾을 수 없습니다.")
-        ids = store.group_ids(image_id) if payload.group else [image_id]
         try:
-            n = store.set_image_tag(ids, payload.tag_id, payload.on)
+            n = store.set_image_tag([image_id], payload.tag_id, payload.on)
         except ValueError as exc:
             raise HTTPException(404, str(exc)) from exc
-        return {"ok": True, "changed": n, "ids": ids}
+        return {"ok": True, "changed": n}
 
     @app.post("/api/images/{image_id}/domain")
     def post_domain(image_id: int, payload: DomainIn) -> dict:
-        """도메인을 정한다. group 이면 같은 장면 묶음(휴지통 제외) 전체에."""
+        """이 이미지의 도메인을 정한다. (같은 장면 묶음째 하기는 2026-11-04 사용자 결정으로 뺐다.)"""
         if store.get_image(image_id) is None:
             raise HTTPException(404, "이미지를 찾을 수 없습니다.")
-        ids = store.group_ids(image_id) if payload.group else [image_id]
         try:
-            n = store.set_domain(ids, payload.domain)
+            n = store.set_domain([image_id], payload.domain)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return {"ok": True, "changed": n, "ids": ids}
+        return {"ok": True, "changed": n}
 
     @app.get("/api/images/{image_id}")
     def get_image(image_id: int) -> dict:
@@ -403,7 +399,6 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             "captured_at": row["captured_at"],
             "camera_place": _camera_place(row["camera"]),
             "domain": row["domain"],
-            "grp_n": len(store.group_ids(image_id)),
             "tags": store.image_tag_ids(image_id),
         }
 

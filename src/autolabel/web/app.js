@@ -868,8 +868,8 @@ function renderImageList() {
 
 /** 이미지를 바꿀 때: 목록을 다시 그리지 않고 지금 이미지 표시만 옮긴 뒤, 그 줄이 목록 밖에
  * 있으면 보이는 곳까지 굴린다. '전체' 로 6천 줄을 펼치면 다시 그리기가 한 번에 0.1초쯤 걸려
- * 화살표를 누를 때마다 끊겼다(2026-11-03). 이미지 항목(도메인 등)을 바꿨으면 부르는 쪽이
- * 먼저 renderImageList 를 부른다. 묶음을 펼칠 때는 굴리지 않는다 — 손으로 내려 본 자리에서
+ * 화살표를 누를 때마다 끊겼다(2026-11-03). 이미지 항목(도메인·태그)을 바꿨으면 부르는 쪽이
+ * 그 줄만 refreshRows 로 고친다. 묶음을 펼칠 때는 굴리지 않는다 — 손으로 내려 본 자리에서
  * 튕겨 나간다. */
 function markCurrent() {
   const ul = $("#image-list");
@@ -882,6 +882,32 @@ function markCurrent() {
     head.classList.toggle("has-current", !!ch && ch.images.some((im) => im.id === id));
   });
   if (li) li.scrollIntoView({ block: "nearest" });
+}
+
+/** fn 으로 목록을 다시 받아도 지금 이미지 줄이 화면의 같은 높이에 남게 굴린다. 지금 이미지가
+ * 목록에 없었으면 아무것도 하지 않는다.
+ * next 를 주면(다시 받은 뒤 곧 그 줄로 넘어간다): 지금 줄이 그 줄 바로 위에 그대로 남지 않았으면
+ * — 빠졌거나(승인해서 '검수 대기' 에서) 옮겨 갔으면('최근 수정순' 맨 위로) — 대신 그 줄을 지금 줄이
+ * 있던 높이에 둔다. 아래 줄이 한 칸 올라오고 파란 줄 자리는 그대로다. */
+async function keepCurrentRow(fn, next = null) {
+  const ul = $("#image-list");
+  const top = (id) => {
+    const li = ul.querySelector(`li.item[data-id="${id}"]`);
+    return li ? li.getBoundingClientRect().top - ul.getBoundingClientRect().top : null;
+  };
+  const id = S.cur ? S.cur.id : null;
+  const y = id == null ? null : top(id);
+  const result = await fn();
+  if (y == null) return result;
+  let anchor = id;
+  if (next) {
+    const n = next();
+    const i = n == null ? -1 : S.images.findIndex((im) => im.id === n);
+    if (i >= 0 && !(i > 0 && S.images[i - 1].id === id)) anchor = n;
+  }
+  const y2 = top(anchor);
+  if (y2 != null) ul.scrollTop += y2 - y;
+  return result;
 }
 
 /** 열려 있는 묶음들의 이미지를 순서대로 이어붙인 것이 곧 탐색 대상이다. */
@@ -960,14 +986,13 @@ async function loadDomains() {
     data.domains, DOMAIN_NAME, "미분류", data.none, data.none_key);
 }
 
-/** 지금 이미지의 도메인 버튼 표시와 '묶음째' 장수. */
+/** 지금 이미지의 도메인 버튼 표시. */
 function renderDomainBar() {
   const d = S.cur ? S.cur.domain : null;
   document.querySelectorAll(".domain-bar [data-domain]").forEach((b) => {
     b.classList.toggle("on", b.dataset.domain === d);
     b.disabled = !S.cur;
   });
-  $("#domain-grp-n").textContent = S.cur && S.cur.grp_n ? `(${S.cur.grp_n}장)` : "";
 }
 
 /** 목록에서 그 이미지들의 줄만 다시 그린다(순번은 그대로). 6천 줄을 통째로 다시 그리면 0.1초쯤 걸린다. */
@@ -1000,29 +1025,23 @@ async function setDomain(domain) {
 async function setDomainNow(domain) {
   if (!(await saveBeforeLeaving())) return;
   const id = S.cur.id;
-  const idx = S.images.findIndex((im) => im.id === id);
-  const group = $("#domain-group").checked && S.cur.grp_n > 1;
   // 이미 그 값이면 그대로 두고 넘어가기만 한다. 예전에는 같은 키를 다시 누르면 미분류로 되돌렸는데,
   // 연달아 누르다 지정이 풀려 버렸다(2026-11-03 사용자 요청으로 뺌).
-  if (!group && S.cur.domain === domain) { await advanceFrom(id, idx); return; }
-  if (group && S.cur.grp_n > 30 && !confirm(
-    `같은 장면 묶음 ${S.cur.grp_n}장을 모두 '${DOMAIN_NAME[domain]}' 로 바꿉니다.\n`
-    + "묶음에는 다른 종류의 사진이 섞여 있을 수 있습니다(옛 묶음 g000001 등). 계속할까요?")) return;
-  let res;
+  if (S.cur.domain === domain) { await advanceFrom(id); return; }
   try {
-    res = await api(`/api/images/${id}/domain`, { method: "POST", body: { domain, group } });
+    await api(`/api/images/${id}/domain`, { method: "POST", body: { domain } });
   } catch (err) {
     toast(`도메인을 저장하지 못했습니다: ${err.message}`, true);
     return;
   }
   if (S.cur && S.cur.id === id) S.cur.domain = domain;
-  for (const im of S.images) if (res.ids.includes(im.id)) im.domain = domain;
+  for (const im of S.images) if (im.id === id) im.domain = domain;
   loadDomains();
   renderDomainBar();
-  if (group) toast(`${res.changed}장을 ${DOMAIN_NAME[domain]} 로 정했습니다`);
-  if (S.filterDomain) await loadImageList();   // 필터에서 빠졌을 수 있다
-  else refreshRows(res.ids);                   // 목록의 도메인 꼬리표를 바꾼다(loadImage 는 다시 그리지 않는다)
-  await advanceFrom(id, idx);
+  // 도메인 필터에서 빠져도 목록은 다시 받지 않고 그 줄을 제자리에 둔다(꼬리표만 바꾼다). 예전에는
+  // 다시 받아 줄이 빠지면서 목록이 움직였다(2026-11-04 사용자 요청). 필터를 다시 고르면 빠진다.
+  refreshRows([id]);
+  await advanceFrom(id);
 }
 
 /* ── 태그 ── 2026-11-03
@@ -1098,20 +1117,24 @@ function applyTagChange(tagId, on, ids) {
   loadTags();               // 개수
 }
 
+/** 목록(펼친 묶음)에서 그 태그가 붙은 이미지 id. */
+function taggedIds(tagId) {
+  return S.images.filter((im) => (im.tags || []).includes(tagId)).map((im) => im.id);
+}
+
 /** 오른쪽 칸으로 이 이미지에 붙이거나 뗀다. 목록은 다시 받지 않는다(필터에서 빠져도 그 자리에 둔다). */
 async function toggleImageTag(tagId, on) {
   if (!S.cur) return;
   const id = S.cur.id;
-  let res;
   try {
-    res = await api(`/api/images/${id}/tags`, { method: "POST", body: { tag_id: tagId, on } });
+    await api(`/api/images/${id}/tags`, { method: "POST", body: { tag_id: tagId, on } });
   } catch (err) {
     toast(`태그를 저장하지 못했습니다: ${err.message}`, true);
     loadTags();
     return;
   }
-  applyTagChange(tagId, on, res.ids);
-  refreshRows(res.ids);
+  applyTagChange(tagId, on, [id]);
+  refreshRows([id]);
 }
 
 /** T: 고른 태그를 이 이미지에 붙이고 다음으로. 이미 붙어 있으면 넘어가기만 한다(떼지 않는다 —
@@ -1123,21 +1146,20 @@ async function tagAndNext() {
   try {
     if (!(await saveBeforeLeaving())) return;
     const id = S.cur.id, tagId = S.curTag;
-    const idx = S.images.findIndex((im) => im.id === id);
     if (!(S.cur.tags || []).includes(tagId)) {
-      let res;
       try {
-        res = await api(`/api/images/${id}/tags`, { method: "POST", body: { tag_id: tagId, on: true } });
+        await api(`/api/images/${id}/tags`, { method: "POST", body: { tag_id: tagId, on: true } });
       } catch (err) {
         toast(`태그를 저장하지 못했습니다: ${err.message}`, true);
         loadTags();
         return;
       }
-      applyTagChange(tagId, true, res.ids);
-      if (S.filterTag) await loadImageList();   // '태그 없음' 등에서 빠졌을 수 있다
-      else refreshRows(res.ids);
+      applyTagChange(tagId, true, [id]);
+      // '태그 없음' 등 필터에서 빠져도 그 줄은 제자리에 둔다 — 다시 받으면 목록이 움직였다
+      // (2026-11-04 사용자 요청). 필터를 다시 고르면 빠진다.
+      refreshRows([id]);
     }
-    await advanceFrom(id, idx);
+    await advanceFrom(id);
   } finally {
     S.tagBusy = false;
   }
@@ -1172,7 +1194,8 @@ async function renameTag(t) {
     return;
   }
   await loadTags();
-  renderImageList();      // 목록 줄의 태그 이름
+  // 그 태그가 붙은 줄만 고친다. 예전에는 목록을 통째로 다시 그려, '전체' 에서 지금 줄을 놓쳤다(2026-11-04).
+  refreshRows(taggedIds(t.id));
 }
 
 async function deleteTag(t) {
@@ -1184,13 +1207,15 @@ async function deleteTag(t) {
     toast(err.message, true);
     return;
   }
+  const hit = taggedIds(t.id);
   const drop = (im) => { if (im.tags) im.tags = im.tags.filter((x) => x !== t.id); };
   if (S.cur) drop(S.cur);
   S.images.forEach(drop);
   const filtered = S.filterTag === String(t.id);
   await loadTags();       // 고른 필터가 없어지면 '전체' 로 돌아간다
-  if (filtered) await loadImageList();
-  else renderImageList();
+  // 그 태그로 거르던 중이면 '전체' 로 다시 받되 지금 줄은 화면의 같은 높이에 둔다. 아니면 그 줄만 고친다.
+  if (filtered) await keepCurrentRow(() => loadImageList());
+  else refreshRows(hit);
 }
 
 /* ── 카메라(출처) 필터 ── docs/provenance.md
@@ -2079,7 +2104,7 @@ async function setStatus(status) {
   if (!(await saveBeforeLeaving())) return;
 
   const id = S.cur.id;
-  const idx = S.images.findIndex((im) => im.id === id);
+  const before = S.images.map((im) => im.id);
 
   if (status === "approved") {
     const overlaps = selfOverlaps();
@@ -2096,20 +2121,26 @@ async function setStatus(status) {
   if (status) {
     await api(`/api/images/${id}/status`, { method: "POST", body: { status } });
     await loadState();
-    await loadImageList();
+    // 다시 받으면 그새 필터에 맞지 않게 된 줄(Q·W·E·T)도 함께 빠진다. 보던 자리는 화면에서 그대로
+    await keepCurrentRow(() => loadImageList(), () => nextAfter(id, before));
   }
-  await advanceFrom(id, idx);
+  await advanceFrom(id, before);
 }
 
-/** id(목록 위치 idx)에서 다음 이미지로. 목록을 다시 받은 뒤에 부른다. */
-async function advanceFrom(id, idx) {
-  // 목록에서 방금 이미지가 빠졌으면 같은 자리가 곧 다음 대상이고,
-  // 남아 있으면 한 칸 뒤가 다음 대상이다. 두 경우를 같은 규칙으로 처리한다.
-  const still = S.images.findIndex((im) => im.id === id);
-  const target = still >= 0 ? still + 1 : Math.max(0, idx);
+/** 다시 받기 전 목록 before(id 순서)에서 id 뒤에 있던 줄 가운데 지금 목록에 남은 첫 줄의 id.
+ * id 가 before 에 없으면 맨 앞부터 찾는다. */
+function nextAfter(id, before) {
+  const now = new Set(S.images.map((im) => im.id));
+  return before.slice(before.indexOf(id) + 1).find((x) => now.has(x)) ?? null;
+}
 
-  if (target < S.images.length) {
-    await loadImage(S.images[target].id);
+/** id 다음 이미지로. 목록을 다시 받았으면 before 에 다시 받기 전 순서를 준다. 예전에는 '빠졌으면
+ * 같은 순번, 남았으면 한 칸 뒤' 로 골라, 그새 빠진 줄(필터에서 빠진 채 남겨 둔 줄, 2026-11-04)이
+ * 앞에 있으면 그만큼 건너뛰었고 '최근 수정순' 에서 승인하면(맨 위로 옮겨 간다) 맨 위 둘째 줄로 갔다. */
+async function advanceFrom(id, before = S.images.map((im) => im.id)) {
+  const next = nextAfter(id, before);
+  if (next != null) {
+    await loadImage(next);
   } else if (S.images.length) {
     toast("이 묶음의 마지막입니다.");
   } else {
@@ -2361,9 +2392,7 @@ $("#new-tag").addEventListener("keydown", (e) => {
 document.querySelectorAll(".domain-bar [data-domain]").forEach((b) => {
   b.onclick = () => setDomain(b.dataset.domain);
 });
-// 체크박스에 포커스가 남으면 Space·Q 가 단축키로 가지 않는다(입력 칸은 단축키를 건너뛴다)
-$("#domain-group").onchange = (e) => e.target.blur();
-// 목록 필터도 고른 뒤 포커스를 놓는다 — 남아 있으면 ↑·↓ 가 이미지 대신 필터 값을 바꾼다
+// 목록 필터는 고른 뒤 포커스를 놓는다 — 남아 있으면 ↑·↓ 가 이미지 대신 필터 값을 바꾼다
 document.querySelectorAll(".panel-left select").forEach((s) => s.addEventListener("change", () => s.blur()));
 
 $("#cf-toggle").onclick = (e) => {

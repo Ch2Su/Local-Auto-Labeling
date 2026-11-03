@@ -85,7 +85,8 @@
         <option value="">카메라: 전체</option>
       </select>
     </div>
-    <!-- 도메인(촬영 형태)으로 거르기. 미분류만 골라 놓고 Q·W·E 로 나누면 분류한 것이 목록에서 빠진다.
+    <!-- 도메인(촬영 형태)으로 거르기. 미분류만 골라 놓고 Q·W·E 로 나눠도 그 줄은 목록에 그대로 둔다
+         (목록이 움직이지 않게, 2026-11-04). 필터를 다시 고르면 빠진다.
          분할(train·val·test)은 보기만 한다 — 분할을 바꾸는 것은 labeler.py split 뿐이다. -->
     <div class="camera-filter two">
       <select id="filter-domain" title="도메인(CCTV·비CCTV·드론)으로 거릅니다. 상태·클래스·카메라 필터와 함께 걸립니다.">
@@ -96,7 +97,7 @@
       </select>
     </div>
     <div class="camera-filter">
-      <select id="filter-tag" title="태그로 거릅니다. 다른 필터와 함께 걸립니다. '태그 없음' 을 고르고 T 로 붙이면 붙인 것이 목록에서 빠집니다.">
+      <select id="filter-tag" title="태그로 거릅니다. 다른 필터와 함께 걸립니다. '태그 없음' 에서 T 로 붙여도 그 줄은 목록에 그대로 둡니다 — 필터를 다시 고르면 빠집니다.">
         <option value="">태그: 전체</option>
       </select>
     </div>
@@ -120,9 +121,6 @@
         <button class="btn btn-sm" data-domain="cctv">CCTV <kbd>Q</kbd></button>
         <button class="btn btn-sm" data-domain="noncctv">비CCTV <kbd>W</kbd></button>
         <button class="btn btn-sm" data-domain="drone">드론 <kbd>E</kbd></button>
-        <label class="domain-group" title="같은 장면 묶음(grp)의 이미지까지 한꺼번에 정합니다. 묶음이 크면 한 번 더 묻습니다.">
-          <input type="checkbox" id="domain-group"> 묶음째 <span id="domain-grp-n"></span>
-        </label>
       </span>
       <span id="save-state" class="save-state"></span>
       <button id="btn-fit" class="linkbtn" title="화면에 맞추기 (F)">맞춤</button>

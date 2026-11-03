@@ -492,17 +492,6 @@ class Store:
             ).fetchall()
         return {r["split"]: int(r["n"]) for r in rows}
 
-    def group_ids(self, image_id: int) -> list[int]:
-        """같은 장면 묶음(grp)의 이미지 id(휴지통 제외, 자기 포함). 묶음이 없으면 자기 하나."""
-        with self.connect() as con:
-            row = con.execute("SELECT grp FROM images WHERE id=?", (image_id,)).fetchone()
-            if row is None:
-                return []
-            if not row["grp"]:
-                return [image_id]
-            return [int(r["id"]) for r in con.execute(
-                "SELECT id FROM images WHERE grp=? AND status != 'trashed' ORDER BY id", (row["grp"],))]
-
     # ── 태그 (2026-11-03) ── 라벨이 아니라 updated_at·변경 이력은 건드리지 않는다
 
     def list_tags(self) -> list[dict]:
