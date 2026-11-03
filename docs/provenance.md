@@ -1,0 +1,134 @@
+# 출처 기록 설계 (2026-11-03, 초안 — 아직 구현 전)
+
+11-03 에 그때까지 모인 이미지를 `data/visible/legacy/` 로 옮겼다(출처 모름). 그 뒤로 새로 모으는 이미지는
+**어느 출처 단위(카메라)에서 언제 찍혔는지** 를 DB 에 남긴다. 이 문서는 그 규칙과 구현 계획이다.
+
+## 사용자 결정 (11-03)
+
+| | 결정 |
+|---|---|
+| 수집 형태 | 영상 프레임 추출 · 카메라/폰 사진 · 화면 캡처 · 공개 데이터셋 — 전부 |
+| 분할 단위 | **카메라째 한 분할** — 같은 카메라는 train/val/test 중 한쪽에만 |
+| 위치 정밀도 | **장소 이름만** — 좌표는 적지 않는다 |
+| 등록 파일 | **YAML** — `data/visible/cameras.yaml` |
+
+## 출처 단위('카메라')
+
+분할과 평가의 단위다. 형태마다 무엇을 한 단위로 볼지가 다르다.
+
+| kind | 한 단위 | 예 |
+|---|---|---|
+| `cctv` | 고정 카메라 한 대 | 교차로 기둥 카메라 |
+| `phone` | 한 장소에서 한 번 나가 찍은 묶음 | 어느 날 한 주차장에서 찍은 사진들 |
+| `screen` | 캡처한 화면의 원 카메라(모르면 캡처 원천 하나) | 공개 CCTV 웹 뷰어의 한 채널 |
+| `dataset` | 공개 데이터셋의 장면 | VIRAT 장면 `0002` |
+
+같은 장소라도 카메라가 다르면 다른 단위다. 폰으로 같은 장소를 다른 날 다시 찍으면 **같은 단위로 등록할 것** —
+다른 단위로 두면 같은 배경이 train 과 test 로 갈린다.
+
+## 폴더 규칙
+
+```text
+data/visible/unlabeled/<카메라키>/[<YYYYMMDD>/]<파일>
+```
+
+- 카메라키는 `cameras.yaml` 의 키 그대로, 영문 소문자·숫자·`-` 만(`^[a-z0-9][a-z0-9-]*$`) — 폴더 이름이 되므로
+  한글·공백을 피한다.
+- 날짜 폴더는 정리용이고 없어도 된다(시각은 아래 순서로 따로 읽는다).
+- `unlabeled/` 바로 아래 둔 파일은 지금처럼 출처 없이(`source='unlabeled'`) 들어가고 scan 이 경고한다.
+- 지금 tidy 는 승인분을 `labeled/images/` **한 폴더에 평평하게** 옮긴다(`tidy.tidy_approved` → `_free_name`). DB 의
+  `camera` 열은 남지만, DB 를 잃으면 `labeled/` 만으로는 카메라를 되찾을 수 없다 — 그래서 tidy 가 카메라 폴더를
+  유지하게 바꾼다(`labeled/images/<카메라>/…` ↔ `labels/<카메라>/…`, 구현 순서 1).
+
+## 등록 파일 `data/visible/cameras.yaml`
+
+**저장소(public)에 담지 않는다** — `data/` 아래라 이미 `.gitignore` 대상이고, 다른 디스크 백업(robocopy)에는 들어간다.
+설치 장소를 적으므로 이 파일과 그 내용을 커밋·업로드하지 말 것.
+
+```yaml
+cameras:
+  pg-cross-01:            # 키 = 폴더 이름
+    kind: cctv            # cctv | phone | screen | dataset
+    place: 판교 ○○ 사거리   # 장소 이름만. 좌표 금지
+    mount: pole           # pole | rooftop | wall | indoor | drone | handheld | unknown
+    view: 교차로 북쪽, 부감 약 30도   # 자유 서술
+    resolution: 1920x1080
+    tz: Asia/Seoul        # 시각 해석 기준. 기본 Asia/Seoul
+    rights: 직접 촬영      # 권리자·라이선스·사용 조건
+    split:                # 비우면 자동(카메라째 한 분할). train|val|test 로 고정할 수 있다
+    note:
+  virat-0002:
+    kind: dataset
+    place: VIRAT scene 0002
+    mount: rooftop
+    rights: VIRAT Release 2.0 — 개인별 동의 약관, 재배포 금지로 볼 것
+```
+
+- 속성은 이 파일 하나에만 둔다. DB 에는 키만 남긴다(두 곳에 두면 어긋난다).
+- 키를 바꾸려면 폴더 이름과 DB `images.camera` 를 같이 바꿔야 한다 — 되도록 바꾸지 말 것.
+
+## DB 변경
+
+`images` 에 열 둘을 더한다(`ALTER TABLE ADD COLUMN` — `split`·`grp`·`dhash` 때와 같은 방식, 기존 행은 그대로).
+
+| 열 | 값 | legacy |
+|---|---|---|
+| `camera` | 카메라키 | NULL |
+| `captured_at` | 촬영 시각 ISO 8601, 시간대 포함(`2026-11-03T14:05:12+09:00`) | NULL |
+
+- 카메라 폴더로 들어온 이미지의 `source` 는 **`collected`** — 지금 `source='unlabeled'` 는 `tools/test_baseline.py` 에서
+  '비CCTV' 를 뜻하므로 새 CCTV 를 거기 섞지 않는다. 공개 데이터셋은 지금처럼 데이터셋 이름(`o365`, `virat`)을 쓴다.
+- `ingest_batch` 는 경로가 이미 있으면 `source` 를 다시 쓴다(`store.py`) — `camera`·`captured_at` 은 **처음 넣을 때만**
+  쓰고 덮지 않는다.
+
+## 촬영 시각 읽는 순서
+
+처음 걸리는 것을 쓴다. 못 찾으면 NULL(모름) — **파일 수정 시각은 쓰지 않는다**(복사·다운로드 때 바뀐다).
+
+1. 파일 이름의 시각 — `..._YYYYMMDD_HHMMSS[_mmm]`(아래 프레임 추출 도구가 쓰는 형식), 폰 `YYYYMMDD_HHMMSS`,
+   Windows 캡처 `스크린샷 YYYY-MM-DD HHMMSS`(`grouping.py` 가 이미 읽는 꼴).
+2. EXIF `DateTimeOriginal`(+ 있으면 `OffsetTimeOriginal`) — 폰·카메라 사진.
+3. 없음.
+
+시간대가 없는 값은 카메라의 `tz` 로 해석한다.
+
+## 영상 → 프레임: `tools/extract_frames.py` (새로 만든다)
+
+```bash
+.venv/Scripts/python.exe tools/extract_frames.py <영상> --camera pg-cross-01 --start "2026-11-03 14:00:00" --every 5s
+```
+
+- `unlabeled/<카메라>/<YYYYMMDD>/<카메라>_<YYYYMMDD_HHMMSS>_<mmm>.jpg` 로 쓴다(시각 = 시작 + 프레임 시각).
+- `--start` 를 빼면 영상 이름에서 시각을 찾고, 없으면 멈춘다(시각 없는 프레임을 만들지 않는다).
+- 간격은 기본 5초. 직전 저장 프레임과 dHash 거리가 2 이하면 건너뛴다(정지 화면이 수백 장 쌓이는 것을 막는다).
+
+## 분할
+
+- `grouping.group_images` 에서 **같은 카메라는 하나로 합친다**(지금의 연번·연사·dHash 합집합에 하나를 더한다).
+  그래서 카메라 하나 = 묶음 하나(dHash 로 다른 이미지와 이어지면 더 커진다).
+- `cameras.yaml` 의 `split` 이 있으면 그 묶음은 그 분할로 고정한다. 없으면 지금의 계층화가 묶음째 배정한다.
+- **기존 이미지는 움직이지 않는다**는 규칙은 그대로다. 새 카메라 묶음이 dHash 로 legacy 묶음과 이어지면 옮기지 않고
+  `[알림] … 두 분할에 걸칩니다` 로 알린다.
+- 카메라가 적은 동안은 15% test 가 카메라 한두 대로 정해져 비율이 크게 틀어질 수 있다 — split 보고에 카메라별
+  배정을 찍어 보이고, 필요하면 `split:` 으로 직접 고정한다.
+
+## 평가
+
+`tools/test_baseline.py --domains` 에 출처 기준을 더한다: 카메라별, `kind` 별, `mount` 별(예: `mount=rooftop`).
+legacy 와 새 수집분(`source='collected'`)도 따로 잰다.
+
+## 구현 순서
+
+1. `store.py` 열 추가 · `config.yaml` 에 `data.cameras` · `ingest.py` 가 카메라 폴더와 등록 파일을 읽고 시각을 채운다.
+   등록 파일에 없는 카메라키가 있으면 **그 scan 전체를 멈춘다**(오타가 새 카메라로 들어가는 것을 막는다).
+   tidy 가 카메라 폴더를 유지하게 한다.
+2. `grouping.py`·`split.py` — 카메라 합치기, `split:` 고정, 카메라별 배정 보고.
+3. `tools/extract_frames.py`.
+4. `tools/test_baseline.py` 도메인 · 검수 UI 에 카메라·시각 표시와 카메라 필터.
+5. (따로) 공개 데이터셋 가져오기 — VIRAT 은 장면(`XXYY`)을 카메라로, 라벨은 **검수 대기**로 넣는다
+   (행동과 무관한 객체 박스가 빠져 있다 — `docs/` 의 VIRAT 소개 문서 3.1).
+
+## 정하지 않은 것
+
+- 검수 UI 에서 카메라를 등록·수정할지 — 지금은 YAML 을 손으로 고친다.
+- legacy 이미지 중 출처를 아는 것(예: 795프레임 고정 CCTV)에 나중에 카메라키를 붙일지.
