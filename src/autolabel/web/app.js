@@ -46,6 +46,7 @@ const S = {
   curTag: null,               // T 로 붙일 태그 id (오른쪽 태그 목록에서 줄을 눌러 고른다)
   filterTag: "",              // 태그 필터: "" 전체 / 태그 id / "__none__" 태그 없음
   tagBusy: false,             // T 가 도는 중 — 꾹 눌렀을 때 반복 입력이 겹치지 않게
+  listBusy: false,            // '새로 받기' 가 도는 중 — 그동안의 Q·W·E·T 는 버린다(다음 줄을 엉뚱하게 고른다)
   loadedCount: 0,     // 이 이미지를 열었을 때의 박스 수. 저장 뒤 이보다 적으면 표시한다
   histOpen: false,    // 오른쪽 '변경 내역' 이 펼쳐져 있나
   history: [],        // 이 이미지의 변경 내역 (최근 것부터)
@@ -889,13 +890,17 @@ function markCurrent() {
  * next 를 주면(다시 받은 뒤 곧 그 줄로 넘어간다): 지금 줄이 그 줄 바로 위에 그대로 남지 않았으면
  * — 빠졌거나(승인해서 '검수 대기' 에서) 옮겨 갔으면('최근 수정순' 맨 위로) — 대신 그 줄을 지금 줄이
  * 있던 높이에 둔다. 아래 줄이 한 칸 올라오고 파란 줄 자리는 그대로다. */
-async function keepCurrentRow(fn, next = null) {
+function keepCurrentRow(fn, next = null) {
+  return keepRowInPlace(S.cur ? S.cur.id : null, fn, next);
+}
+
+/** keepCurrentRow 와 같은데 지금 이미지 대신 id 의 줄을 제자리에 둔다. */
+async function keepRowInPlace(id, fn, next = null) {
   const ul = $("#image-list");
-  const top = (id) => {
-    const li = ul.querySelector(`li.item[data-id="${id}"]`);
+  const top = (x) => {
+    const li = ul.querySelector(`li.item[data-id="${x}"]`);
     return li ? li.getBoundingClientRect().top - ul.getBoundingClientRect().top : null;
   };
-  const id = S.cur ? S.cur.id : null;
   const y = id == null ? null : top(id);
   const result = await fn();
   if (y == null) return result;
@@ -910,6 +915,27 @@ async function keepCurrentRow(fn, next = null) {
   return result;
 }
 
+/** 묶음 보기(100개씩…)에서 다시 받은 뒤, 보던 이미지가 펼친 묶음에 없으면 그 이미지가 든 묶음을
+ * 펼친다. 앞쪽 줄이 빠지거나 늘면(필터에서 빠진 채 남겨 둔 줄, 2026-11-04) 묶음 경계가 밀려 보던
+ * 이미지가 닫힌 묶음으로 넘어갈 수 있다 — 그대로 두면 다음 이미지를 펼친 묶음에서만 찾아 그만큼
+ * 건너뛴다. cands = 찾을 이미지 id, 앞의 것부터. 첫 후보가 펼친 묶음에 있으면 아무것도 하지 않고,
+ * 없을 때만 전체 목록을 한 번 받아 남은 첫 후보의 묶음을 펼친다. */
+async function openChunkWith(cands) {
+  if (S.chunks.length < 2 || !cands.length) return;
+  if (S.images.some((im) => im.id === cands[0])) return;
+  const all = (await api(listUrl(1e9, 0))).images;
+  const pos = new Map(all.map((im, i) => [im.id, i]));
+  const hit = cands.find((x) => pos.has(x));
+  if (hit == null) return;
+  const p = pos.get(hit);
+  const ch = S.chunks.find((c) => p >= c.start && p < c.end);
+  if (!ch || ch.open) return;
+  ch.images = all.slice(ch.start, ch.end);
+  ch.open = true;
+  S.images = flatImages();
+  renderImageList();
+}
+
 /** 열려 있는 묶음들의 이미지를 순서대로 이어붙인 것이 곧 탐색 대상이다. */
 function flatImages() {
   return S.chunks.filter((c) => c.open).flatMap((c) => c.images);
@@ -919,12 +945,28 @@ async function toggleChunk(idx) {
   const ch = S.chunks[idx];
   if (ch.open) {
     ch.open = false;
-  } else {
-    if (!ch.images.length) await fetchChunk(idx);
-    ch.open = true;
+    S.images = flatImages();
+    renderImageList();
+    return;
   }
-  S.images = flatImages();
-  renderImageList();
+  // 펼칠 때는 펼친 묶음까지 한꺼번에 새로 받는다. 그새 필터에 맞지 않게 된 채 남겨 둔 줄(Q·W·E·T,
+  // 박스 고침)이 있으면 서버 쪽 묶음 경계가 그만큼 밀려 있어, 그 묶음만 받으면 사이의 이미지가 어느
+  // 묶음에도 나오지 않았다(2026-11-04 — 첫 묶음에서 T 29번 뒤 둘째 묶음을 펼치자 29장이 빠졌다).
+  // 화면 맨 위에 보이던 줄은 제자리에 둔다.
+  const keep = new Set([...S.chunks.filter((c) => c.open).map((c) => c.start), ch.start]);
+  const top = firstVisibleRowId();
+  const before = S.images.map((im) => im.id);
+  await keepRowInPlace(top, () => loadImageList(keep), top == null ? null : () => nextAfter(top, before));
+}
+
+/** 목록 화면 맨 위에 보이는 이미지 줄의 id(붙박이 묶음 머리에 가린 줄은 건너뛴다). 없으면 null. */
+function firstVisibleRowId() {
+  const ul = $("#image-list");
+  const top = ul.getBoundingClientRect().top + 40;   // 묶음 머리 높이(약 35px)만큼 아래부터
+  for (const li of ul.querySelectorAll("li.item[data-id]")) {
+    if (li.getBoundingClientRect().bottom > top) return Number(li.dataset.id);
+  }
+  return null;
 }
 
 async function fetchChunk(idx) {
@@ -1013,7 +1055,7 @@ function refreshRows(ids) {
  * 처리하는 데 25초 동안 화면이 멈췄다(2026-11-03, 6,229줄 '전체' 보기). 이제는 꾹 누르면
  * 처리가 끝나는 대로 한 장씩 넘어간다. */
 async function setDomain(domain) {
-  if (!S.cur || S.domainBusy) return;
+  if (!S.cur || S.domainBusy || S.listBusy) return;
   S.domainBusy = true;
   try {
     await setDomainNow(domain);
@@ -1039,7 +1081,7 @@ async function setDomainNow(domain) {
   loadDomains();
   renderDomainBar();
   // 도메인 필터에서 빠져도 목록은 다시 받지 않고 그 줄을 제자리에 둔다(꼬리표만 바꾼다). 예전에는
-  // 다시 받아 줄이 빠지면서 목록이 움직였다(2026-11-04 사용자 요청). 필터를 다시 고르면 빠진다.
+  // 다시 받아 줄이 빠지면서 목록이 움직였다(2026-11-04 사용자 요청). '↻ 새로 받기'(refreshList)가 걷어 낸다.
   refreshRows([id]);
   await advanceFrom(id);
 }
@@ -1140,7 +1182,7 @@ async function toggleImageTag(tagId, on) {
 /** T: 고른 태그를 이 이미지에 붙이고 다음으로. 이미 붙어 있으면 넘어가기만 한다(떼지 않는다 —
  * Q·W·E 와 같다). 꾹 누르면 하나씩 처리한다(setDomain 참고). */
 async function tagAndNext() {
-  if (!S.cur || S.tagBusy) return;
+  if (!S.cur || S.tagBusy || S.listBusy) return;
   if (S.curTag == null) { toast("오른쪽 태그 목록에서 붙일 태그를 먼저 누르세요 (없으면 만드세요)", true); return; }
   S.tagBusy = true;
   try {
@@ -1156,7 +1198,7 @@ async function tagAndNext() {
       }
       applyTagChange(tagId, true, [id]);
       // '태그 없음' 등 필터에서 빠져도 그 줄은 제자리에 둔다 — 다시 받으면 목록이 움직였다
-      // (2026-11-04 사용자 요청). 필터를 다시 고르면 빠진다.
+      // (2026-11-04 사용자 요청). '↻ 새로 받기'(refreshList)가 걷어 낸다.
       refreshRows([id]);
     }
     await advanceFrom(id);
@@ -2122,7 +2164,11 @@ async function setStatus(status) {
     await api(`/api/images/${id}/status`, { method: "POST", body: { status } });
     await loadState();
     // 다시 받으면 그새 필터에 맞지 않게 된 줄(Q·W·E·T)도 함께 빠진다. 보던 자리는 화면에서 그대로
-    await keepCurrentRow(() => loadImageList(), () => nextAfter(id, before));
+    const after = before.slice(before.indexOf(id) + 1);
+    await keepCurrentRow(async () => {
+      await loadImageList();
+      await openChunkWith(after);       // 넘어갈 줄이 닫힌 묶음으로 밀렸으면 펼친다
+    }, () => nextAfter(id, before));
   }
   await advanceFrom(id, before);
 }
@@ -2361,6 +2407,34 @@ async function reloadList() {
   await loadImageList(new Set([0]));   // 필터가 바뀌면 첫 묶음부터 다시
   if (S.images.length) await loadImage(S.images[0].id);
 }
+
+/** '새로 받기' (2026-11-04 사용자 요청): 목록을 지금 필터로 다시 받는다 — Q·W·E·T 로 필터에 맞지
+ * 않게 된 채 남겨 둔 줄이 빠진다. 보던 자리는 화면에서 그대로 두고, 지금 이미지가 빠졌으면 원래
+ * 그 뒤에 있던 줄 가운데 남은 첫 줄로 간다. */
+async function refreshList() {
+  if (S.listBusy || S.domainBusy || S.tagBusy) return;
+  S.listBusy = true;
+  try {
+    await loadState();
+    const id = S.cur ? S.cur.id : null;
+    const before = S.images.map((im) => im.id);
+    const n0 = S.total;
+    await keepCurrentRow(async () => {
+      await loadImageList();
+      if (id != null) await openChunkWith([id, ...before.slice(before.indexOf(id) + 1)]);
+    }, id == null ? null : () => nextAfter(id, before));
+    toast(`목록을 새로 받았습니다 — ${n0.toLocaleString()} → ${S.total.toLocaleString()}장`);
+    if (id != null && !S.images.some((im) => im.id === id)) await advanceFrom(id, before);
+  } catch (err) {
+    toast(`목록을 받지 못했습니다: ${err.message}`, true);
+  } finally {
+    S.listBusy = false;
+  }
+}
+$("#btn-reload-list").onclick = (e) => {
+  e.currentTarget.blur();   // 포커스가 남으면 Space·Enter 가 승인과 함께 이 단추까지 누를 수 있다
+  refreshList();
+};
 $("#filter-status").onchange = reloadList;
 $("#filter-order").onchange = reloadList;
 $("#chunk-size").onchange = reloadList;

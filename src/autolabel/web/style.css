@@ -271,6 +271,7 @@ kbd {
   display: flex; gap: 5px; padding: 8px 10px;
   border-bottom: 1px solid var(--line);
 }
+.goto .btn { flex: none; white-space: nowrap; }
 .add-class input, .goto input {
   flex: 1; min-width: 0;
   background: var(--bg-3); color: var(--fg);

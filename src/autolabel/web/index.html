@@ -86,7 +86,7 @@
       </select>
     </div>
     <!-- 도메인(촬영 형태)으로 거르기. 미분류만 골라 놓고 Q·W·E 로 나눠도 그 줄은 목록에 그대로 둔다
-         (목록이 움직이지 않게, 2026-11-04). 필터를 다시 고르면 빠진다.
+         (목록이 움직이지 않게, 2026-11-04). 아래 '↻ 새로 받기' 를 누르면 빠진다.
          분할(train·val·test)은 보기만 한다 — 분할을 바꾸는 것은 labeler.py split 뿐이다. -->
     <div class="camera-filter two">
       <select id="filter-domain" title="도메인(CCTV·비CCTV·드론)으로 거릅니다. 상태·클래스·카메라 필터와 함께 걸립니다.">
@@ -97,7 +97,7 @@
       </select>
     </div>
     <div class="camera-filter">
-      <select id="filter-tag" title="태그로 거릅니다. 다른 필터와 함께 걸립니다. '태그 없음' 에서 T 로 붙여도 그 줄은 목록에 그대로 둡니다 — 필터를 다시 고르면 빠집니다.">
+      <select id="filter-tag" title="태그로 거릅니다. 다른 필터와 함께 걸립니다. '태그 없음' 에서 T 로 붙여도 그 줄은 목록에 그대로 둡니다 — 아래 '↻ 새로 받기' 를 누르면 빠집니다.">
         <option value="">태그: 전체</option>
       </select>
     </div>
@@ -105,6 +105,9 @@
       <input id="goto-ids" type="text" autocomplete="off"
              placeholder="id 로 열기 — 812 또는 812, 904, …"
              title="이미지 id 를 쉼표로 구분해 넣고 Enter. 주소 끝에 #ids=812,904 를 붙여도 된다.">
+      <!-- 새로 받기 (2026-11-04): Q·W·E·T 로 필터에 맞지 않게 된 채 남겨 둔 줄을 걷어 낸다 -->
+      <button id="btn-reload-list" class="btn btn-sm"
+              title="목록을 지금 필터로 다시 받습니다. Q·W·E·T 로 필터에 맞지 않게 된 채 남아 있던 줄이 빠집니다. 지금 이미지 줄은 화면의 같은 자리에 두고, 그 이미지가 빠졌으면 바로 다음 줄로 갑니다.">↻ 새로 받기</button>
     </div>
     <ul id="image-list" class="image-list"></ul>
   </aside>
