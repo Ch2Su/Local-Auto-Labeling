@@ -118,3 +118,5 @@ nohup.out
 *.tar.gz
 *.tgz
 *.zip
+*.7z
+*.rar
