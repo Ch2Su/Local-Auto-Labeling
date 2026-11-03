@@ -456,6 +456,9 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - **test_baseline 의 `cctv`(seed 중 드론 아님)에는 CCTV 가 아닌 사진이 섞여 있다** — 숫자 이름 계열의 웹 사진(COCO 류)·
      `img-bicycles-…`(217장)·폰 사진. 초안은 `tools/legacy_groups.py`(장면 종류 116개 중 2번 728장이 대부분 지상·근접 사진).
      새 기준선의 CCTV 도메인은 분류가 끝난 뒤 그 결과로 다시 정할 것.
+   - **분류는 `images.domain`(cctv·noncctv·drone, NULL=미분류)에 담는다** — 검수 UI 의 Q·W·E 버튼(`묶음째` 는 DB 의 grp 전체,
+     옛 `g000001` 처럼 섞인 묶음이 있으니 조심)과 도메인 필터. 라벨이 아니라 `updated_at`·변경 이력에 남기지 않는다.
+     아직 `test_baseline.py`·분할은 이 칸을 보지 않는다 — 분류가 끝나면 도메인 판정을 이 칸으로 바꿀 것.
 
 ## 사용자에 대해
 

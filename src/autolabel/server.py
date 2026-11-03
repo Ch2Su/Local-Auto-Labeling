@@ -26,7 +26,7 @@ from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
 from .stopper import StopSignal
-from .store import NO_CAMERA, Store
+from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, Store
 from .tidy import prune_missing, purge_trashed, tidy_approved
 from .trainer import find_resume_point
 from .trainer import resume_train as run_resume
@@ -52,6 +52,11 @@ class BoxesIn(BaseModel):
 
 class StatusIn(BaseModel):
     status: str
+
+
+class DomainIn(BaseModel):
+    domain: str | None          # cctv | noncctv | drone, None = 미분류로 되돌림
+    group: bool = False         # 같은 장면 묶음(grp)의 이미지까지 한꺼번에
 
 
 class ClassIn(BaseModel):
@@ -192,6 +197,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             "n_boxes": r["n_boxes"],
             "uncertainty": round(float(r["uncertainty"]), 4),
             "camera": r.get("camera"),
+            "domain": r.get("domain"),
         }
         if "rare_score" in r:      # '드문 클래스 먼저' 정렬일 때만
             out.update(rare_score=r["rare_score"], rare_cls=r["rare_cls"],
@@ -202,11 +208,11 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
     def list_images(
         status: str = "pending", limit: int = 300, offset: int = 0, order: str = "uncertainty",
         ids: str | None = None, cls: str | None = None, empty: bool = False,
-        camera: str | None = None,
+        camera: str | None = None, domain: str | None = None,
     ) -> dict:
         """`cls=2,4` 는 **두 클래스를 모두 가진** 이미지만, `empty=1` 은 박스가 없는 이미지만.
 
-        둘을 같이 주면 `empty` 가 이긴다 (store.list_images 참고).
+        둘을 같이 주면 `empty` 가 이긴다 (store.list_images 참고). `domain=__none__` 은 미분류.
         """
         if ids is not None:
             # 'id 로 열기': 쉼표·공백으로 구분한 id 목록. 상태 필터를 무시하고 준 순서대로.
@@ -234,13 +240,17 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
                 raise HTTPException(400, f"없는 클래스 번호입니다: {wanted_cls}")
 
         camera = camera or None     # `camera=__none__` 은 출처 없는 이미지(legacy) — store.NO_CAMERA
+        domain = domain or None
+        if domain and domain not in (*DOMAINS, NO_DOMAIN):
+            raise HTTPException(400, f"알 수 없는 도메인: {domain}")
         rows = store.list_images(
             status=status, limit=limit, offset=offset, order=order,
-            classes=wanted_cls, empty=empty, camera=camera,
+            classes=wanted_cls, empty=empty, camera=camera, domain=domain,
         )
-        if empty or wanted_cls or camera:
+        if empty or wanted_cls or camera or domain:
             # 거르면 상태별 개수를 쓸 수 없다. 목록 묶음이 이 수로 나뉘므로 같은 조건으로 센다.
-            total = store.count_images(status=status, classes=wanted_cls, empty=empty, camera=camera)
+            total = store.count_images(status=status, classes=wanted_cls, empty=empty,
+                                       camera=camera, domain=domain)
         else:
             counts = store.counts()
             total = counts["total"] if status in ("all", None) else counts.get(status, 0)
@@ -271,6 +281,25 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
                 for k, n in sorted((k, n) for k, n in counts.items() if k)]
         return {"cameras": cams, "no_camera": counts.get(None, 0), "none_key": NO_CAMERA, "error": error}
 
+    @app.get("/api/domains")
+    def list_domains() -> dict:
+        """도메인 필터용: 도메인별 이미지 수(휴지통 제외)와 미분류 수."""
+        counts = store.domain_counts()
+        return {"domains": [{"key": d, "n": counts.get(d, 0)} for d in DOMAINS],
+                "none": counts.get(None, 0), "none_key": NO_DOMAIN}
+
+    @app.post("/api/images/{image_id}/domain")
+    def post_domain(image_id: int, payload: DomainIn) -> dict:
+        """도메인을 정한다. group 이면 같은 장면 묶음(휴지통 제외) 전체에."""
+        if store.get_image(image_id) is None:
+            raise HTTPException(404, "이미지를 찾을 수 없습니다.")
+        ids = store.group_ids(image_id) if payload.group else [image_id]
+        try:
+            n = store.set_domain(ids, payload.domain)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "changed": n, "ids": ids}
+
     @app.get("/api/images/{image_id}")
     def get_image(image_id: int) -> dict:
         row = store.get_image(image_id)
@@ -297,6 +326,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
             "camera": row["camera"],
             "captured_at": row["captured_at"],
             "camera_place": _camera_place(row["camera"]),
+            "domain": row["domain"],
+            "grp_n": len(store.group_ids(image_id)),
         }
 
     @app.get("/api/images/{image_id}/file")

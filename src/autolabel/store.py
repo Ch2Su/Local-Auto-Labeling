@@ -52,7 +52,10 @@ CREATE TABLE IF NOT EXISTS images (
     -- 출처 (2026-11-03, docs/provenance.md). camera 는 cameras.yaml 의 키, captured_at 은 시간대를 붙인
     -- ISO 8601. 처음 등록할 때만 쓰고 재스캔이 덮지 않는다. legacy 이미지는 둘 다 NULL(모름).
     camera        TEXT,
-    captured_at   TEXT
+    captured_at   TEXT,
+    -- 촬영 형태 (2026-11-03): 'cctv' | 'noncctv' | 'drone', 모르면 NULL. legacy 는 출처가 없어 사람이 검수
+    -- UI 에서 고른다(DOMAINS). 경로·source 로 가르던 도메인(test_baseline)에 CCTV 아닌 사진이 섞여 있었다.
+    domain        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_images_status ON images(status, uncertainty DESC, id);
 
@@ -128,10 +131,13 @@ _write_lock = threading.Lock()
 
 
 NO_CAMERA = "__none__"   # 카메라 필터에서 '출처 없음(legacy)' 을 뜻하는 값
+DOMAINS = ("cctv", "noncctv", "drone")   # images.domain 에 넣을 수 있는 값 (NULL = 미분류)
+NO_DOMAIN = "__none__"   # 도메인 필터에서 '미분류' 를 뜻하는 값
 
 
 def _list_where(
-    status: str | None, classes: list[int] | None, empty: bool, camera: str | None = None
+    status: str | None, classes: list[int] | None, empty: bool, camera: str | None = None,
+    domain: str | None = None,
 ) -> tuple[str, list]:
     """목록·개수가 함께 쓰는 WHERE 절. 둘이 어긋나면 묶음 수가 틀어진다.
 
@@ -149,6 +155,11 @@ def _list_where(
     elif camera:
         parts.append("i.camera=?")
         args.append(camera)
+    if domain == NO_DOMAIN:
+        parts.append("i.domain IS NULL")
+    elif domain:
+        parts.append("i.domain=?")
+        args.append(domain)
     if empty:
         parts.append("NOT EXISTS (SELECT 1 FROM boxes b WHERE b.image_id=i.id)")
     elif classes:
@@ -175,7 +186,7 @@ class Store:
             # 이미 있는 DB 에는 CREATE TABLE IF NOT EXISTS 가 열을 더해 주지 않는다.
             # ALTER TABLE ADD COLUMN 은 기존 행을 다시 쓰지 않아 안전하다.
             cols = {r["name"] for r in con.execute("PRAGMA table_info(images)")}
-            for col in ("split", "grp", "dhash", "camera", "captured_at"):
+            for col in ("split", "grp", "dhash", "camera", "captured_at", "domain"):
                 if col not in cols:
                     con.execute(f"ALTER TABLE images ADD COLUMN {col} TEXT")
 
@@ -301,6 +312,7 @@ class Store:
         classes: list[int] | None = None,
         empty: bool = False,
         camera: str | None = None,
+        domain: str | None = None,
     ) -> list[dict]:
         """검수 대상 목록. 기본은 불확실도 높은 순(= 사람이 볼 가치가 큰 순).
 
@@ -326,7 +338,7 @@ class Store:
             return [by_id[i] for i in wanted if i in by_id][offset:offset + limit]
 
         if order == "rare":
-            return self._list_rare(status, classes, empty, limit, offset, camera)
+            return self._list_rare(status, classes, empty, limit, offset, camera, domain)
 
         order_sql = {
             "uncertainty": "i.uncertainty DESC, i.id ASC",
@@ -334,7 +346,7 @@ class Store:
             "recent": "i.updated_at DESC, i.id DESC",
         }.get(order, "i.uncertainty DESC, i.id ASC")
 
-        where, args = _list_where(status, classes, empty, camera)
+        where, args = _list_where(status, classes, empty, camera, domain)
         sql = (
             "SELECT i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes"
             f" FROM images i{where} ORDER BY {order_sql} LIMIT ? OFFSET ?"
@@ -367,7 +379,7 @@ class Store:
                 for c in range(max(n_classes, max(groups, default=-1) + 1))}
 
     def _list_rare(self, status, classes, empty, limit: int, offset: int,
-                   camera: str | None = None) -> list[dict]:
+                   camera: str | None = None, domain: str | None = None) -> list[dict]:
         """'드문 클래스 먼저' 정렬. 이미지 점수 = 박스마다 (신뢰도 × 그 클래스의 희소도) 중 최댓값.
 
         자동 라벨이 van·pickup 처럼 드문 클래스를 확신하는 이미지가 맨 앞에 온다 — 검수할
@@ -376,7 +388,7 @@ class Store:
         목록 묶음(100개씩…)과 맞도록 같은 조건의 전체를 점수로 줄 세운 뒤 잘라 준다.
         """
         rarity = self.class_rarity()
-        where, args = _list_where(status, classes, empty, camera)
+        where, args = _list_where(status, classes, empty, camera, domain)
         with self.connect() as con:
             rows = con.execute(
                 "SELECT i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes"
@@ -410,15 +422,46 @@ class Store:
         classes: list[int] | None = None,
         empty: bool = False,
         camera: str | None = None,
+        domain: str | None = None,
     ) -> int:
         """`list_images` 와 같은 조건으로 개수만 센다.
 
         클래스로 거르면 상태별 개수(`counts()`)를 쓸 수 없어서 따로 센다. 목록 UI 는
         이 수로 묶음(100개씩…)을 나누므로 필터와 정확히 같은 조건이어야 한다.
         """
-        where, args = _list_where(status, classes, empty, camera)
+        where, args = _list_where(status, classes, empty, camera, domain)
         with self.connect() as con:
             return int(con.execute(f"SELECT COUNT(*) FROM images i{where}", args).fetchone()[0])
+
+    def domain_counts(self) -> dict[str | None, int]:
+        """도메인별 이미지 수(휴지통 제외). 미분류는 키 None."""
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT domain, COUNT(*) AS n FROM images WHERE status != 'trashed' GROUP BY domain"
+            ).fetchall()
+        return {r["domain"]: int(r["n"]) for r in rows}
+
+    def group_ids(self, image_id: int) -> list[int]:
+        """같은 장면 묶음(grp)의 이미지 id(휴지통 제외, 자기 포함). 묶음이 없으면 자기 하나."""
+        with self.connect() as con:
+            row = con.execute("SELECT grp FROM images WHERE id=?", (image_id,)).fetchone()
+            if row is None:
+                return []
+            if not row["grp"]:
+                return [image_id]
+            return [int(r["id"]) for r in con.execute(
+                "SELECT id FROM images WHERE grp=? AND status != 'trashed' ORDER BY id", (row["grp"],))]
+
+    def set_domain(self, image_ids: list[int], domain: str | None) -> int:
+        """도메인을 정한다(None = 미분류로 되돌림). 라벨이 아니라서 updated_at 은 건드리지 않는다 —
+        '최근 수정순' 목록이 분류하는 동안 뒤섞이지 않게. 바꾼 행 수를 돌려준다."""
+        if domain is not None and domain not in DOMAINS:
+            raise ValueError(f"알 수 없는 도메인: {domain}")
+        if not image_ids:
+            return 0
+        with _write_lock, self.connect() as con:
+            cur = con.executemany("UPDATE images SET domain=? WHERE id=?", [(domain, i) for i in image_ids])
+            return cur.rowcount
 
     def camera_counts(self) -> dict[str | None, int]:
         """카메라별 이미지 수(휴지통 제외). 출처 없는 이미지는 키 None."""

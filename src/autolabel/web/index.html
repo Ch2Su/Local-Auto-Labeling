@@ -84,6 +84,12 @@
         <option value="">카메라: 전체</option>
       </select>
     </div>
+    <!-- 도메인(촬영 형태)으로 거르기. 미분류만 골라 놓고 Q·W·E 로 나누면 분류한 것이 목록에서 빠진다. -->
+    <div class="camera-filter">
+      <select id="filter-domain" title="도메인(CCTV·비CCTV·드론)으로 거릅니다. 상태·클래스·카메라 필터와 함께 걸립니다.">
+        <option value="">도메인: 전체</option>
+      </select>
+    </div>
     <div class="goto">
       <input id="goto-ids" type="text" autocomplete="off"
              placeholder="id 로 열기 — 812 또는 812, 904, …"
@@ -98,6 +104,15 @@
       <span id="img-name" class="img-name">이미지를 선택하세요</span>
       <span id="img-meta" class="img-meta"></span>
       <span class="spacer"></span>
+      <!-- 도메인 정하기 (2026-11-03). 누르면 정하고 다음 이미지로. 같은 버튼을 다시 누르면 미분류로 되돌린다. -->
+      <span class="domain-bar" title="이 이미지의 촬영 형태를 정하고 다음 이미지로 넘어갑니다. 이미 그 값이면 미분류로 되돌립니다.">
+        <button class="btn btn-sm" data-domain="cctv">CCTV <kbd>Q</kbd></button>
+        <button class="btn btn-sm" data-domain="noncctv">비CCTV <kbd>W</kbd></button>
+        <button class="btn btn-sm" data-domain="drone">드론 <kbd>E</kbd></button>
+        <label class="domain-group" title="같은 장면 묶음(grp)의 이미지까지 한꺼번에 정합니다. 묶음이 크면 한 번 더 묻습니다.">
+          <input type="checkbox" id="domain-group"> 묶음째 <span id="domain-grp-n"></span>
+        </label>
+      </span>
       <span id="save-state" class="save-state"></span>
       <button id="btn-fit" class="linkbtn" title="화면에 맞추기 (F)">맞춤</button>
     </div>

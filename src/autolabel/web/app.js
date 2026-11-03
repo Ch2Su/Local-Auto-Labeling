@@ -38,6 +38,7 @@ const S = {
   filterClasses: new Set(),   // 클래스 필터: 고른 것을 **전부** 가진 이미지만 (교집합)
   filterEmpty: false,         // 박스가 하나도 없는 이미지만. 클래스 선택과 함께 못 쓴다
   filterCamera: "",           // 카메라(출처) 필터: "" 전체 / 카메라키 / "__none__" 출처 없음
+  filterDomain: "",           // 도메인 필터: "" 전체 / cctv·noncctv·drone / "__none__" 미분류
   loadedCount: 0,     // 이 이미지를 열었을 때의 박스 수. 저장 뒤 이보다 적으면 표시한다
   histOpen: false,    // 오른쪽 '변경 내역' 이 펼쳐져 있나
   history: [],        // 이 이미지의 변경 내역 (최근 것부터)
@@ -805,6 +806,7 @@ function itemRow(im) {
     `title="불확실도 ${im.uncertainty}"></span>` +
     `<span class="nm"></span>`
     + (im.rare_cls != null ? '<span class="rare"></span>' : "")
+    + (im.domain ? `<span class="dom dom-${im.domain}">${DOMAIN_NAME[im.domain] || im.domain}</span>` : "")
     + `<span class="nb">${im.n_boxes}</span>`;
   li.querySelector(".nm").textContent = im.name;
   // '드문 클래스 먼저' 정렬: 이 이미지를 앞으로 끌어온 클래스를 붙인다
@@ -880,7 +882,71 @@ function listUrl(limit, offset) {
   if (S.filterEmpty) url += "&empty=1";
   else if (S.filterClasses.size) url += `&cls=${[...S.filterClasses].sort((a, b) => a - b).join(",")}`;
   if (S.filterCamera) url += `&camera=${encodeURIComponent(S.filterCamera)}`;
+  if (S.filterDomain) url += `&domain=${encodeURIComponent(S.filterDomain)}`;
   return url;
+}
+
+/* ── 도메인(촬영 형태) ── images.domain, 2026-11-03
+ * legacy 는 출처가 없어 CCTV·비CCTV·드론을 사람이 정한다. 필터에 개수를 함께 보여 준다. */
+const DOMAIN_NAME = { cctv: "CCTV", noncctv: "비CCTV", drone: "드론" };
+
+async function loadDomains() {
+  let data;
+  try { data = await api("/api/domains"); } catch { return; }   // 실패해도 검수는 되어야 한다
+  const sel = $("#filter-domain");
+  const keep = S.filterDomain;
+  sel.innerHTML = "";
+  const add = (value, text) => {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = text;
+    sel.appendChild(o);
+  };
+  add("", "도메인: 전체");
+  for (const d of data.domains) add(d.key, `${DOMAIN_NAME[d.key] || d.key} (${d.n})`);
+  add(data.none_key, `미분류 (${data.none})`);
+  S.filterDomain = [...sel.options].some((o) => o.value === keep) ? keep : "";
+  sel.value = S.filterDomain;
+  sel.classList.toggle("on", !!S.filterDomain);
+}
+
+/** 지금 이미지의 도메인 버튼 표시와 '묶음째' 장수. */
+function renderDomainBar() {
+  const d = S.cur ? S.cur.domain : null;
+  document.querySelectorAll(".domain-bar [data-domain]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.domain === d);
+    b.disabled = !S.cur;
+  });
+  $("#domain-grp-n").textContent = S.cur && S.cur.grp_n ? `(${S.cur.grp_n}장)` : "";
+}
+
+/** 도메인을 정하고 다음 이미지로. 이미 그 값이면 미분류로 되돌리고 그 자리에 머문다. */
+async function setDomain(domain) {
+  if (!S.cur) return;
+  if (!(await saveBeforeLeaving())) return;
+  const id = S.cur.id;
+  const idx = S.images.findIndex((im) => im.id === id);
+  const unset = S.cur.domain === domain;
+  const group = $("#domain-group").checked && S.cur.grp_n > 1;
+  if (group && S.cur.grp_n > 30 && !confirm(
+    `같은 장면 묶음 ${S.cur.grp_n}장을 모두 '${unset ? "미분류" : DOMAIN_NAME[domain]}' 로 바꿉니다.\n`
+    + "묶음에는 다른 종류의 사진이 섞여 있을 수 있습니다(옛 묶음 g000001 등). 계속할까요?")) return;
+  let res;
+  try {
+    res = await api(`/api/images/${id}/domain`, {
+      method: "POST", body: { domain: unset ? null : domain, group },
+    });
+  } catch (err) {
+    toast(`도메인을 저장하지 못했습니다: ${err.message}`, true);
+    return;
+  }
+  if (S.cur && S.cur.id === id) S.cur.domain = unset ? null : domain;
+  for (const im of S.images) if (res.ids.includes(im.id)) im.domain = unset ? null : domain;
+  loadDomains();
+  renderDomainBar();
+  if (group) toast(`${res.changed}장을 ${unset ? "미분류로 되돌렸습니다" : DOMAIN_NAME[domain] + " 로 정했습니다"}`);
+  if (unset) { renderImageList(); return; }
+  if (S.filterDomain) await loadImageList();   // 필터에서 빠졌을 수 있다
+  await advanceFrom(id, idx);
 }
 
 /* ── 카메라(출처) 필터 ── docs/provenance.md
@@ -1602,6 +1668,7 @@ async function loadState() {
   [...S.filterClasses].filter((i) => i >= S.classes.length).forEach((i) => S.filterClasses.delete(i));
   renderClassFilter();
   loadCameras();        // 스캔으로 새 카메라가 들어올 수 있다. 실패해도 검수는 되어야 하므로 기다리지 않는다
+  loadDomains();
   if (st.job && st.job.status === "running" && !S.jobPoll) watchJob(st.job.id);
 }
 
@@ -1632,6 +1699,7 @@ async function loadImageList(keepOpen = null) {
   $("#filter-order").disabled = status === "ids";   // 지정한 id 는 넣은 순서 그대로
   $("#cf-toggle").disabled = status === "ids";      // id 목록은 클래스 필터를 무시한다
   $("#filter-camera").disabled = status === "ids";  // 카메라 필터도 마찬가지
+  $("#filter-domain").disabled = status === "ids";
   if (status === "ids") $("#cf-panel").classList.add("hidden");
 
   const openBefore = keepOpen ?? new Set(
@@ -1723,6 +1791,7 @@ async function loadImage(id) {
     // 출처(docs/provenance.md): 시각은 카메라 현지 시각 그대로(시간대 표기는 뗀다)
     (meta.camera ? ` · 카메라 ${meta.camera}${meta.camera_place ? `(${meta.camera_place})` : ""}` +
       (meta.captured_at ? ` ${meta.captured_at.replace("T", " ").slice(0, 19)}` : " · 촬영 시각 모름") : "");
+  renderDomainBar();
   $("#save-state").textContent = "";
   $("#save-state").className = "save-state";
   $("#empty-hint").classList.add("hidden");
@@ -1778,7 +1847,11 @@ async function setStatus(status) {
     await loadState();
     await loadImageList();
   }
+  await advanceFrom(id, idx);
+}
 
+/** id(목록 위치 idx)에서 다음 이미지로. 목록을 다시 받은 뒤에 부른다. */
+async function advanceFrom(id, idx) {
   // 목록에서 방금 이미지가 빠졌으면 같은 자리가 곧 다음 대상이고,
   // 남아 있으면 한 칸 뒤가 다음 대상이다. 두 경우를 같은 규칙으로 처리한다.
   const still = S.images.findIndex((im) => im.id === id);
@@ -2014,6 +2087,16 @@ $("#filter-camera").onchange = () => {
   $("#filter-camera").classList.toggle("on", !!S.filterCamera);
   reloadList();
 };
+$("#filter-domain").onchange = () => {
+  S.filterDomain = $("#filter-domain").value;
+  $("#filter-domain").classList.toggle("on", !!S.filterDomain);
+  reloadList();
+};
+document.querySelectorAll(".domain-bar [data-domain]").forEach((b) => {
+  b.onclick = () => setDomain(b.dataset.domain);
+});
+// 체크박스에 포커스가 남으면 Space·Q 가 단축키로 가지 않는다(입력 칸은 단축키를 건너뛴다)
+$("#domain-group").onchange = (e) => e.target.blur();
 
 $("#cf-toggle").onclick = (e) => {
   e.stopPropagation();
@@ -2106,6 +2189,9 @@ window.addEventListener("keydown", (e) => {
     case "h": case "H": case "ㅗ": e.preventDefault(); toggleHistory(); break;
     case "g": case "G": case "ㅎ": e.preventDefault(); openSamePlace(); break;
     case "p": case "P": case "ㅔ": e.preventDefault(); togglePred(); break;
+    case "q": case "Q": case "ㅂ": case "ㅃ": e.preventDefault(); setDomain("cctv"); break;
+    case "w": case "W": case "ㅈ": case "ㅉ": e.preventDefault(); setDomain("noncctv"); break;
+    case "e": case "E": case "ㄷ": case "ㄸ": e.preventDefault(); setDomain("drone"); break;
     case "a": case "A": case "ㅁ":
       // 예측 비교의 맨 위 항목 받기 (빠짐 = 추가, 클래스 = 바꾸기, 박스 = 맞추기)
       if (S.predOn) {

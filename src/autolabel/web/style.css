@@ -185,6 +185,9 @@ kbd {
 .image-list li.item.active .nb { color: #dbe6ff; }
 /* '드문 클래스 먼저' 정렬에서 그 이미지를 앞으로 끌어온 클래스 */
 .image-list .rare { font-size: 10px; font-weight: 600; flex: none; }
+.image-list .dom { font-size: 10px; flex: none; color: var(--fg-dim); }
+.image-list .dom-cctv { color: var(--ok); }
+.image-list .dom-drone { color: var(--warn); }
 
 /* 불확실도 막대 */
 .unc { width: 3px; height: 18px; border-radius: 2px; background: var(--line); flex: none; }
@@ -386,6 +389,8 @@ kbd {
 }
 @media (max-width: 1180px) { .hints { display: none; } }
 .stage-head { border-bottom: 1px solid var(--line); }
+.domain-bar { display: flex; align-items: center; gap: 4px; }
+.domain-group { display: flex; align-items: center; gap: 3px; margin-left: 4px; color: var(--fg-dim, inherit); }
 .stage-foot { border-top: 1px solid var(--line); }
 
 /* 이름이 길면 이름 쪽이 줄어든다 — 오른쪽 '저장됨 · 박스 5→4' 가 밀려나면 안 된다 */
