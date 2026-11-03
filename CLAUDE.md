@@ -172,6 +172,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다) |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
+| `tools/legacy_groups.py` | legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안(DB 읽기 전용) — 사전학습 임베딩을 평균 연결로 묶어 `data/visible/legacy_groups/` 에 CSV·대조 시트. 카메라 후보는 거칠다(웹 사진과 CCTV 크롭이 한 후보에 섞이기도 한다) |
 | `tools/scheduled_stop.py` | 정해진 시각에 웹 UI 학습을 정상 중단(탭 서버에서는 `/api/projects` 로 학습 중인 프로젝트를 찾는다) |
 
 ## 라벨 기준
@@ -452,6 +453,9 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - legacy CCTV 5,426장의 크기는 3,501가지다(한 번만 나온 크기가 3,396) — `스크린샷 …`(1,959장)·`T#_#_#_C_D_R_#`(443)·
      `cctv#_#`·`duque_de_caxias-#` 등은 크기가 제각각이라 화면을 잘라 낸 크롭이고, 높이만 1080·720 으로 같은 계열은 한 카메라
      화면을 가로로 자른 것일 수 있다. `640×640`(1,190장)은 로보플로가 늘린 것이라 크기로는 크롭 여부를 모른다.
+   - **test_baseline 의 `cctv`(seed 중 드론 아님)에는 CCTV 가 아닌 사진이 섞여 있다** — 숫자 이름 계열의 웹 사진(COCO 류)·
+     `img-bicycles-…`(217장)·폰 사진. 초안은 `tools/legacy_groups.py`(장면 종류 116개 중 2번 728장이 대부분 지상·근접 사진).
+     새 기준선의 CCTV 도메인은 분류가 끝난 뒤 그 결과로 다시 정할 것.
 
 ## 사용자에 대해
 
