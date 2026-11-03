@@ -18,7 +18,7 @@
 평균만으로는 모델을 견줄 수 없게 돼서(CLAUDE.md '현재 데이터 상태') 클래스별로 남긴다.
 
 **도메인** (`--domains`, 또는 `--domain 이름` 하나만):
-  all 전체 / drone 드론(경로에 stabilized_) / noncctv 비CCTV(source='unlabeled', 나중에 넣은 이미지)
+  all 전체 / cctv CCTV(드론·비CCTV·o365 를 뺀 나머지 = seed 중 드론 아님, 11-03 에 방향이 CCTV 검출로 바뀌어 추가 — 새 수집분은 cameras.yaml 의 kind: cctv 카메라만 더한다) / drone 드론(경로에 stabilized_) / noncctv 비CCTV(source='unlabeled', 나중에 넣은 이미지)
   / nodrone 드론 제외. 비CCTV 는 예전에 `--like "data\\labeled"` 로 쟀는데, 09-21 에 폴더를
   data/visible/ 로 옮긴 뒤로 그 조건은 **0장**에 걸린다 — 그래서 경로가 아니라 source 로 가른다.
   **2026-10-03 부터 all·nodrone 은 Objects365(source='o365')를 뺀다** — 그 사진이 test 로 들어와도
@@ -55,6 +55,9 @@ HISTORY = "runs/test_baseline/history.jsonl"
 # 이름표는 그대로 둔다(--history 가 이름표로 묶는다).
 DOMAINS = {
     "all": ("전체", lambda r: r["source"] != "o365"),
+    # legacy 의 CCTV(seed 중 드론 아님). 새 수집분은 cameras.yaml 의 kind 가 cctv 인 카메라만 더한다 —
+    # source_domains 가 등록 파일을 읽어 이 항목을 바꿔 끼운다(폰·화면 캡처가 CCTV 로 섞이지 않게).
+    "cctv": ("CCTV", lambda r: r["source"] == "seed" and "stabilized_" not in r["path"].lower()),
     "drone": ("드론", lambda r: "stabilized_" in r["path"].lower()),
     "noncctv": ("비CCTV", lambda r: r["source"] == "unlabeled"),
     "nodrone": ("드론 제외", lambda r: "stabilized_" not in r["path"].lower() and r["source"] != "o365"),
@@ -83,6 +86,8 @@ def source_domains(cfg: Config, items: list[dict]) -> dict:
         for v in sorted({getattr(reg[k], attr) for k in keys if k in reg}):
             out[f"{attr}:{v}"] = (f"{attr} {v}", lambda r, a=attr, v=v:
                                   r.get("camera") in reg and getattr(reg[r["camera"]], a) == v)
+    legacy_cctv = DOMAINS["cctv"][1]
+    out["cctv"] = ("CCTV", lambda r: legacy_cctv(r) or (r.get("camera") in reg and reg[r["camera"]].kind == "cctv"))
     return out
 
 
@@ -95,7 +100,7 @@ def parse_args():
     p.add_argument("--imgsz", type=int, default=None, help="기본: model.imgsz (학습 해상도)")
     p.add_argument("--out", default=None, help="만들 폴더 (기본: runs/test_baseline/<날짜>_<가중치>_<split>)")
     p.add_argument("--keep", action="store_true", help="만든 이미지 폴더를 지우지 않는다")
-    p.add_argument("--domains", action="store_true", help="정해진 도메인(전체·드론·비CCTV·드론 제외·Objects365·전체+O365)을 한 번에 잰다")
+    p.add_argument("--domains", action="store_true", help="정해진 도메인(전체·CCTV·드론·비CCTV·드론 제외·Objects365·전체+O365·legacy·새 수집분)과 그 분할의 카메라 도메인을 한 번에 잰다")
     p.add_argument("--domain", default=None,
                    help=f"도메인 하나만: {', '.join(sorted(DOMAINS))}, 또는 cam:<카메라키>·kind:<형태>·mount:<설치>")
     p.add_argument("--like", default=None,

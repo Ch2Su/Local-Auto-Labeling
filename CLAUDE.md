@@ -1,8 +1,8 @@
 # 로컬 자동 이미지 라벨링 — 작업 인수인계
 
 소량의 손라벨 데이터로 YOLO 를 학습시키고 → 나머지를 자동 라벨링 → 웹에서 검수 → 검수분을 합쳐 재학습하는 루프.
-전부 로컬에서 돈다. **방향 (2026-09-18 사용자 확인): CCTV 만이 아니라 어떤 이미지든 들어 있는 객체를 다 탐지한다.**
-드론 부감·스크린샷·영화 장면도 운영 대상이라, 분할·평가에서 특정 도메인이 한쪽(train/val/test)에 몰리지 않게 할 것.
+전부 로컬에서 돈다. **방향 (2026-11-03 사용자 확인): CCTV 객체 검출 고도화 — LLM 연동 유고(이상 상황) 감지 시스템의 검출부를 만든다.**
+유고 감지 시스템 자체(LLM 연동)는 다른 세션에서 만든다 — 이 저장소는 검출 모델·라벨·학습만 맡는다. 09-18 의 '어떤 이미지든 탐지' 방향은 대체됐고, 드론·비CCTV 데이터와 평가 도메인을 어떻게 다룰지는 정해진 것이 없으니 필요하면 사용자에게 물을 것. 분할·평가에서 특정 도메인·카메라가 한쪽(train/val/test)에 몰리지 않게 할 것은 그대로다.
 
 사용자 문서는 [README.md](README.md). 이 파일은 작업자가 **매번** 알아야 할 규칙만 담는다(11-02 에 105KB 에서 줄였다).
 경위·실측·사건 기록은 줄이기 전 판 `git show f7ea49a:CLAUDE.md`(함정 번호와 큰 절 이름은 같다 — SAM·변경 이력·check 는
@@ -77,10 +77,11 @@
   않는다. 그래서 카테고리 이름을 먼저 우리 클래스로 바꾸고, 우리 클래스를 **빠짐없이** 라벨한 데이터인지 볼 것 — 사람이
   빠진 이미지가 승인되면 모델이 사람을 배경으로 배운다. Objects365 의 `Scooter` 는 오토바이형이고 우리 scooter 는 전동 킥보드다.
 
-**Objects365 (10-02 BAAI 에서 받음).** 11-02 부터 `E:\datasets\objects365.tar`(331GB, 저장소 밖 — patch 압축 51개·json·
-`o365_index.pkl`·license.txt, 풀린 사진 없음) 하나로 묶여 있어 **`tools/import_o365.py` 는 다시 풀기 전에는 못 돈다.**
-- 10-03 에 500장을 넣었다(id 6726–7225, `data/visible/unlabeled/o365/`, source·origin `o365`, 넣기 전 DB
-  `labeling.db.bak_o365_20261003_024915`) — 지금 승인 29 / 대기 429 / 건너뜀 42. 더 넣을지는 한 장 검수 시간을 재 보고 정한다.
+**Objects365 (10-02 BAAI 에서 받음) — 11-03 에 프로젝트에서 뺐다**(사용자 결정 — 백업한 뒤 휴지통으로 보내 비웠다). 지금 DB 에
+o365 행은 없고 `data/visible/unlabeled/o365/` 도 없다. 원본은 `E:\datasets\objects365.tar`(331GB, 저장소 밖 — patch 압축 51개·json·
+`o365_index.pkl`·license.txt, 풀린 사진 없음)에 있어 **`tools/import_o365.py` 는 다시 풀기 전에는 못 돈다.** 다시 넣게 되면 아래를 볼 것.
+- 10-03 에 500장을 넣었었다(id 6726–7225, source·origin `o365`, 넣기 전 DB `labeling.db.bak_o365_20261003_024915`) — 뺄 때 승인 29
+  / 대기 429 / 건너뜀 42. 11-03 에 뺄 무렵 뜬 DB 백업은 `labeling.db.bak_trash_20261103_004945`·`labeling.db.bak_trash29_20261103_125351`.
   **넣은 뒤 `labeler.py label --all` 을 쓰지 말 것** — 검수 대기 라벨을 예측으로 덮는다(웹 UI 의 자동 라벨링은
   `include_pending: false` 라 안전하다).
 - 넣을 때의 사용자 결정: Scooter → motorcycle, isfake·isreflected 박스는 버리고, 우리 클래스에 iscrowd 가 있거나 Ambulance 가
@@ -163,7 +164,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 
 | | |
 |---|---|
-| `tools/test_baseline.py` | 지금 DB 라벨로 test 를 잰다(DB 읽기 전용). `--domains` 로 전체·드론·비CCTV·드론 제외를 한 번에 재 `runs/test_baseline/history.jsonl` 에 클래스별로 쌓고, `--history` 로 표를 본다 |
+| `tools/test_baseline.py` | 지금 DB 라벨로 test 를 잰다(DB 읽기 전용). `--domains` 로 전체·CCTV·드론·비CCTV·드론 제외를 한 번에 재 `runs/test_baseline/history.jsonl` 에 클래스별로 쌓고, `--history` 로 표를 본다 |
 | `tools/label_qa.py` | 승인 라벨과 예측이 어긋나는 곳, 라벨끼리 겹친 곳(IoU ≥ 0.85 — `--dup-only` 면 모델 없이)을 후보 CSV·대조 시트로(DB 읽기 전용) |
 | `tools/label_qa_claude.py` | missing 후보를 Claude API 로 거르는 파일럿 — API 키 필요, 아직 한 번도 호출 안 함 |
 | `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
@@ -208,11 +209,11 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 현재 데이터 상태
 
 ```text
-승인 6,596장 / 박스 41,722개 / 클래스 8개      (2026-11-02 확인 — van 을 car 로 합친 뒤)
-bicycle 1,511  bus 985  car 11,578  motorcycle 1,460  person 23,380
-scooter 1,031  truck 1,047  pickup 730
-검수 대기 429, 미라벨 0, 건너뜀 42, 휴지통 0, 박스 없는 승인 이미지 127   (대기·건너뜀은 전부 Objects365)
-분할: train 4,642 / val 822 / test 968(박스 6,508) / 미배정 164 — DB 의 images.split 에 고정, 미배정은 다음 학습 때 배정된다
+승인 6,567장 / 박스 41,554개 / 클래스 8개      (2026-11-03 확인 — Objects365 를 뺀 뒤)
+bicycle 1,511  bus 985  car 11,488  motorcycle 1,459  person 23,321
+scooter 1,031  truck 1,047  pickup 712
+검수 대기 0, 미라벨 0, 건너뜀 0, 휴지통 0, 박스 없는 승인 이미지 127
+분할: train 4,642 / val 822 / test 968(박스 6,508) / 미배정 135 — DB 의 images.split 에 고정, 미배정은 다음 학습 때 배정된다
 ```
 
 - **클래스는 8개다**(pickup 은 09-20 에 사용자가 검수 UI 에서 추가했고, 같은 날 추가한 van 은 11-02 에 car 로 합쳤다).
@@ -257,7 +258,7 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
   `labeled/images/<카메라>/` 로 옮긴다. 분할은 **카메라째 한 묶음**이고 `cameras.yaml` 의 `split:` 으로 고정할 수 있다
   (고정이 다른 카메라가 dHash 로 이어지면 분할이 멈춘다). split 보고의 `카메라별:` 줄로 어디로 갔는지 볼 것.
   검수 UI 는 카메라 필터·카메라·촬영 시각을 보여 주고, `test_baseline.py --domains` 는 `legacy`·`collected`·`cam:<키>`·
-  `kind:`·`mount:` 를 잰다 — **09-27 기준선과 같은 범위는 이제 `all` 이 아니라 `legacy`** 다(`all` 은 새 수집분도 담는다).
+  `kind:`·`mount:` 를 잰다 — **09-27 기준선과 같은 범위는 이제 `all` 이 아니라 `legacy`** 다(`all` 은 새 수집분도 담는다). `cctv` 는 legacy CCTV(seed 중 드론 아님)에 `kind: cctv` 카메라만 더한다.
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개).
@@ -438,7 +439,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 **`predict.imgsz` 640 이 정점**(960·1280 은 낮다), close_mosaic 마지막 30 epoch 은 두 번 연속 이득이 없었다.
 
 3. **미검토 제안.** 640 입력에서 박스의 23.3% 가 32px 미만이다. 학습 자체를 960 으로 올리는 것은 s 로는 해 보지 않았다 —
-   해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). 그래도 작은 박스가 문제면 SAHI 를 검토.
+   해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). SAHI 식 타일 추론은 `tools/test_tiles.py` 로 재 봤다(11-03, visible-3·CCTV test) — mAP50-95 는 +0.035\~0.038 이지만 같은 conf 에서 FP 가 늘고(대부분 라벨 누락이 아니라 진짜 오검출), FP 를 맞추면 이득이 16px 미만 객체(+4.5pt)로 좁혀져 `AutoLabeler` 에는 아직 넣지 않았다 — 타일↔통째 사이에만 NMS IoU 0.3 을 걸면 F1 이 통째와 같고(0.890) 재현율 +1.8pt·mAP +0.035(CCTV)라 넣을 만하지만, 사용자가 FP 표본 48개를 직접 확인한 뒤 정한다(표·한계는 docs/experiments.md '타일 추론').
 4. **8클래스로 다시 학습하기 — 운영 모델(visible-3)은 pickup 을 모르고, car 에 옛 van 이 섞였다.** 학습하면
    `tools/test_baseline.py --weights <새 가중치> --domains` 로 visible-3(지금 라벨로 다시 잰 값)과 **클래스별로** 비교하고, 그
    모델로 `tools/label_qa.py` 를 돌려 176px 아래의 truck·pickup·car 판정을 거른다(눈으로는 176px 위만 봤다 — 그 아래는 사람도
