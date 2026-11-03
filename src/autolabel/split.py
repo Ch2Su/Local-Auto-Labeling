@@ -8,6 +8,8 @@
    200회 실측). 계층화하면 ±0.5%p 안에 든다. 희소 클래스(scooter·bus)의 점수가 덜 흔들린다.
 3. **묶음 단위 분할.** 같은 영상·같은 연사·내용이 같은 이미지는 통째로 한쪽에만 넣는다
    (`grouping.py`). 인접 프레임이 train 과 val 로 갈리면 점수가 부풀려지기 때문이다.
+   출처를 기록한 이미지는 **카메라째** 한 묶음이고(2026-11-03, docs/provenance.md), `cameras.yaml` 에
+   `split:` 을 적은 카메라는 그 분할로 고정한다. 그래서 test 점수가 '처음 보는 카메라' 성능을 잰다.
 
 **test 는 학습에도, best.pt 고르기에도 쓰지 않는다.** val 은 학습 중 best 를 고르는 데
 쓰이므로 val 점수에는 '여러 epoch 중 가장 좋은 것을 골랐다'는 이득이 섞인다. test 는
@@ -28,6 +30,7 @@ from pathlib import Path
 
 from .config import Config
 from .grouping import close_pairs, dhash, group_images
+from .provenance import load_cameras
 from .store import Store
 
 SPLITS = ("train", "val", "test")
@@ -44,6 +47,10 @@ class SplitReport:
     moved: dict[str, int] = field(default_factory=dict)   # 이미 배정돼 있다가 옮겨진 것 {"val->train": n}
     # 기존 배정이 서로 다른 이미지가 한 묶음으로 이어진 것 {묶음: {split: 장수}} — 옮기지 않고 알리기만 한다
     mixed: dict[str, dict[str, int]] = field(default_factory=dict)
+    # 카메라별 배정 {카메라: {split: 장수}} — 한 카메라가 두 분할에 걸치면 경고한다
+    cameras: dict[str, dict[str, int]] = field(default_factory=dict)
+    # cameras.yaml 의 split: 고정과 다른 분할에 이미 있어 그대로 둔 이미지 {묶음: {split: 장수}}
+    pin_kept: dict[str, dict[str, int]] = field(default_factory=dict)
     reset: bool = False
     ratios: dict[str, float] = field(default_factory=dict)
     shares: dict[str, dict[str, float]] = field(default_factory=dict)  # split -> 클래스 -> 비중
@@ -80,6 +87,20 @@ class SplitReport:
                 lines.append(
                     f"  [알림] 서로 다른 분할에 있던 이미지가 한 묶음으로 이어졌습니다 {len(self.mixed)}개"
                     f"({detail}{more}). 기존 배정은 그대로 두었습니다 — 그 장면은 두 분할에 걸칩니다.")
+            if self.pin_kept:
+                detail = "; ".join(f"{g} " + "·".join(f"{s} {n}" for s, n in sorted(c.items()))
+                                   for g, c in sorted(self.pin_kept.items())[:5])
+                lines.append(
+                    f"  [알림] cameras.yaml 의 split 고정과 다른 분할에 이미 있던 이미지는 옮기지 않았습니다"
+                    f" ({detail}). 새 이미지만 고정한 분할로 갑니다.")
+        if self.cameras:
+            def fmt(c: dict[str, int]) -> str:
+                return "·".join(f"{s} {c[s]}" for s in SPLITS if c.get(s))
+            lines.append("  카메라별: " + ", ".join(f"{k} {fmt(c)}" for k, c in sorted(self.cameras.items())))
+            split_cams = [k for k, c in self.cameras.items() if sum(1 for v in c.values() if v) > 1]
+            if split_cams:
+                lines.append(f"  [경고] 두 분할에 걸친 카메라: {', '.join(sorted(split_cams))} — 같은 배경이 "
+                             "train 과 평가셋에 함께 있습니다(기존 배정을 고정해서 생긴 것일 수 있음).")
         for s in SPLITS:
             per = self.shares.get(s)
             if per:
@@ -100,6 +121,42 @@ def _ratios(cfg: Config) -> dict[str, float]:
     out = {"train": 1.0 - val - test, "val": val}
     if test > 0:
         out["test"] = test
+    return out
+
+
+def _camera_pins(cfg: Config, groups: dict[str, list[dict]],
+                 ratios: dict[str, float]) -> dict[str, str]:
+    """{묶음: cameras.yaml 의 split}. 카메라가 있는 묶음이 없으면 등록 파일을 읽지 않는다.
+
+    한 묶음에 고정 분할이 다른 카메라가 함께 있으면(dHash 로 이어짐) 어느 쪽도 지킬 수 없어 멈춘다 —
+    사람이 정할 일이다. 등록 파일에서 빠진 카메라는 고정 없이 계층화를 탄다.
+    """
+    used = {it["camera"] for ms in groups.values() for it in ms if it.get("camera")}
+    if not used:
+        return {}
+    try:
+        reg = load_cameras(cfg.cameras)
+    except ValueError as exc:
+        raise RuntimeError(f"카메라 등록 파일을 읽지 못해 분할을 멈췄습니다 (아무것도 배정하지 않음).\n{exc}") from exc
+    out: dict[str, str] = {}
+    for g, ms in groups.items():
+        want: dict[str, set[str]] = {}
+        for it in ms:
+            cam = reg.get(it.get("camera") or "")
+            if cam and cam.split:
+                want.setdefault(cam.split, set()).add(cam.key)
+        if not want:
+            continue
+        if len(want) > 1:
+            detail = ", ".join(f"{s}: {'·'.join(sorted(k))}" for s, k in sorted(want.items()))
+            raise RuntimeError(
+                f"묶음 {g} 에 split 고정이 서로 다른 카메라가 함께 있습니다({detail}) — 내용이 거의 같은 이미지로 "
+                "이어진 것입니다. cameras.yaml 의 split 을 맞추거나 한쪽 고정을 지운 뒤 다시 돌리세요.")
+        s = next(iter(want))
+        if s not in ratios:
+            raise RuntimeError(f"카메라 {'·'.join(sorted(want[s]))} 의 split: {s} 은 지금 비율 설정에 없습니다"
+                               " (train.test_ratio 가 0 이면 test 를 쓸 수 없다).")
+        out[g] = s
     return out
 
 
@@ -236,16 +293,17 @@ def ensure_splits(cfg: Config, store: Store, *, reset: bool = False,
 
     report.hashed = _ensure_dhash(store, items)
     need_group = reset or regroup or report.hashed > 0 or any(not it["grp"] for it in items)
+    keys = group_images(items) if need_group else {it["id"]: it["grp"] for it in items}
+    groups: dict[str, list[dict]] = {}
+    for it in items:
+        groups.setdefault(keys[it["id"]], []).append(it)
+    # 카메라 고정은 DB 에 무엇이든 쓰기 전에 확인한다 — 등록 파일 오류·고정 충돌이면 여기서 멈춘다.
+    pins = _camera_pins(cfg, groups, ratios)
     if need_group:
-        keys = group_images(items)
         store.set_groups([(it["id"], keys[it["id"]]) for it in items
                           if it["grp"] != keys[it["id"]]])
         for it in items:
             it["grp"] = keys[it["id"]]
-
-    groups: dict[str, list[dict]] = {}
-    for it in items:
-        groups.setdefault(it["grp"], []).append(it)
     report.groups = len(groups)
     report.biggest_group = max(len(v) for v in groups.values())
 
@@ -266,6 +324,14 @@ def ensure_splits(cfg: Config, store: Store, *, reset: bool = False,
                 if len(have) > 1:
                     report.mixed[g] = dict(have)
         pinned = {it["id"]: it["split"] for it in items if it["split"] in ratios}
+    # cameras.yaml 의 split: 은 다수결보다 앞선다 — 새 이미지는 그리로 간다. 이미 다른 분할에 있던 이미지는
+    # 위의 pinned 규칙대로 제자리에 두고 알리기만 한다.
+    for g, s in pins.items():
+        fixed[g] = s
+        other = Counter(it["split"] for it in groups[g]
+                        if not reset and it["split"] in ratios and it["split"] != s)
+        if other:
+            report.pin_kept[g] = dict(other)
 
     # 큰 묶음이 어디로 가느냐에 따라 결과가 꽤 달라진다. 순서를 몇 번 흔들어 보고
     # 가장 덜 틀어진 배정을 고른다 (시드 고정이라 항상 같은 결과가 나온다).
@@ -288,6 +354,11 @@ def ensure_splits(cfg: Config, store: Store, *, reset: bool = False,
 
     report.counts = Counter(assign.values())
     report.shares = _shares(items, assign, store.get_classes())
+    for it in items:
+        if it.get("camera"):
+            report.cameras.setdefault(it["camera"], {})
+            c = report.cameras[it["camera"]]
+            c[assign[it["id"]]] = c.get(assign[it["id"]], 0) + 1
     return assign, report
 
 

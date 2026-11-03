@@ -25,6 +25,8 @@
 
 **한계.** 같은 카메라를 다른 날·다른 조명에서 찍은 것은 dHash 거리가 벌어져 따로 묶인다.
 완전히 못 막는다는 뜻이고, 남은 정도는 `split.leak_report()` 로 재서 본다.
+**출처를 기록한 이미지(2026-11-03 부터의 수집분)는 이 한계가 없다** — `images.camera` 가 같으면 통째로
+한 묶음이다(docs/provenance.md). legacy 이미지는 출처가 없어 위 세 규칙만 탄다.
 """
 
 from __future__ import annotations
@@ -149,7 +151,7 @@ def close_pairs(ids: list[int], hashes: list[str], max_dist: int = DHASH_MAX,
 
 
 def group_images(items: list[dict], *, max_dist: int = DHASH_MAX) -> dict[int, str]:
-    """{이미지 id: 묶음 키}. items 는 {"id", "path", "dhash"} (+ 있으면 "width", "height") dict 목록.
+    """{이미지 id: 묶음 키}. items 는 {"id", "path", "dhash"} (+ 있으면 "width", "height", "camera") dict 목록.
 
     묶음 키는 그 묶음에서 가장 작은 이미지 id 로 만든다(`g000123`) — 새 이미지가
     들어와도 기존 묶음의 키가 바뀌지 않는다.
@@ -157,6 +159,17 @@ def group_images(items: list[dict], *, max_dist: int = DHASH_MAX) -> dict[int, s
     dsu = DSU()
     for it in items:
         dsu.find(it["id"])
+
+    # 0) 출처가 같은 카메라는 **통째로** 한 묶음 (2026-11-03, docs/provenance.md — 분할 단위가 카메라다).
+    #    이름·dHash 로는 다른 날·다른 조명의 같은 카메라를 못 묶는다(머리말 '한계').
+    first_of: dict[str, int] = {}
+    for it in items:
+        cam = it.get("camera")
+        if cam:
+            if cam in first_of:
+                dsu.union(first_of[cam], it["id"])
+            else:
+                first_of[cam] = it["id"]
 
     # 1) 연번 계열은 **통째로** 한 묶음 — 같은 출처(카메라·영상)로 본다.
     #    번호 간격으로 자르던 때는 `ala_2_001` 과 `ala_2_016` 이 train·val 로 갈렸고,

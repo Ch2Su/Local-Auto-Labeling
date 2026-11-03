@@ -799,15 +799,16 @@ class Store:
 
     def approved_class_counts(self) -> list[dict]:
         """분할 계산용: 승인 이미지별
-        {id, path, width, height, split, grp, dhash, counts={클래스: 박스 수}}.
+        {id, path, width, height, split, grp, dhash, camera, counts={클래스: 박스 수}}.
 
         박스가 하나도 없는 배경 이미지도 빠뜨리지 않는다 (LEFT JOIN).
         width·height 는 이름이 숫자뿐인 파일을 묶을 때 쓴다 (grouping.name_series).
+        camera 는 같은 카메라를 한 묶음으로 합칠 때 쓴다 (grouping.group_images, 2026-11-03).
         """
         with self.connect() as con:
             rows = con.execute(
                 "SELECT i.id AS id, i.path AS path, i.width AS width, i.height AS height,"
-                " i.split AS split, i.grp AS grp,"
+                " i.split AS split, i.grp AS grp, i.camera AS camera,"
                 " i.dhash AS dhash, b.cls AS cls, COUNT(b.id) AS n"
                 " FROM images i LEFT JOIN boxes b ON b.image_id = i.id"
                 " WHERE i.status='approved' GROUP BY i.id, b.cls ORDER BY i.id"
@@ -818,7 +819,7 @@ class Store:
                 int(r["id"]),
                 {"id": int(r["id"]), "path": r["path"], "width": r["width"],
                  "height": r["height"], "split": r["split"],
-                 "grp": r["grp"], "dhash": r["dhash"], "counts": {}},
+                 "grp": r["grp"], "dhash": r["dhash"], "camera": r["camera"], "counts": {}},
             )
             if r["cls"] is not None:
                 it["counts"][int(r["cls"])] = int(r["n"])
