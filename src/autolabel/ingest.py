@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from .config import Config
+from .provenance import Camera, camera_key, capture_time, load_cameras
 from .store import Store
 from .yolo_io import iter_images, image_size, label_path_for, read_yolo_txt
 
@@ -28,6 +29,11 @@ class IngestReport:
     unreadable: list[str] = None  # type: ignore[assignment]
     # 내용이 이미 있는 이미지와 같아 등록하지 않은 것 (dupcheck.py). {path, same_as, same_boxes}
     duplicates: list[dict] = None  # type: ignore[assignment]
+    # 출처 (provenance.py): 새로 넣은 이미지의 카메라별 수, 그중 촬영 시각을 못 찾은 수,
+    # 카메라 폴더 없이 unlabeled/ 바로 아래 있던 새 이미지 수
+    by_camera: dict = None  # type: ignore[assignment]
+    no_time: dict = None  # type: ignore[assignment]
+    no_camera: int = 0
 
     def __post_init__(self) -> None:
         if self.unreadable is None:
@@ -36,6 +42,10 @@ class IngestReport:
             self.unlabeled_status = {}
         if self.duplicates is None:
             self.duplicates = []
+        if self.by_camera is None:
+            self.by_camera = {}
+        if self.no_time is None:
+            self.no_time = {}
 
     def summary(self) -> str:
         new_seed = self.seed_images - self.seed_already
@@ -67,6 +77,13 @@ class IngestReport:
                 f"  주의: 객체가 하나도 없는 시드 이미지 {self.seed_without_label}장 "
                 "-> 배경 샘플로 학습에 포함됩니다."
             )
+        for cam, n in sorted(self.by_camera.items()):
+            miss = self.no_time.get(cam, 0)
+            lines.append(f"  카메라 {cam}: 신규 {n}장" + (f" (촬영 시각 모름 {miss}장)" if miss else ""))
+        if self.no_camera:
+            lines.append(
+                f"  주의: 카메라 폴더 없이 들어온 새 이미지 {self.no_camera}장 -> 출처 없음(source='unlabeled')."
+                " 출처를 남기려면 unlabeled/<카메라키>/ 아래에 둘 것 (docs/provenance.md)")
         if self.unreadable:
             lines.append(f"  읽지 못한 파일 {len(self.unreadable)}개: {self.unreadable[:5]}")
         if self.duplicates:
@@ -202,16 +219,23 @@ def ingest(cfg: Config, store: Store, *, force: bool = False) -> IngestReport:
     known = set(statuses)
     pending: list[dict] = []
     guard = _DupGuard(cfg, store, report)
+    # 카메라 확인은 **무엇이든 넣기 전에** 한다 — 등록 안 된 키가 있으면 시드도 미라벨도 넣지 않고 멈춘다.
+    unlabeled = list(iter_images(cfg.unlabeled))
+    cameras = _plan_cameras(cfg, unlabeled, known)
 
     def flush() -> None:
         store.ingest_batch(pending)
         pending.clear()
 
+    def rest() -> IngestReport:
+        return _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard,
+                                 unlabeled, cameras)
+
     # --- 시드: 사람이 만든 정답이므로 곧바로 approved ---
     if cfg.seed_coco:
         _ingest_coco(cfg, store, known, pending, report, flush, guard)
         flush()
-        return _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard)
+        return rest()
 
     for img in iter_images(cfg.seed_images):
         resolved = str(img.resolve())
@@ -249,7 +273,45 @@ def ingest(cfg: Config, store: Store, *, force: bool = False) -> IngestReport:
             flush()
     flush()
 
-    return _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard)
+    return rest()
+
+
+def _seed_root(cfg: Config):
+    return (cfg.seed_coco or cfg.seed_images).resolve()
+
+
+def _plan_cameras(cfg: Config, images: list, known: set[str]) -> dict[str, Camera]:
+    """새로 들어올 미라벨 이미지의 카메라 폴더를 등록 파일과 맞춰 본다 (provenance.py 머리말).
+
+    카메라 폴더가 하나도 없으면 등록 파일을 읽지도 않는다(옛 방식 그대로). 등록 파일이 잘못됐거나 등록 안 된
+    키가 있으면 RuntimeError — 이미 등록된 이미지(재스캔)는 보지 않으므로, 예전 하위 폴더(`unlabeled/o365/` 등)
+    는 걸리지 않는다.
+    """
+    root = cfg.unlabeled.resolve()
+    seed_root = _seed_root(cfg)
+    keys: dict[str, int] = {}
+    for img in images:
+        r = img.resolve()
+        if seed_root in r.parents or _key(str(r)) in known:
+            continue
+        k = camera_key(r, root)
+        if k:
+            keys[k] = keys.get(k, 0) + 1
+    if not keys:
+        return {}
+    try:
+        cams = load_cameras(cfg.cameras)
+    except ValueError as exc:
+        raise RuntimeError(f"카메라 등록 파일을 고친 뒤 다시 스캔하세요. 아무것도 등록하지 않았습니다.\n{exc}") from exc
+    unknown = sorted(k for k in keys if k not in cams)
+    if unknown:
+        listed = ", ".join(f"{k}({keys[k]}장)" for k in unknown)
+        raise RuntimeError(
+            f"등록 안 된 카메라 폴더가 있어 스캔을 멈췄습니다(아무것도 등록하지 않음): {listed}\n"
+            f"  {cfg.cameras} 의 cameras: 아래에 추가하거나 폴더 이름을 고치세요 — 오타가 새 카메라로 들어가면 "
+            "같은 카메라가 train·test 로 갈릴 수 있습니다 (docs/provenance.md)."
+        )
+    return cams
 
 
 def _ingest_coco(cfg, store, known, pending, report, flush, guard) -> None:
@@ -303,10 +365,12 @@ def _ingest_coco(cfg, store, known, pending, report, flush, guard) -> None:
             flush()
 
 
-def _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard) -> "IngestReport":
+def _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard,
+                      images, cameras) -> "IngestReport":
     # --- 미라벨: 아직 추론 전 ---
-    seed_root = (cfg.seed_coco or cfg.seed_images).resolve()
-    for img in iter_images(cfg.unlabeled):
+    seed_root = _seed_root(cfg)
+    root = cfg.unlabeled.resolve()
+    for img in images:
         resolved_path = img.resolve()
         if seed_root in resolved_path.parents:
             continue  # 시드 폴더가 미라벨 폴더 안에 있는 경우 중복 방지
@@ -325,16 +389,20 @@ def _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard
         if guard.blocked(resolved):
             continue              # 내용이 같은 이미지가 이미 있다 (리포트에 남는다)
         known.add(_key(resolved))
-        pending.append(
-            {
-                "path": resolved,
-                "source": "unlabeled",
-                "width": w,
-                "height": h,
-                "status": "unlabeled",
-                "boxes": [],
-            }
-        )
+        # 카메라 폴더 아래면 source='collected' + 출처. 'unlabeled' 는 tools/test_baseline.py 에서 '비CCTV'
+        # 를 뜻하므로 새 수집분을 거기 섞지 않는다. 바로 아래 파일은 옛 방식대로(출처 없음).
+        key = camera_key(resolved_path, root)
+        item = {"path": resolved, "source": "unlabeled", "width": w, "height": h,
+                "status": "unlabeled", "boxes": []}
+        if key:
+            cam = cameras[key]  # _plan_cameras 가 등록 여부를 이미 확인했다
+            item.update(source="collected", camera=key, captured_at=capture_time(resolved_path, cam.tz))
+            report.by_camera[key] = report.by_camera.get(key, 0) + 1
+            if item["captured_at"] is None:
+                report.no_time[key] = report.no_time.get(key, 0) + 1
+        else:
+            report.no_camera += 1
+        pending.append(item)
         report.unlabeled_images += 1
         report.unlabeled_status["unlabeled"] = report.unlabeled_status.get("unlabeled", 0) + 1
         if len(pending) >= _BATCH:

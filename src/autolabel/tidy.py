@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Config
+from .provenance import is_camera_key
 from .store import Store
 from .yolo_io import write_yolo_txt
 
@@ -349,8 +350,6 @@ def tidy_approved(
     if not targets:
         return report
 
-    img_dir.mkdir(parents=True, exist_ok=True)
-    lbl_dir.mkdir(parents=True, exist_ok=True)
     total = len(targets)
 
     for n, row in enumerate(targets, 1):
@@ -361,9 +360,16 @@ def tidy_approved(
             report.skipped_missing.append(src.name)
             continue
 
+        # 출처가 있는 이미지는 카메라 폴더를 유지한다(images/<카메라>/ ↔ labels/<카메라>/, YOLO 짝 규칙 그대로).
+        # DB 를 잃어도 labeled/ 만으로 카메라를 되찾게 하려는 것이다 (docs/provenance.md, 2026-11-03).
+        cam = row["camera"] if "camera" in row.keys() else None
+        sub_img, sub_lbl = (img_dir / cam, lbl_dir / cam) if is_camera_key(cam) else (img_dir, lbl_dir)
+        sub_img.mkdir(parents=True, exist_ok=True)
+        sub_lbl.mkdir(parents=True, exist_ok=True)
+
         # 이미지·라벨 이름이 둘 다 비어 있는 곳으로만 옮긴다 (머리말 — 덮어쓰기 사고).
-        stem, dst = _free_name(img_dir, lbl_dir, src)
-        lbl = lbl_dir / f"{stem}.txt"
+        stem, dst = _free_name(sub_img, sub_lbl, src)
+        lbl = sub_lbl / f"{stem}.txt"
 
         boxes = store.get_boxes(int(row["id"]))
         try:

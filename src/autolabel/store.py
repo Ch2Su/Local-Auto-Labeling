@@ -48,7 +48,11 @@ CREATE TABLE IF NOT EXISTS images (
     -- 같은 장면 묶음 키 (grouping.py). 묶음은 통째로 한 split 에만 들어간다.
     grp           TEXT,
     -- 8x8 dHash 16진수. 묶음 계산용이라 한 번 구해 두고 다시 쓴다.
-    dhash         TEXT
+    dhash         TEXT,
+    -- 출처 (2026-11-03, docs/provenance.md). camera 는 cameras.yaml 의 키, captured_at 은 시간대를 붙인
+    -- ISO 8601. 처음 등록할 때만 쓰고 재스캔이 덮지 않는다. legacy 이미지는 둘 다 NULL(모름).
+    camera        TEXT,
+    captured_at   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_images_status ON images(status, uncertainty DESC, id);
 
@@ -163,7 +167,7 @@ class Store:
             # 이미 있는 DB 에는 CREATE TABLE IF NOT EXISTS 가 열을 더해 주지 않는다.
             # ALTER TABLE ADD COLUMN 은 기존 행을 다시 쓰지 않아 안전하다.
             cols = {r["name"] for r in con.execute("PRAGMA table_info(images)")}
-            for col in ("split", "grp", "dhash"):
+            for col in ("split", "grp", "dhash", "camera", "captured_at"):
                 if col not in cols:
                     con.execute(f"ALTER TABLE images ADD COLUMN {col} TEXT")
 
@@ -742,6 +746,7 @@ class Store:
 
         이미지 한 장마다 연결을 새로 여는 방식은 수천 장에서 몇 분씩 걸린다.
         items 각 항목: {path, source, width, height, status, boxes, uncertainty, model_version}
+        (+ 있으면 camera, captured_at — 새로 넣을 때만 쓰고, 이미 있는 행에는 쓰지 않는다)
         """
         if not items:
             return 0
@@ -754,8 +759,9 @@ class Store:
                 # (sqlite 3.50 에서 확인). 그러면 박스가 엉뚱한 이미지에 붙는다.
                 cur = con.execute(
                     "INSERT INTO images"
-                    "(path, name, width, height, source, status, uncertainty, model_version, updated_at)"
-                    " VALUES (?,?,?,?,?,?,?,?,?)"
+                    "(path, name, width, height, source, status, uncertainty, model_version, updated_at,"
+                    " camera, captured_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
                     " ON CONFLICT(path) DO NOTHING",
                     (
                         it["path"],
@@ -767,6 +773,8 @@ class Store:
                         float(it.get("uncertainty", 0.0)),
                         it.get("model_version"),
                         now,
+                        it.get("camera"),
+                        it.get("captured_at"),
                     ),
                 )
                 if cur.rowcount == 0:
