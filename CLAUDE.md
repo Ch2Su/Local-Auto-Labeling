@@ -427,7 +427,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 **`predict.imgsz` 640 이 정점**(960·1280 은 낮다), close_mosaic 마지막 30 epoch 은 두 번 연속 이득이 없었다.
 
 3. **미검토 제안.** 640 입력에서 박스의 23.3% 가 32px 미만이다. 학습 자체를 960 으로 올리는 것은 s 로는 해 보지 않았다 —
-   해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). 그래도 작은 박스가 문제면 SAHI 를 검토.
+   해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). SAHI 식 타일 추론은 `tools/test_tiles.py` 로 재 봤다(11-03, visible-3·CCTV test) — mAP50-95 는 +0.035\~0.038 이지만 FP 를 맞추면 이득이 16px 미만 객체(+4.5pt)로 좁혀져 `AutoLabeler` 에는 넣지 않았다(표·한계는 docs/experiments.md '타일 추론').
 4. **8클래스로 다시 학습하기 — 운영 모델(visible-3)은 pickup 을 모르고, car 에 옛 van 이 섞였다.** 학습하면
    `tools/test_baseline.py --weights <새 가중치> --domains` 로 visible-3(지금 라벨로 다시 잰 값)과 **클래스별로** 비교하고, 그
    모델로 `tools/label_qa.py` 를 돌려 176px 아래의 truck·pickup·car 판정을 거른다(눈으로는 176px 위만 봤다 — 그 아래는 사람도

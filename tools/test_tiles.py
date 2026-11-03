@@ -18,7 +18,10 @@
 - 운영 조건: conf 0.25·NMS 0.6·max_det 100 (`predict:` 설정) 에서 IoU 0.5 로 맞춘 P·R·F1·FP 수와, 객체
   크기별(640 입력으로 줄였을 때의 변 길이) 재현율. 자동 라벨링이 실제로 내는 것은 이쪽이다.
 
-`full` 은 `model.val` 과 같은 값이 나와야 한다(`--check-val`, 기본 켬) — 다르면 이 평가기가 틀린 것이다.
+`full` 을 `model.val` 과 견준다(`--no-check-val` 로 끈다). **model.val 은 NMS 를 `multi_label=True` 로 돌려**
+한 박스가 여러 클래스 후보를 내므로(`ultralytics/models/yolo/detect/val.py`) 단일 라벨인 이 평가기보다
+mAP 가 약 0.01 높게 나온다(11-03 visible-3 test: 0.5869 대 0.5731). 자동 라벨링은 단일 라벨이라 이쪽이 실제에 가깝다.
+변형끼리 비교는 같은 평가기로 한 것이라 이 차이와 상관없다.
 """
 
 from __future__ import annotations
@@ -63,6 +66,8 @@ def parse_args():
     p.add_argument("--variants", default="full,g2+full,g3+full,g2,g2+full:noedge,g2+full:big")
     p.add_argument("--overlap", type=float, default=0.2, help="타일끼리 겹치는 비율 (타일 한 변 기준)")
     p.add_argument("--edge-px", type=int, default=3, help="타일 안쪽 경계에서 이 px 안에 닿은 박스를 '잘린 것' 으로 본다")
+    p.add_argument("--op-conf", type=float, default=0.25,
+                   help="운영 조건 P·R·FP 를 셀 신뢰도 (기본 0.25 = predict.conf). 올리면 FP 가 같은 수준에서 재현율을 견줄 수 있다")
     p.add_argument("--limit", type=int, default=0, help="앞 N장만 (맛보기)")
     p.add_argument("--out", default=None, help="만들 폴더 (기본: runs/test_tiles/<날짜>_<가중치>_<split>)")
     p.add_argument("--keep", action="store_true", help="복사한 이미지 폴더를 지우지 않는다")
@@ -236,7 +241,7 @@ def aggregate(recs: list[dict], known: int) -> dict:
 
 
 # ---------------------------------------------------------------- 출력
-def print_domain(title: str, rows: list[tuple[str, dict, float]], names: list[str], known: int) -> None:
+def print_domain(title: str, rows: list[tuple[str, dict, float]], names: list[str], known: int, op_conf: float) -> None:
     base = rows[0][1]
     print(f"\n[{title}] {base['images']}장 / 박스 {base['boxes']}개   (맨 위 {rows[0][0]} 대비)")
     print(f"  {'변형':<18}{'mAP50-95':>9}{'(차)':>8}{'mAP50':>8}{'mAP8':>8}   {'P':>6}{'R':>6}{'F1':>6}{'FP':>7}{'(차)':>7}  {'초/장':>6}")
@@ -244,7 +249,7 @@ def print_domain(title: str, rows: list[tuple[str, dict, float]], names: list[st
         o, bo = a["op"], base["op"]
         print(f"  {name:<18}{a['map_known']:>9.4f}{a['map_known'] - base['map_known']:>+8.4f}{a['map50_known']:>8.4f}"
               f"{a['map_all']:>8.4f}   {o['p']:>6.3f}{o['r']:>6.3f}{o['f1']:>6.3f}{o['fp']:>7d}{o['fp'] - bo['fp']:>+7d}  {sec:>6.3f}")
-    print("  (mAP50-95·mAP50 은 모델이 아는 클래스 0–%d 의 평균, mAP8 은 pickup 까지 넣은 평균 — 운영 조건 P·R·F1·FP 는 conf 0.25·IoU 0.5)" % (known - 1))
+    print("  (mAP50-95·mAP50 은 모델이 아는 클래스 0–%d 의 평균, mAP8 은 pickup 까지 넣은 평균 — 운영 조건 P·R·F1·FP 는 conf %.2f·IoU 0.5)" % (known - 1, op_conf))
     print(f"\n  클래스별 mAP50-95 ({title})")
     print(f"  {'변형':<18}" + "".join(f"{names[c][:7]:>9}" for c in range(known)))
     for name, a, _ in rows:
@@ -301,7 +306,7 @@ def main():
             d = compose(v, comps, w, h)
             used = ["full"] if v["big"] and max(w, h) <= BIG_SIDE else v["comps"]
             secs[v["name"]] += sum(ctime[c] for c in used)
-            recs[v["name"]].append((eval_image(merge(d, MAP_IOU, MAP_MAXDET, 0.0), merge(d, 0.6, 100, 0.25),
+            recs[v["name"]].append((eval_image(merge(d, MAP_IOU, MAP_MAXDET, 0.0), merge(d, 0.6, 100, args.op_conf),
                                                gt, w, h, imgsz, known), doms))
         if n % 100 == 0 or n == len(items):
             print(f"  {n}/{len(items)}장 ({time.perf_counter() - t_start:.0f}초)", flush=True)
@@ -317,7 +322,7 @@ def main():
             rows.append((v["name"], aggregate(sub, known), secs[v["name"]] / max(len(items), 1)))
         if not rows:
             continue
-        print_domain(label, rows, names, known)
+        print_domain(label, rows, names, known, args.op_conf)
         result["domains"][key] = {n: {k: a[k] for k in ("images", "boxes", "map_known", "map50_known", "map_all",
                                                          "per_class", "op", "recall_by_size")} | {"sec_per_img": s}
                                   for n, a, s in rows}
