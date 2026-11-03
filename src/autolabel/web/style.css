@@ -176,8 +176,10 @@ kbd {
      0.4초쯤 걸려, Q·W·E·화살표를 누를 때마다 끊겼다(2026-11-03). 32px 는 한 줄의 실제 높이 */
   content-visibility: auto;
   contain-intrinsic-size: auto 32px;
-  /* 위로 굴러갈 때 지금 줄이 붙박이 묶음 머리(약 35px) 밑에 숨지 않게 */
-  scroll-margin-top: 36px;
+  /* 지금 줄로 굴러갈 때 앞뒤로 3줄(약 32px × 3)이 늘 보이게 — 다음에 올 파일이 보여야 한다
+     (2026-11-03 사용자 요청). 위쪽은 붙박이 묶음 머리(약 35px)만큼 더 둔다 */
+  scroll-margin-top: 132px;
+  scroll-margin-bottom: 100px;
 }
 .image-list li.item:hover { background: var(--bg-3); }
 .image-list li.item.active { background: var(--accent-2); }
