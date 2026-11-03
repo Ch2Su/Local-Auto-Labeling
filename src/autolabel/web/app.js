@@ -956,32 +956,31 @@ function renderDomainBar() {
   $("#domain-grp-n").textContent = S.cur && S.cur.grp_n ? `(${S.cur.grp_n}장)` : "";
 }
 
-/** 도메인을 정하고 다음 이미지로. 이미 그 값이면 미분류로 되돌리고 그 자리에 머문다. */
+/** 도메인을 정하고 다음 이미지로. 이미 그 값이어도 풀지 않는다(다른 키를 누르면 바뀐다). */
 async function setDomain(domain) {
   if (!S.cur) return;
   if (!(await saveBeforeLeaving())) return;
   const id = S.cur.id;
   const idx = S.images.findIndex((im) => im.id === id);
-  const unset = S.cur.domain === domain;
   const group = $("#domain-group").checked && S.cur.grp_n > 1;
+  // 이미 그 값이면 그대로 두고 넘어가기만 한다. 예전에는 같은 키를 다시 누르면 미분류로 되돌렸는데,
+  // 연달아 누르다 지정이 풀려 버렸다(2026-11-03 사용자 요청으로 뺌).
+  if (!group && S.cur.domain === domain) { await advanceFrom(id, idx); return; }
   if (group && S.cur.grp_n > 30 && !confirm(
-    `같은 장면 묶음 ${S.cur.grp_n}장을 모두 '${unset ? "미분류" : DOMAIN_NAME[domain]}' 로 바꿉니다.\n`
+    `같은 장면 묶음 ${S.cur.grp_n}장을 모두 '${DOMAIN_NAME[domain]}' 로 바꿉니다.\n`
     + "묶음에는 다른 종류의 사진이 섞여 있을 수 있습니다(옛 묶음 g000001 등). 계속할까요?")) return;
   let res;
   try {
-    res = await api(`/api/images/${id}/domain`, {
-      method: "POST", body: { domain: unset ? null : domain, group },
-    });
+    res = await api(`/api/images/${id}/domain`, { method: "POST", body: { domain, group } });
   } catch (err) {
     toast(`도메인을 저장하지 못했습니다: ${err.message}`, true);
     return;
   }
-  if (S.cur && S.cur.id === id) S.cur.domain = unset ? null : domain;
-  for (const im of S.images) if (res.ids.includes(im.id)) im.domain = unset ? null : domain;
+  if (S.cur && S.cur.id === id) S.cur.domain = domain;
+  for (const im of S.images) if (res.ids.includes(im.id)) im.domain = domain;
   loadDomains();
   renderDomainBar();
-  if (group) toast(`${res.changed}장을 ${unset ? "미분류로 되돌렸습니다" : DOMAIN_NAME[domain] + " 로 정했습니다"}`);
-  if (unset) { renderImageList(); return; }
+  if (group) toast(`${res.changed}장을 ${DOMAIN_NAME[domain]} 로 정했습니다`);
   if (S.filterDomain) await loadImageList();   // 필터에서 빠졌을 수 있다
   else renderImageList();                      // 목록의 도메인 꼬리표를 바꾼다(loadImage 는 다시 그리지 않는다)
   await advanceFrom(id, idx);
