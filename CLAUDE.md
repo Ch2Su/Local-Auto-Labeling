@@ -77,10 +77,11 @@
   않는다. 그래서 카테고리 이름을 먼저 우리 클래스로 바꾸고, 우리 클래스를 **빠짐없이** 라벨한 데이터인지 볼 것 — 사람이
   빠진 이미지가 승인되면 모델이 사람을 배경으로 배운다. Objects365 의 `Scooter` 는 오토바이형이고 우리 scooter 는 전동 킥보드다.
 
-**Objects365 (10-02 BAAI 에서 받음).** 11-02 부터 `E:\datasets\objects365.tar`(331GB, 저장소 밖 — patch 압축 51개·json·
-`o365_index.pkl`·license.txt, 풀린 사진 없음) 하나로 묶여 있어 **`tools/import_o365.py` 는 다시 풀기 전에는 못 돈다.**
-- 10-03 에 500장을 넣었다(id 6726–7225, `data/visible/unlabeled/o365/`, source·origin `o365`, 넣기 전 DB
-  `labeling.db.bak_o365_20261003_024915`) — 지금 승인 29 / 대기 429 / 건너뜀 42. 더 넣을지는 한 장 검수 시간을 재 보고 정한다.
+**Objects365 (10-02 BAAI 에서 받음) — 11-03 에 프로젝트에서 뺐다**(사용자 결정 — 백업한 뒤 휴지통으로 보내 비웠다). 지금 DB 에
+o365 행은 없고 `data/visible/unlabeled/o365/` 도 없다. 원본은 `E:\datasets\objects365.tar`(331GB, 저장소 밖 — patch 압축 51개·json·
+`o365_index.pkl`·license.txt, 풀린 사진 없음)에 있어 **`tools/import_o365.py` 는 다시 풀기 전에는 못 돈다.** 다시 넣게 되면 아래를 볼 것.
+- 10-03 에 500장을 넣었었다(id 6726–7225, source·origin `o365`, 넣기 전 DB `labeling.db.bak_o365_20261003_024915`) — 뺄 때 승인 29
+  / 대기 429 / 건너뜀 42. 11-03 에 뺄 무렵 뜬 DB 백업은 `labeling.db.bak_trash_20261103_004945`·`labeling.db.bak_trash29_20261103_125351`.
   **넣은 뒤 `labeler.py label --all` 을 쓰지 말 것** — 검수 대기 라벨을 예측으로 덮는다(웹 UI 의 자동 라벨링은
   `include_pending: false` 라 안전하다).
 - 넣을 때의 사용자 결정: Scooter → motorcycle, isfake·isreflected 박스는 버리고, 우리 클래스에 iscrowd 가 있거나 Ambulance 가
@@ -207,11 +208,11 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 현재 데이터 상태
 
 ```text
-승인 6,596장 / 박스 41,722개 / 클래스 8개      (2026-11-02 확인 — van 을 car 로 합친 뒤)
-bicycle 1,511  bus 985  car 11,578  motorcycle 1,460  person 23,380
-scooter 1,031  truck 1,047  pickup 730
-검수 대기 429, 미라벨 0, 건너뜀 42, 휴지통 0, 박스 없는 승인 이미지 127   (대기·건너뜀은 전부 Objects365)
-분할: train 4,642 / val 822 / test 968(박스 6,508) / 미배정 164 — DB 의 images.split 에 고정, 미배정은 다음 학습 때 배정된다
+승인 6,567장 / 박스 41,554개 / 클래스 8개      (2026-11-03 확인 — Objects365 를 뺀 뒤)
+bicycle 1,511  bus 985  car 11,488  motorcycle 1,459  person 23,321
+scooter 1,031  truck 1,047  pickup 712
+검수 대기 0, 미라벨 0, 건너뜀 0, 휴지통 0, 박스 없는 승인 이미지 127
+분할: train 4,642 / val 822 / test 968(박스 6,508) / 미배정 135 — DB 의 images.split 에 고정, 미배정은 다음 학습 때 배정된다
 ```
 
 - **클래스는 8개다**(pickup 은 09-20 에 사용자가 검수 UI 에서 추가했고, 같은 날 추가한 van 은 11-02 에 car 로 합쳤다).
