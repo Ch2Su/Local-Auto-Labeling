@@ -173,6 +173,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
 | `tools/legacy_groups.py` | legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안(DB 읽기 전용) — 사전학습 임베딩을 평균 연결로 묶어 `data/visible/legacy_groups/` 에 CSV·대조 시트. 카메라 후보는 거칠다(웹 사진과 CCTV 크롭이 한 후보에 섞이기도 한다) |
+| `tools/domain_review.py` | 도메인(CCTV·비CCTV·드론)·태그 점검(DB 읽기 전용) — 같은 태그·장면 묶음과 다른 도메인, 비슷한 이미지(임베딩 이웃)와 다른 도메인, EXIF 제조사, 태그 포함 관계·오타 후보, 같은 카메라 누수를 `data/visible/domain_review/` 에 id 목록·대조 시트로. **의심일 뿐이다** — 11-04 에 456장을 눈으로 보니 오류는 5장이었다 |
 | `tools/scheduled_stop.py` | 정해진 시각에 웹 UI 학습을 정상 중단(탭 서버에서는 `/api/projects` 로 학습 중인 프로젝트를 찾는다) |
 
 ## 라벨 기준
@@ -478,6 +479,13 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - **분류는 `images.domain`(cctv·noncctv·drone, NULL=미분류)에 담는다** — 검수 UI 의 Q·W·E 버튼과 도메인 필터(같은 장면
      묶음째 정하던 `묶음째` 는 11-04 사용자 결정으로 뺐다). 라벨이 아니라 `updated_at`·변경 이력에 남기지 않는다.
      아직 `test_baseline.py`·분할은 이 칸을 보지 않는다 — 분류가 끝나면 도메인 판정을 이 칸으로 바꿀 것.
+   - **11-04 점검(`tools/domain_review.py`, 시트로 눈 확인)** — 손으로 나눈 도메인은 거의 일관됐다. 의심 456장을 보니
+     오류 후보는 5장(1038·1553·1554 창밖 폰 사진 계열인데 CCTV, 6689·6697 경찰 추격 헬기 화면인데 비CCTV)이고, 나머지는
+     임베딩이 기기(폰·라이브캠)를 못 가린 것이다. 기준을 물을 것: 영화 공중 장면(El Camino 6473 드론 · Tenet 6246 비CCTV),
+     드론 영상의 눈높이 장면(5850·5792·5829). 옛 test_baseline 규칙과는 크게 다르다(옛 CCTV 5,312장 중 909장이 비CCTV·
+     128장이 드론, 옛 비CCTV 716장 중 236장이 CCTV). **지금 분할은 test 802장 중 198장이 train 과 같은 잎 태그(카메라)를
+     쓴다**(드론 55/95 — 주차장 드론 영상·Shibuya 라이브캠 등) — 다시 나눌 때는 태그를 묶음으로 쓸 것(장면 묶음은 30초
+     스크린샷·숫자 이름에서 다른 카메라를 합친다). 태그 오타 후보: `Moive`, `deque de caxias`(파일은 duque), `stablilized`.
 
 ## 사용자에 대해
 

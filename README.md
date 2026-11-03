@@ -721,6 +721,11 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
   test_baseline.py     지금 라벨로 test 점수를 다시 잰다 (DB 읽기 전용)
   label_qa.py          라벨과 모델 예측이 어긋나는 곳을 뽑는다 (DB 읽기 전용)
   label_qa_claude.py   위 후보를 Claude API 로 거르는 파일럿 (API 키와 anthropic 패키지 필요)
+  test_tiles.py        타일로 잘라 추론한 것과 통째 추론을 test 로 비교한다 (DB 읽기 전용)
+  extract_frames.py    영상에서 프레임을 뽑아 unlabeled/<카메라>/ 로 (docs/provenance.md)
+  legacy_groups.py     legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안과 대조 시트 (DB 읽기 전용)
+  domain_review.py     도메인(CCTV·비CCTV·드론)·태그 점검 — 의심 이미지 id 목록·대조 시트,
+                       태그의 포함 관계·오타 후보·같은 카메라 누수 (DB 읽기 전용, data/visible/domain_review/)
 ```
 
 `data/`·`models/`·`weights/`·`export/`·`.venv/` 는 git 에 없습니다(데이터·가중치는 백업으로 지킵니다).
