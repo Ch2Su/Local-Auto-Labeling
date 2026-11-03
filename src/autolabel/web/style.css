@@ -172,6 +172,12 @@ kbd {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 10px 6px 20px; cursor: pointer;
   border-bottom: 1px solid var(--bg-3);
+  /* 화면 밖 줄은 배치를 건너뛴다. '전체' 로 6천 줄을 펼치면 줄 하나만 바뀌어도 다시 배치하는 데
+     0.4초쯤 걸려, Q·W·E·화살표를 누를 때마다 끊겼다(2026-11-03). 32px 는 한 줄의 실제 높이 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 32px;
+  /* 위로 굴러갈 때 지금 줄이 붙박이 묶음 머리(약 35px) 밑에 숨지 않게 */
+  scroll-margin-top: 36px;
 }
 .image-list li.item:hover { background: var(--bg-3); }
 .image-list li.item.active { background: var(--accent-2); }

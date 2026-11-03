@@ -40,6 +40,7 @@ const S = {
   filterCamera: "",           // 카메라(출처) 필터: "" 전체 / 카메라키 / "__none__" 출처 없음
   filterDomain: "",           // 도메인 필터: "" 전체 / cctv·noncctv·drone / "__none__" 미분류
   filterSplit: "",            // 분할 필터: "" 전체 / train·val·test / "__none__" 미배정
+  domainBusy: false,          // 도메인 지정이 도는 중 — 그동안의 Q·W·E(꾹 눌렀을 때 반복 입력)는 버린다
   loadedCount: 0,     // 이 이미지를 열었을 때의 박스 수. 저장 뒤 이보다 적으면 표시한다
   histOpen: false,    // 오른쪽 '변경 내역' 이 펼쳐져 있나
   history: [],        // 이 이미지의 변경 내역 (최근 것부터)
@@ -956,9 +957,34 @@ function renderDomainBar() {
   $("#domain-grp-n").textContent = S.cur && S.cur.grp_n ? `(${S.cur.grp_n}장)` : "";
 }
 
-/** 도메인을 정하고 다음 이미지로. 이미 그 값이어도 풀지 않는다(다른 키를 누르면 바뀐다). */
+/** 목록에서 그 이미지들의 줄만 다시 그린다(순번은 그대로). 6천 줄을 통째로 다시 그리면 0.1초쯤 걸린다. */
+function refreshRows(ids) {
+  const want = new Set(ids);
+  const byId = new Map(S.images.map((im) => [im.id, im]));
+  $("#image-list").querySelectorAll("li.item").forEach((li) => {
+    const id = Number(li.dataset.id);
+    if (!want.has(id) || !byId.has(id)) return;
+    li.replaceWith(itemRow(byId.get(id), Number(li.querySelector(".pos").textContent)));
+  });
+}
+
+/** 도메인을 정하고 다음 이미지로. 이미 그 값이어도 풀지 않는다(다른 키를 누르면 바뀐다).
+ *
+ * 하나가 끝나기 전에 들어온 누름은 버린다. 키를 꾹 누르면 초당 30번쯤 반복 입력이 들어오는데,
+ * 예전에는 그때마다 같은 이미지에 저장·목록 다시 그리기·이미지 받기가 겹쳐 쌓여, 2초 누른 것을
+ * 처리하는 데 25초 동안 화면이 멈췄다(2026-11-03, 6,229줄 '전체' 보기). 이제는 꾹 누르면
+ * 처리가 끝나는 대로 한 장씩 넘어간다. */
 async function setDomain(domain) {
-  if (!S.cur) return;
+  if (!S.cur || S.domainBusy) return;
+  S.domainBusy = true;
+  try {
+    await setDomainNow(domain);
+  } finally {
+    S.domainBusy = false;
+  }
+}
+
+async function setDomainNow(domain) {
   if (!(await saveBeforeLeaving())) return;
   const id = S.cur.id;
   const idx = S.images.findIndex((im) => im.id === id);
@@ -982,7 +1008,7 @@ async function setDomain(domain) {
   renderDomainBar();
   if (group) toast(`${res.changed}장을 ${DOMAIN_NAME[domain]} 로 정했습니다`);
   if (S.filterDomain) await loadImageList();   // 필터에서 빠졌을 수 있다
-  else renderImageList();                      // 목록의 도메인 꼬리표를 바꾼다(loadImage 는 다시 그리지 않는다)
+  else refreshRows(res.ids);                   // 목록의 도메인 꼬리표를 바꾼다(loadImage 는 다시 그리지 않는다)
   await advanceFrom(id, idx);
 }
 
