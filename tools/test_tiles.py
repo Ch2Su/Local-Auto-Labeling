@@ -70,6 +70,8 @@ def parse_args():
                    help="운영 조건 P·R·FP 를 셀 신뢰도 (기본 0.25 = predict.conf). 올리면 FP 가 같은 수준에서 재현율을 견줄 수 있다")
     p.add_argument("--merge-iou", type=float, default=None,
                    help="타일·통째 검출을 합치는 NMS 의 IoU (모든 변형에 적용). 기본: mAP 0.7 / 운영 0.6. 낮추면 겹친 중복이 줄어든다")
+    p.add_argument("--cross-iou", type=float, default=None,
+                   help="타일↔통째 사이에만 적용하는 NMS IoU (같은 성분끼리는 mAP 0.7 / 운영 0.6 그대로). 중복만 지운다")
     p.add_argument("--limit", type=int, default=0, help="앞 N장만 (맛보기)")
     p.add_argument("--out", default=None, help="만들 폴더 (기본: runs/test_tiles/<날짜>_<가중치>_<split>)")
     p.add_argument("--keep", action="store_true", help="복사한 이미지 폴더를 지우지 않는다")
@@ -135,7 +137,8 @@ def run_component(model, img: np.ndarray, comp: str, args, imgsz: int, device) -
 
 def compose(var: dict, comps: dict[str, np.ndarray], w: int, h: int) -> np.ndarray:
     use = ["full"] if var["big"] and max(w, h) <= BIG_SIDE else var["comps"]
-    d = np.concatenate([comps[c] for c in use])
+    # 열 8: 성분 표식 (0 통째 / 1 타일) — merge_cross 가 같은 성분끼리와 다른 성분끼리 NMS 기준을 달리 잡는다
+    d = np.concatenate([np.concatenate([comps[c], np.full((len(comps[c]), 1), c != "full", np.float32)], 1) for c in use])
     if not var["noedge"]:
         d = d[d[:, 6] == 0]
     return d
@@ -151,6 +154,34 @@ def merge(d: np.ndarray, iou_thr: float, max_det: int, min_conf: float) -> np.nd
     keep = batched_nms(torch.from_numpy(d[:, :4]), torch.from_numpy(d[:, 4]),
                        torch.from_numpy(d[:, 5]).long(), iou_thr)[:max_det]
     return d[keep.numpy()]
+
+
+def merge_cross(d: np.ndarray, iou_same: float, iou_cross: float, max_det: int, min_conf: float) -> np.ndarray:
+    """신뢰도 순 클래스별 NMS 인데 기준이 둘이다 — 같은 성분(통째끼리·타일끼리)은 iou_same, 서로 다른 성분은 iou_cross.
+
+    통째 추론 안의 겹친 정상 객체는 건드리지 않고(iou_same 은 모델의 NMS 와 같은 수준), 타일이 통째와 같은 객체를
+    다시 낸 중복만 낮은 기준으로 지운다. 성분이 하나뿐이면 보통 NMS 와 같다."""
+    from torchvision.ops import box_iou
+
+    d = d[d[:, 4] >= min_conf]
+    if not len(d):
+        return d
+    d = d[np.argsort(-d[:, 4], kind="stable")]
+    n = len(d)
+    iou = box_iou(torch.from_numpy(d[:, :4]), torch.from_numpy(d[:, :4])).numpy()
+    same_cls = d[:, 5][:, None] == d[:, 5][None, :]
+    thr = np.where(d[:, 7][:, None] == d[:, 7][None, :], iou_same, iou_cross)
+    conflict = (iou >= thr) & same_cls
+    removed = np.zeros(n, bool)
+    keep = []
+    for i in range(n):
+        if removed[i]:
+            continue
+        keep.append(i)
+        if len(keep) >= max_det:
+            break
+        removed[i + 1:] |= conflict[i, i + 1:]
+    return d[keep]
 
 
 # ---------------------------------------------------------------- 평가
@@ -309,8 +340,12 @@ def main():
             used = ["full"] if v["big"] and max(w, h) <= BIG_SIDE else v["comps"]
             secs[v["name"]] += sum(ctime[c] for c in used)
             map_iou, op_iou = args.merge_iou or MAP_IOU, args.merge_iou or 0.6
-            recs[v["name"]].append((eval_image(merge(d, map_iou, MAP_MAXDET, 0.0), merge(d, op_iou, 100, args.op_conf),
-                                               gt, w, h, imgsz, known), doms))
+            if args.cross_iou:
+                d_map = merge_cross(d, map_iou, args.cross_iou, MAP_MAXDET, 0.0)
+                d_op = merge_cross(d, op_iou, args.cross_iou, 100, args.op_conf)
+            else:
+                d_map, d_op = merge(d, map_iou, MAP_MAXDET, 0.0), merge(d, op_iou, 100, args.op_conf)
+            recs[v["name"]].append((eval_image(d_map, d_op, gt, w, h, imgsz, known), doms))
         if n % 100 == 0 or n == len(items):
             print(f"  {n}/{len(items)}장 ({time.perf_counter() - t_start:.0f}초)", flush=True)
 
