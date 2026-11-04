@@ -7,6 +7,7 @@
 
     python tools/domain_review.py              # → data/visible/domain_review/
     python tools/domain_review.py --no-sheets  # 표만 (임베딩은 legacy_groups 의 캐시를 같이 쓴다)
+    python tools/domain_review.py --mark-seen  # 다 본 뒤 — 지금 걸린 것을 seen.csv 에 적어 다음부터 새로 걸린 것만 낸다
 
 도메인 검사 (한 이미지에 여럿 걸릴 수 있다):
   group  같은 장면 묶음(grouping.group_images — 지금 규칙으로 다시 묶은 것)의 대부분과 도메인이 다르다
@@ -26,11 +27,18 @@ CCTV 처럼 보인다). 시트로 보고 사람이 정한다.
 크기가 같은 숫자 이름(로보플로 256×256 크롭)은 CCTV 크롭과 창밖 폰 사진을 한 묶음으로 만든다(11-04 확인).
 group·'일부만 붙은 태그' 검사는 그래서 헛것이 많다.
 
+이미 본 것 (11-04): 사람이 본 판정을 점검 때마다 다시 묻지 않으려고, `--mark-seen` 이 지금 걸린 (이미지, 그때
+도메인, 검사) 를 `seen.csv` 에 적는다. 다음부터 같은 이미지가 **같은 도메인으로 같은 검사에** 걸리면 report.md 의
+id 목록·시트에서 빼고 수만 센다(`--all` 이면 다 낸다. flags.csv 는 늘 전부이고 `new` 칸이 새로 걸린 검사다).
+도메인을 바꾸면 다시 나온다. 이유 글(묶음 장수·이웃 비율)은 보지 않는다 — 다른 이미지를 고칠 때마다 바뀐다.
+
 나오는 것 (`--out`, git 밖):
   report.md    요약 — 표와 'id 로 열기' 에 붙여 넣을 id 목록
-  flags.csv    의심 이미지마다 검사·이유·이웃 투표·태그·묶음·분할·경로
+  flags.csv    의심 이미지마다 검사·새로 걸린 검사·이유·이웃 투표·태그·묶음·분할·경로
   tags.csv     태그마다 장수·도메인·분할·묶음 수·대표 이름 계열
   sheets/      검사별 대조 시트(캡션: id·도메인→볼 만한 도메인·분할 / 이유 / 태그)
+  seen.csv     `--mark-seen` 으로 표시한 이미 본 의심(id·도메인·검사·날짜) — 이 파일만 다음 실행이 읽는다.
+               지우면 다시 전부 나온다(`--seen` 으로 다른 파일)
 """
 
 from __future__ import annotations
@@ -206,6 +214,14 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         w.writerows(rows)
 
 
+def read_seen(path: Path) -> dict[tuple[int, str], tuple[str, str]]:
+    """seen.csv → {(id, 검사): (표시할 때 도메인 — 미분류는 "", 표시한 날)}. 파일이 없으면 빈 것."""
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        return {(int(r["id"]), r["check"]): (r["domain"], r["seen_at"]) for r in csv.DictReader(fh) if r.get("id")}
+
+
 def table(head: list[str], body: list[list]) -> list[str]:
     return ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)] + \
            ["| " + " | ".join(str(c) for c in row) + " |" for row in body]
@@ -232,6 +248,9 @@ def main() -> None:
     p.add_argument("--out", default="data/visible/domain_review")
     p.add_argument("--emb-cache", default="data/visible/legacy_groups", help="임베딩 캐시 폴더 (legacy_groups 와 같이)")
     p.add_argument("--no-sheets", action="store_true")
+    p.add_argument("--seen", default=None, help="이미 본 의심 목록 (기본 <out>/seen.csv)")
+    p.add_argument("--mark-seen", action="store_true", help="지금 걸린 것을 이미 본 것으로 적는다 — 다음 실행부터 빠진다")
+    p.add_argument("--all", action="store_true", help="이미 본 것도 report.md 목록·시트에 낸다")
     args = p.parse_args()
 
     cfg = Config.load(args.config)
@@ -305,6 +324,25 @@ def main() -> None:
     # 여러 검사에 걸린 것, 이웃이 강하게 다르게 본 것부터
     flagged.sort(key=lambda r: (-len(r["flags"]), r["vote"].get(r["domain"], 0.0), r["id"]))
 
+    # 이미 본 것 — 같은 이미지·같은 도메인·같은 검사. 이 실행에서 표시하는 것은 다음 실행부터 빠진다
+    seen_path = resolve(args.seen) if args.seen else out / "seen.csv"
+    seen = read_seen(seen_path)
+    for r in flagged:
+        r["new"] = [c for c in r["flags"] if seen.get((r["id"], c), ("?",))[0] != (r["domain"] or "")]
+    listed = lambda r, c: c in r["flags"] and (args.all or c in r["new"])   # report.md 목록·시트에 낼 것
+    marked = 0
+    if args.mark_seen:
+        today = f"{datetime.now():%Y-%m-%d}"
+        seen_out = dict(seen)
+        for r in flagged:
+            for c in r["new"]:
+                seen_out[(r["id"], c)] = (r["domain"] or "", today)
+                marked += 1
+        if seen_out:
+            seen_path.parent.mkdir(parents=True, exist_ok=True)
+            write_csv(seen_path, [{"id": i, "domain": d, "check": c, "seen_at": at}
+                                  for (i, c), (d, at) in sorted(seen_out.items())])
+
     # 이웃 투표가 사람 판정과 맞는 비율 — 임베딩이 도메인을 얼마나 가르는지(같은 장면 묶음은 뺐다)
     hit = Counter((r["domain"], max(DOMS, key=lambda d: r["vote"][d])) for r in rows if r["domain"] in DOMS)
 
@@ -360,6 +398,7 @@ def main() -> None:
     write_csv(out / "flags.csv", [{
         "id": r["id"], "domain": r["domain"] or "",
         "checks": " ".join(r["flags"]),
+        "new": " ".join(r["new"]),
         "suggest": " ".join(sorted({s for s, _ in r["flags"].values() if s})),
         "why": " / ".join(w for _, w in r["flags"].values()),
         "vote_cctv": f"{r['vote']['cctv']:.2f}", "vote_noncctv": f"{r['vote']['noncctv']:.2f}",
@@ -382,11 +421,12 @@ def main() -> None:
                 return [(f"{r['id']} {DN[r['domain']]}→{DN.get(sugg, '?') if sugg else '?'} {r['split'] or '-'}", "black"),
                         (why, "#a33"), (tag_str(r) or "(태그 없음)", "#555")]
             return f
+        only_new = "새로 걸린 것 " if seen and not args.all else ""
         for check in CHECKS:
-            its = [r for r in flagged if check in r["flags"]]
+            its = [r for r in flagged if listed(r, check)]
             for k in range(0, len(its), args.per_sheet):
                 sheet(its[k:k + args.per_sheet],
-                      f"{check} — {CHECKS[check]} {k + 1}–{min(k + args.per_sheet, len(its))} / {len(its)}장",
+                      f"{check} — {CHECKS[check]} · {only_new}{k + 1}–{min(k + args.per_sheet, len(its))} / {len(its)}장",
                       sd / f"{check}_{k // args.per_sheet + 1:02d}.jpg", cap(check))
 
     dc = Counter(r["domain"] for r in rows)
@@ -415,12 +455,24 @@ def main() -> None:
     top = Counter({m: sum(n for (mm, _), n in makes.items() if mm == m) for m, _ in makes}).most_common(11)
     lines += table(["Make", *[DN[d] for d in DOMS]], [[m, *[makes[(m, d)] for d in DOMS]] for m, _ in top])
 
+    n_new = sum(1 for r in flagged if r["new"])
     lines += ["", "## 2. 도메인 의심 이미지", "",
               f"모두 {len(flagged)}장(검사 둘 이상 {sum(1 for r in flagged if len(r['flags']) > 1)}장). "
               "id 목록은 검수 UI 'id 로 열기' 에 그대로 붙여 넣는다.", ""]
+    if seen:
+        lines += [f"**새로 걸린 것 {n_new}장**, 이미 본 것 {len(flagged) - n_new}장 — `{seen_path.name}`(마지막 표시 "
+                  f"{max(at for _, at in seen.values())})에 같은 도메인·같은 검사로 적힌 것. "
+                  + ("아래 목록·시트는 이미 본 것까지 전부다(`--all`)." if args.all
+                     else "아래 목록·시트는 새로 걸린 것만이다(전부는 `--all`, flags.csv 는 늘 전부 — `new` 칸)."), ""]
+    if args.mark_seen:
+        lines += [f"이번 실행에서 `--mark-seen` 으로 {marked}건(이미지·검사)을 이미 본 것으로 적었다 — 다음 실행부터 빠진다.", ""]
+    elif not seen:
+        lines += ["다 본 뒤 `--mark-seen` 으로 다시 돌리면 다음부터 새로 걸린 것만 나온다.", ""]
     for check, title in CHECKS.items():
-        its = [r for r in flagged if check in r["flags"]]
-        lines += [f"### {check} — {title}: {len(its)}장", ""]
+        all_c = [r for r in flagged if check in r["flags"]]
+        its = [r for r in all_c if listed(r, check)]
+        n_new_c = sum(1 for r in all_c if check in r["new"])
+        lines += [f"### {check} — {title}: {len(all_c)}장" + (f" (새로 걸린 것 {n_new_c}장)" if seen else ""), ""]
         if not its:
             continue
         sc = Counter((r["domain"], r["flags"][check][0]) for r in its)
@@ -496,6 +548,13 @@ def main() -> None:
 
     print(f"의심 {len(flagged)}장 — " + " · ".join(
         f"{c} {sum(1 for r in flagged if c in r['flags'])}" for c in CHECKS))
+    if seen:
+        print(f"  새로 걸린 것 {n_new}장 — " + " · ".join(
+            f"{c} {sum(1 for r in flagged if c in r['new'])}" for c in CHECKS) + f"  (이미 본 것: {seen_path})")
+    if args.mark_seen:
+        print(f"  이미 본 것으로 {marked}건 적음 → {seen_path}")
+    elif not seen:
+        print("  다 봤으면 --mark-seen 으로 다시 돌릴 것 — 다음부터 새로 걸린 것만 나온다")
     print(f"→ {out}")
 
 

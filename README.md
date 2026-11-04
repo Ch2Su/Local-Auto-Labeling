@@ -765,6 +765,7 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
   legacy_groups.py     legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안과 대조 시트 (DB 읽기 전용)
   domain_review.py     도메인(CCTV·비CCTV·드론)·태그 점검 — 의심 이미지 id 목록·대조 시트,
                        태그의 포함 관계·오타 후보·같은 카메라 누수 (DB 읽기 전용, data/visible/domain_review/)
+                       — 다 본 뒤 --mark-seen 으로 적어 두면 다음부터 새로 걸린 것만 낸다 (--all 이면 전부)
 ```
 
 `data/`·`models/`·`weights/`·`export/`·`.venv/` 는 git 에 없습니다(데이터·가중치는 백업으로 지킵니다).

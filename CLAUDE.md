@@ -173,7 +173,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
 | `tools/legacy_groups.py` | legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안(DB 읽기 전용) — 사전학습 임베딩을 평균 연결로 묶어 `data/visible/legacy_groups/` 에 CSV·대조 시트. 카메라 후보는 거칠다(웹 사진과 CCTV 크롭이 한 후보에 섞이기도 한다) |
-| `tools/domain_review.py` | 도메인(CCTV·비CCTV·드론)·태그 점검(DB 읽기 전용) — 같은 태그·장면 묶음과 다른 도메인, 비슷한 이미지(임베딩 이웃)와 다른 도메인, EXIF 제조사, 태그 포함 관계·오타 후보, 같은 카메라 누수를 `data/visible/domain_review/` 에 id 목록·대조 시트로. **의심일 뿐이다** — 11-04 에 의심 이미지를 다 눈으로 보니 고칠 것은 6장이었고, 고친 뒤에도 440장이 남는다(아래 '이미지 도메인' 기준대로 둔 것 포함) |
+| `tools/domain_review.py` | 도메인(CCTV·비CCTV·드론)·태그 점검(DB 읽기 전용) — 같은 태그·장면 묶음과 다른 도메인, 비슷한 이미지(임베딩 이웃)와 다른 도메인, EXIF 제조사, 태그 포함 관계·오타 후보, 같은 카메라 누수를 `data/visible/domain_review/` 에 id 목록·대조 시트로. **의심일 뿐이다** — 11-04 에 의심 이미지를 다 눈으로 보니 고칠 것은 6장이었다. 본 것은 `--mark-seen` 으로 그 폴더의 `seen.csv` 에 적고(11-04 점검분 465건), 다음부터 같은 이미지가 같은 도메인으로 같은 검사에 걸리면 목록·시트에서 뺀다(`--all` 이면 다) — 표시는 사람이 다 본 뒤에만 할 것 |
 | `tools/scheduled_stop.py` | 정해진 시각에 웹 UI 학습을 정상 중단(탭 서버에서는 `/api/projects` 로 학습 중인 프로젝트를 찾는다) |
 
 ## 라벨 기준
