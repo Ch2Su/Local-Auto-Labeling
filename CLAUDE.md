@@ -79,7 +79,7 @@
 
 **Objects365 (10-02 BAAI 에서 받음) — 11-03 에 프로젝트에서 뺐다**(사용자 결정 — 백업한 뒤 휴지통으로 보내 비웠다). 지금 DB 에
 o365 행은 없고 `data/visible/unlabeled/o365/` 도 없다. 원본은 `E:\datasets\objects365.tar`(331GB, 저장소 밖 — patch 압축 51개·json·
-`o365_index.pkl`·license.txt, 풀린 사진 없음)에 있어 **`tools/import_o365.py` 는 다시 풀기 전에는 못 돈다.** 다시 넣게 되면 아래를 볼 것.
+`o365_index.pkl`·license.txt, 풀린 사진 없음)에 있었는데 **11-04 에는 그 폴더에 없었다**(옮겼는지 지웠는지 모름) — **`tools/import_o365.py` 는 그 tar 를 찾아 다시 풀기 전에는 못 돈다.** 다시 넣게 되면 아래를 볼 것.
 - 10-03 에 500장을 넣었었다(id 6726–7225, source·origin `o365`, 넣기 전 DB `labeling.db.bak_o365_20261003_024915`) — 뺄 때 승인 29
   / 대기 429 / 건너뜀 42. 11-03 에 뺄 무렵 뜬 DB 백업은 `labeling.db.bak_trash_20261103_004945`·`labeling.db.bak_trash29_20261103_125351`.
   **넣은 뒤 `labeler.py label --all` 을 쓰지 말 것** — 검수 대기 라벨을 예측으로 덮는다(웹 UI 의 자동 라벨링은
@@ -492,6 +492,9 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - **test_baseline 의 `cctv`(seed 중 드론 아님)에는 CCTV 가 아닌 사진이 섞여 있다** — 숫자 이름 계열의 웹 사진(COCO 류)·
      `img-bicycles-…`(217장)·폰 사진. 초안은 `tools/legacy_groups.py`(장면 종류 116개 중 2번 728장이 대부분 지상·근접 사진).
      새 기준선의 CCTV 도메인은 분류가 끝난 뒤 그 결과로 다시 정할 것.
+   - **'이미지 추가' 후보 — 공개 데이터셋 (11-04 조사, docs/provenance.md '공개 데이터셋')** — VIRAT 은 사용자가 다른
+     장면 영상을 더 받은 뒤 가져오기 도구를 만든다(검수 대기로, 장면 = 카메라). MOT17 은 보류(사람을 가려진 부분까지
+     몸 전체로 그린 라벨이다).
    - **분류는 `images.domain`(cctv·noncctv·drone, NULL=미분류)에 담는다** — 검수 UI 의 Q·W·E 버튼과 도메인 필터(같은 장면
      묶음째 정하던 `묶음째` 는 11-04 사용자 결정으로 뺐다). 라벨이 아니라 `updated_at`·변경 이력에 남기지 않는다.
      `test_baseline.py` 는 11-04 부터 이 칸으로 가른다. 분할(`split.py`)은 아직 이 칸을 보지 않는다.
