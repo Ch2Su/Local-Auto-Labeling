@@ -1009,7 +1009,106 @@ function fillCountFilter(sel, keep, allText, items, names, noneText, none, noneK
   const value = [...sel.options].some((o) => o.value === keep) ? keep : "";
   sel.value = value;
   sel.classList.toggle("on", !!value);
+  sel._picker?.sync();
   return value;
+}
+
+/* ── 찾기 되는 고르기 칸 (2026-11-04) ── 태그 필터처럼 항목이 백 개 넘는 select 에 쓴다(기본 select 에는 찾기가
+ * 없다 — 사용자 요청). 원래 select 는 숨겨 값·항목의 원본으로만 둔다. 고르면 그 select 의 value 를 바꾸고 change 를
+ * 보내므로 원래 배선(onchange·fillCountFilter·clearFilters)이 그대로 돈다. 값·항목·꺼짐을 코드로 바꾼 뒤에는
+ * sel._picker.sync() 로 단추를 맞춘다. 칸: 펼치면 찾기 칸에 바로 쓸 수 있고, ↑·↓·Enter 로 고르고 Esc 로 닫는다. */
+function makePicker(sel, placeholder) {
+  const wrap = document.createElement("div");
+  wrap.className = "picker";
+  wrap.innerHTML = '<button type="button" class="picker-btn"></button>'
+    + `<div class="picker-panel hidden"><input type="search" class="picker-q" autocomplete="off" placeholder="${placeholder}">`
+    + '<ul class="picker-list"></ul></div>';
+  sel.after(wrap);
+  sel.classList.add("picker-native");
+  const btn = wrap.querySelector(".picker-btn"), panel = wrap.querySelector(".picker-panel");
+  const q = wrap.querySelector(".picker-q"), ul = wrap.querySelector(".picker-list");
+  btn.title = sel.title;
+  let shown = [], hot = -1;
+
+  const parts = (o) => {      // '이름 (장수)' → [이름, 장수]
+    const m = o.textContent.match(/^(.*?)\s*\(([\d,]+)\)$/);
+    return m ? [m[1], m[2]] : [o.textContent, ""];
+  };
+  const sync = () => {
+    const o = sel.selectedOptions[0];
+    btn.textContent = o ? o.textContent : "";
+    btn.classList.toggle("on", !!sel.value);
+    btn.disabled = sel.disabled;
+    if (sel.disabled) close();
+  };
+  const render = () => {
+    const words = q.value.trim().toLowerCase();
+    shown = [...sel.options].filter((o) => !words || parts(o)[0].toLowerCase().includes(words));
+    if (hot >= shown.length) hot = shown.length - 1;
+    ul.innerHTML = "";
+    if (!shown.length) {
+      ul.innerHTML = '<li class="empty">맞는 항목이 없습니다</li>';
+      return;
+    }
+    shown.forEach((o, i) => {
+      const [name, n] = parts(o);
+      const li = document.createElement("li");
+      li.className = (o.value === sel.value ? "sel" : "") + (i === hot ? " hot" : "");
+      li.innerHTML = '<span class="nm"></span><span class="n"></span>';
+      li.querySelector(".nm").textContent = name;
+      li.querySelector(".n").textContent = n;
+      li.onmousedown = (e) => e.preventDefault();      // 찾기 칸의 포커스를 잃지 않게
+      li.onclick = () => choose(o.value);
+      ul.appendChild(li);
+    });
+    ul.children[hot]?.scrollIntoView({ block: "nearest" });
+  };
+  const open = () => {
+    if (sel.disabled) return;
+    panel.classList.remove("hidden");
+    q.value = "";
+    hot = [...sel.options].findIndex((o) => o.value === sel.value);
+    render();
+    q.focus();
+  };
+  function close() {
+    if (panel.classList.contains("hidden")) return;
+    panel.classList.add("hidden");
+    q.blur();                 // 단축키(↑·↓·Space)가 다시 이미지 쪽으로 가게
+  }
+  const choose = (value) => {
+    close();
+    if (value !== sel.value) {
+      sel.value = value;
+      sel.dispatchEvent(new Event("change"));
+    }
+    sync();
+  };
+
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    if (panel.classList.contains("hidden")) open(); else close();
+  };
+  q.addEventListener("input", () => { hot = 0; render(); });
+  q.addEventListener("keydown", (e) => {
+    if (e.isComposing) return;            // 한글 조합 중의 Enter·화살표는 조합 몫이다
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (shown.length) hot = (hot + (e.key === "ArrowDown" ? 1 : shown.length - 1)) % shown.length;
+      render();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (shown[hot] || shown[0]) choose((shown[hot] || shown[0]).value);
+    } else if (e.key === "Escape" || e.key === "Tab") {
+      e.preventDefault();
+      close();
+    }
+  });
+  document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) close(); });
+  sel.addEventListener("change", sync);
+  sel._picker = { sync, open, close };
+  sync();
+  return sel._picker;
 }
 
 /* ── 분할(train·val·test) ── 보기만 한다. 분할을 바꾸는 것은 labeler.py split 뿐이다(2026-11-03). */
@@ -1403,6 +1502,7 @@ function clearFilters() {
   for (const s of ["#filter-camera", "#filter-domain", "#filter-split", "#filter-tag"]) {
     $(s).value = "";
     $(s).classList.remove("on");
+    $(s)._picker?.sync();
   }
   syncClassFilter();
   reloadList();
@@ -2076,6 +2176,7 @@ async function loadImageList(keepOpen = null) {
   $("#filter-domain").disabled = status === "ids";
   $("#filter-split").disabled = status === "ids";
   $("#filter-tag").disabled = status === "ids";
+  $("#filter-tag")._picker?.sync();
   if (status === "ids") $("#cf-panel").classList.add("hidden");
   renderFilterSummary();
 
@@ -2520,6 +2621,8 @@ $("#filter-tag").onchange = () => {
   $("#filter-tag").classList.toggle("on", !!S.filterTag);
   reloadList();
 };
+// 태그가 백 개를 넘어 찾기 되는 칸으로 고른다 (2026-11-04 사용자 요청). 위 onchange 는 그대로 돈다
+makePicker($("#filter-tag"), "태그 찾기");
 $("#btn-add-tag").onclick = () => createTag();
 $("#new-tag").addEventListener("keydown", (e) => {
   if (e.key === "Enter") createTag();

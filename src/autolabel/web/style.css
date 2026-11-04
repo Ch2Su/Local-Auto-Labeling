@@ -362,6 +362,36 @@ kbd {
 .filters-body { border-top: 1px solid var(--line); padding: 2px 0 4px; }
 .filters-body .class-filter { border-bottom: none; padding: 6px 10px; }
 .filters-body .camera-filter { border-bottom: none; padding: 3px 10px; }
+
+/* 찾기 되는 고르기 칸 (2026-11-04, app.js makePicker) — 원래 select 는 숨기고 값의 원본으로만 쓴다 */
+.picker-native { display: none !important; }
+.picker { position: relative; min-width: 0; }
+.picker-btn {
+  position: relative; display: block; width: 100%; text-align: left; cursor: pointer;
+  background: var(--bg-3); color: var(--fg); border: 1px solid var(--line); border-radius: 4px;
+  padding: 3px 22px 3px 6px; font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.picker-btn::after { content: "▾"; position: absolute; right: 7px; top: 50%; transform: translateY(-50%); color: var(--fg-dim); }
+.picker-btn:hover:not(:disabled) { border-color: var(--accent); }
+.picker-btn.on { border-color: var(--accent); background: var(--accent-2); }
+.picker-btn:disabled { opacity: .45; cursor: not-allowed; }
+.picker-panel {
+  position: absolute; z-index: 30; top: calc(100% + 3px); left: 0; right: 0; min-width: 220px;
+  display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .45);
+}
+.picker-q {
+  width: 100%; background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit;
+}
+.picker-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.picker-list li { display: flex; align-items: center; gap: 8px; padding: 4px 7px; border-radius: 4px; cursor: pointer; }
+.picker-list li:hover, .picker-list li.hot { background: var(--bg-3); }
+.picker-list li.sel .nm { color: var(--accent); font-weight: 600; }
+.picker-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-list .n { flex: none; color: var(--fg-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.picker-list .empty { color: var(--fg-dim); cursor: default; }
 .cf-panel {
   position: absolute; z-index: 20; top: 100%; left: 10px; right: 10px;
   max-height: 300px; overflow: auto;

@@ -447,7 +447,9 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   그 묶음만 받으면 사이의 이미지가 어느 묶음에도 안 나왔다), 다시 받은 뒤 보던·넘어갈 이미지가 닫힌 묶음으로 밀렸으면
   `openChunkWith()` 가 그 묶음을 펼친다.
 - **화면 구성(11-04 개편)** — 작업 버튼은 상단 `데이터`·`모델` 메뉴(`.menu-item`, id 는 그대로라 onclick 도 그대로),
-  왼쪽 필터는 접히는 `필터` 칸(`renderFilterSummary` 가 한 줄 요약 — 새 필터를 넣으면 거기도 넣을 것), 오른쪽은 `.sec`
+  왼쪽 필터는 접히는 `필터` 칸(`renderFilterSummary` 가 한 줄 요약 — 새 필터를 넣으면 거기도 넣을 것), 태그 필터는
+  찾기 되는 칸(`makePicker` — 원래 select 는 숨겨 값의 원본으로 두고 고르면 change 를 보낸다. **select 의 값·항목·disabled 를
+  코드로 바꾸면 `sel._picker.sync()` 를 부를 것** — 안 부르면 단추 글자가 옛 값으로 남는다), 오른쪽은 `.sec`
   칸 접기(`localStorage` `secClosed`). **이미지 보기(`gallery.js`)는 같은 페이지의 다른 보기다**(`setView`·`VIEW`·
   `body.view-gallery`) — 필터·태그·`S.curTag` 를 함께 쓰고, 이미지 보기일 때 키는 `galleryKey` 로만 간다(라벨링 단축키가
   숨은 이미지에 먹으면 안 된다 — Space 승인). 목록은 지금 필터 전부를 받고 칸은 400개씩 그린다. 여러 장 바꾸기는
