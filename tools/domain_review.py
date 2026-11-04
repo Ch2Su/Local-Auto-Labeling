@@ -8,6 +8,7 @@
     python tools/domain_review.py              # → data/visible/domain_review/
     python tools/domain_review.py --no-sheets  # 표만 (임베딩은 legacy_groups 의 캐시를 같이 쓴다)
     python tools/domain_review.py --mark-seen  # 다 본 뒤 — 지금 걸린 것을 seen.csv 에 적어 다음부터 새로 걸린 것만 낸다
+    python tools/domain_review.py --mark-tag "<태그 이름>"   # '일부가 빠진 태그' 표에서 그 태그 줄을 다 본 뒤
 
 도메인 검사 (한 이미지에 여럿 걸릴 수 있다):
   group  같은 장면 묶음(grouping.group_images — 지금 규칙으로 다시 묶은 것)의 대부분과 도메인이 다르다
@@ -20,25 +21,31 @@
 CCTV 처럼 보인다). 시트로 보고 사람이 정한다.
 
 태그 검사: 태그마다 도메인·분할·장면 묶음 수, 이미지 집합이 같은 태그·포함 관계·일부만 겹치는 태그,
-장면 묶음 안에서 일부만 붙은 태그, 다른 태그·파일 이름과 한두 글자 다른 태그 이름, 아직 태그 없는 큰
-장면 묶음. 분할(train·val·test)에 걸친 태그와, 잎 태그(다른 태그를 품지 않은 것 — 카메라·장소·작품)를
-카메라로 보고 train 과 같은 태그를 쓰는 test 이미지(같은 카메라 누수)도 낸다 — 다시 나눌 때 한쪽에 모아야 한다.
+장면 묶음(3장 이상)의 절반 이상에 붙었는데 나머지에 빠진 태그('일부가 빠진 태그' — 빠진 이미지에 붙일지),
+다른 태그·파일 이름과 한두 글자 다른 태그 이름, 아직 태그 없는 큰 장면 묶음. 분할(train·val·test)에 걸친
+태그와, 잎 태그(다른 태그를 품지 않은 것 — 카메라·장소·작품)를 카메라로 보고 train 과 같은 태그를 쓰는 test
+이미지(같은 카메라 누수)도 낸다 — 다시 나눌 때 한쪽에 모아야 한다.
 **장면 묶음은 legacy 에서 믿을 만하지 않다** — 30초 안에 찍은 스크린샷은 다른 라이브캠이어도 한 묶음이 되고,
 크기가 같은 숫자 이름(로보플로 256×256 크롭)은 CCTV 크롭과 창밖 폰 사진을 한 묶음으로 만든다(11-04 확인).
-group·'일부만 붙은 태그' 검사는 그래서 헛것이 많다.
+group·'일부가 빠진 태그' 검사는 그래서 헛것이 많다.
 
 이미 본 것 (11-04): 사람이 본 판정을 점검 때마다 다시 묻지 않으려고, `--mark-seen` 이 지금 걸린 (이미지, 그때
 도메인, 검사) 를 `seen.csv` 에 적는다. 다음부터 같은 이미지가 **같은 도메인으로 같은 검사에** 걸리면 report.md 의
 id 목록·시트에서 빼고 수만 센다(`--all` 이면 다 낸다. flags.csv 는 늘 전부이고 `new` 칸이 새로 걸린 검사다).
 도메인을 바꾸면 다시 나온다. 이유 글(묶음 장수·이웃 비율)은 보지 않는다 — 다른 이미지를 고칠 때마다 바뀐다.
+'일부가 빠진 태그' 표는 따로 적는다 — 시트를 다 본 것과 이 표를 본 것은 다른 일이다. 한 태그의 줄을 다 봤으면
+`--mark-tag <태그 이름>`(여러 번 줄 수 있다)이 그 태그의 빠진 이미지를 (이미지, `tagmiss:<태그 id>`) 로 적고,
+다음부터 그 줄에서 뺀다. 도메인은 보지 않고, 태그는 id 라 이름을 바꿔도 그대로다. 나중에 그 태그를 붙이면 빠진
+이미지가 아니니 저절로 빠진다.
 
 나오는 것 (`--out`, git 밖):
   report.md    요약 — 표와 'id 로 열기' 에 붙여 넣을 id 목록
   flags.csv    의심 이미지마다 검사·새로 걸린 검사·이유·이웃 투표·태그·묶음·분할·경로
   tags.csv     태그마다 장수·도메인·분할·묶음 수·대표 이름 계열
   sheets/      검사별 대조 시트(캡션: id·도메인→볼 만한 도메인·분할 / 이유 / 태그)
-  seen.csv     `--mark-seen` 으로 표시한 이미 본 의심(id·도메인·검사·날짜) — 이 파일만 다음 실행이 읽는다.
-               지우면 다시 전부 나온다(`--seen` 으로 다른 파일)
+  seen.csv     `--mark-seen`·`--mark-tag` 로 표시한 이미 본 의심(id·도메인·검사·날짜 — 빠진 태그는 검사 칸이
+               `tagmiss:<태그 id>` 이고 도메인 칸은 비운다). 이 파일만 다음 실행이 읽는다. 지우면 다시 전부
+               나온다(`--seen` 으로 다른 파일)
 """
 
 from __future__ import annotations
@@ -222,6 +229,12 @@ def read_seen(path: Path) -> dict[tuple[int, str], tuple[str, str]]:
         return {(int(r["id"]), r["check"]): (r["domain"], r["seen_at"]) for r in csv.DictReader(fh) if r.get("id")}
 
 
+def tagmiss(tag_id: int) -> str:
+    """'일부가 빠진 태그' 표의 빠진 이미지를 seen.csv 에 적을 때의 검사 이름 — 태그는 id 로(이름은 바뀔 수 있고,
+    tags.id 는 AUTOINCREMENT 라 지운 태그의 번호를 새 태그가 받지 않는다)."""
+    return f"tagmiss:{tag_id}"
+
+
 def table(head: list[str], body: list[list]) -> list[str]:
     return ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)] + \
            ["| " + " | ".join(str(c) for c in row) + " |" for row in body]
@@ -250,13 +263,21 @@ def main() -> None:
     p.add_argument("--no-sheets", action="store_true")
     p.add_argument("--seen", default=None, help="이미 본 의심 목록 (기본 <out>/seen.csv)")
     p.add_argument("--mark-seen", action="store_true", help="지금 걸린 것을 이미 본 것으로 적는다 — 다음 실행부터 빠진다")
-    p.add_argument("--all", action="store_true", help="이미 본 것도 report.md 목록·시트에 낸다")
+    p.add_argument("--mark-tag", action="append", default=[], metavar="태그",
+                   help="'일부가 빠진 태그' 표에서 이 태그(이름 그대로)의 빠진 이미지를 이미 본 것으로 적는다 — 여러 번 "
+                        "줄 수 있다. --mark-seen 은 이 표를 적지 않는다")
+    p.add_argument("--all", action="store_true", help="이미 본 것도 report.md 목록·시트·'일부가 빠진 태그' 표에 낸다")
     args = p.parse_args()
 
     cfg = Config.load(args.config)
     out = resolve(args.out)
     (out / "sheets").mkdir(parents=True, exist_ok=True)
     rows, tag_name, classes = load(cfg)
+    tag_of = {n: t for t, n in tag_name.items()}
+    unknown = [n for n in args.mark_tag if n not in tag_of]
+    if unknown:
+        p.error("--mark-tag: 없는 태그 " + ", ".join(f"'{n}'" for n in unknown) + " — 이름을 그대로(대소문자·띄어쓰기까지)")
+    mark_tags = {tag_of[n] for n in args.mark_tag}
     missing = [r for r in rows if not Path(r["path"]).exists()]
     if missing:
         print(f"  파일 없음 {len(missing)}장 — 뺀다 (예: {missing[0]['path']})")
@@ -324,24 +345,13 @@ def main() -> None:
     # 여러 검사에 걸린 것, 이웃이 강하게 다르게 본 것부터
     flagged.sort(key=lambda r: (-len(r["flags"]), r["vote"].get(r["domain"], 0.0), r["id"]))
 
-    # 이미 본 것 — 같은 이미지·같은 도메인·같은 검사. 이 실행에서 표시하는 것은 다음 실행부터 빠진다
+    # 이미 본 것 — 같은 이미지·같은 도메인·같은 검사. 이 실행에서 표시하는 것은 다음 실행부터 빠진다(적는 것은
+    # '일부가 빠진 태그' 까지 센 뒤 아래에서 한꺼번에)
     seen_path = resolve(args.seen) if args.seen else out / "seen.csv"
     seen = read_seen(seen_path)
     for r in flagged:
         r["new"] = [c for c in r["flags"] if seen.get((r["id"], c), ("?",))[0] != (r["domain"] or "")]
     listed = lambda r, c: c in r["flags"] and (args.all or c in r["new"])   # report.md 목록·시트에 낼 것
-    marked = 0
-    if args.mark_seen:
-        today = f"{datetime.now():%Y-%m-%d}"
-        seen_out = dict(seen)
-        for r in flagged:
-            for c in r["new"]:
-                seen_out[(r["id"], c)] = (r["domain"] or "", today)
-                marked += 1
-        if seen_out:
-            seen_path.parent.mkdir(parents=True, exist_ok=True)
-            write_csv(seen_path, [{"id": i, "domain": d, "check": c, "seen_at": at}
-                                  for (i, c), (d, at) in sorted(seen_out.items())])
 
     # 이웃 투표가 사람 판정과 맞는 비율 — 임베딩이 도메인을 얼마나 가르는지(같은 장면 묶음은 뺐다)
     hit = Counter((r["domain"], max(DOMS, key=lambda d: r["vote"][d])) for r in rows if r["domain"] in DOMS)
@@ -373,14 +383,42 @@ def main() -> None:
         f = fam_words(fam)
         if len(names[t]) >= 6 and f and names[t] != f and names[t] not in f and lev(names[t], f) <= 2:
             fam_off.append((t, fam, fn))
-    partial_in_grp = []      # (묶음, 태그, 붙은 수, 묶음 장수, 빠진 이미지)
+    # 일부가 빠진 태그: 3장 이상 묶음에서 절반 이상에 붙었는데 전부는 아닌 태그. 빠진 이미지 중 seen.csv 에
+    # (이미지, tagmiss:<태그 id>) 로 적힌 것은 사람이 보고 안 붙이기로 한 것이다 — 도메인은 보지 않는다
+    partial_in_grp = []      # (묶음, 태그, 붙은 수, 묶음 장수, 빠진 이미지, 그중 새로 걸린 것)
     for g, its in by_grp.items():
         if len(its) < 3:
             continue
         for t, c in Counter(t for r in its for t in r["tags"]).items():
             if c < len(its) and c / len(its) >= 0.5:
-                partial_in_grp.append((g, t, c, len(its), [r for r in its if t not in r["tags"]]))
+                miss = [r for r in its if t not in r["tags"]]
+                partial_in_grp.append((g, t, c, len(its), miss,
+                                       [r for r in miss if (r["id"], tagmiss(t)) not in seen]))
     partial_in_grp.sort(key=lambda x: (-len(x[4]), x[0]))
+    n_miss = sum(len(x[4]) for x in partial_in_grp)
+    n_miss_new = sum(len(x[5]) for x in partial_in_grp)
+    miss_new_txt = f"새로 걸린 것 {sum(1 for x in partial_in_grp if x[5])}줄 · {n_miss_new}장"
+
+    # 표시 — --mark-seen 은 지금 걸린 도메인 의심, --mark-tag 는 이 표에서 그 태그의 빠진 이미지. 따로 둔다 —
+    # 시트를 다 본 것과 이 표를 본 것은 다른 일이다
+    marked = marked_tm = 0
+    if args.mark_seen or mark_tags:
+        today = f"{datetime.now():%Y-%m-%d}"
+        seen_out = dict(seen)
+        if args.mark_seen:
+            for r in flagged:
+                for c in r["new"]:
+                    seen_out[(r["id"], c)] = (r["domain"] or "", today)
+                    marked += 1
+        for g, t, c, n, miss, miss_new in partial_in_grp:
+            if t in mark_tags:
+                for r in miss_new:
+                    seen_out[(r["id"], tagmiss(t))] = ("", today)
+                    marked_tm += 1
+        if marked or marked_tm:
+            seen_path.parent.mkdir(parents=True, exist_ok=True)
+            write_csv(seen_path, [{"id": i, "domain": d, "check": c, "seen_at": at}
+                                  for (i, c), (d, at) in sorted(seen_out.items())])
     untagged_grp = sorted(((g, its) for g, its in by_grp.items() if not any(r["tags"] for r in its)),
                           key=lambda x: -len(x[1]))
     tag_rows = []
@@ -464,8 +502,10 @@ def main() -> None:
                   f"{max(at for _, at in seen.values())})에 같은 도메인·같은 검사로 적힌 것. "
                   + ("아래 목록·시트는 이미 본 것까지 전부다(`--all`)." if args.all
                      else "아래 목록·시트는 새로 걸린 것만이다(전부는 `--all`, flags.csv 는 늘 전부 — `new` 칸)."), ""]
-    if args.mark_seen:
-        lines += [f"이번 실행에서 `--mark-seen` 으로 {marked}건(이미지·검사)을 이미 본 것으로 적었다 — 다음 실행부터 빠진다.", ""]
+    if args.mark_seen or mark_tags:
+        lines += [f"이번 실행에서 이미 본 것으로 적었다 — 도메인 의심 {marked}건(이미지·검사)"
+                  + (f" · 일부가 빠진 태그 {marked_tm}건(이미지·태그: {', '.join(args.mark_tag)})" if mark_tags else "")
+                  + ". 다음 실행부터 빠진다.", ""]
     elif not seen:
         lines += ["다 본 뒤 `--mark-seen` 으로 다시 돌리면 다음부터 새로 걸린 것만 나온다.", ""]
     for check, title in CHECKS.items():
@@ -511,10 +551,23 @@ def main() -> None:
         lines += [f"### 한 장뿐인 태그 {len(one)}개 · 붙은 이미지가 없는 태그 {len(empty_tags)}개", "",
                   "  " + ", ".join(f"'{tag_name[t]}'" for t in one + empty_tags), ""]
     if partial_in_grp:
-        lines += ["### 장면 묶음 안에서 절반 넘게 붙었는데 일부가 빠진 태그 (빠진 이미지에 붙일지)", ""]
-        lines += table(["묶음", "태그", "붙음/장수", "빠진 이미지 id"],
-                       [[g, tag_name[t], f"{c}/{n}", ids_line(miss[:12]) + (" …" if len(miss) > 12 else "")]
-                        for g, t, c, n, miss in partial_in_grp[:40]])
+        shown = sorted(((g, t, c, n, miss if args.all else miss_new, len(miss) - len(miss_new))
+                        for g, t, c, n, miss, miss_new in partial_in_grp if args.all or miss_new),
+                       key=lambda x: (-len(x[4]), x[0]))
+        lines += [f"### 장면 묶음(3장 이상) 안에서 절반 이상 붙었는데 일부가 빠진 태그 (빠진 이미지에 붙일지): "
+                  f"{len(partial_in_grp)}줄 · 빠진 이미지 {n_miss}장"
+                  + (f" ({miss_new_txt})" if n_miss != n_miss_new else ""), ""]
+        note = ("아래는 이미 본 것까지 전부다(`--all`). " if args.all else
+                f"`{seen_path.name}` 에 이미 본 것으로 적힌 {n_miss - n_miss_new}장(이미지·태그)은 뺐다(전부는 `--all`). "
+                if n_miss != n_miss_new else "")
+        lines += [note + "한 태그의 줄을 다 봤으면 `--mark-tag <태그>` 로 적어 둔다 — 다음부터 그 빠진 이미지는 나오지 않는다.", ""]
+        if shown:
+            lines += table(["묶음", "태그", "붙음/장수", "빠진 이미지 id"],
+                           [[g, tag_name[t], f"{c}/{n}", ids_line(ms[:12]) + (" …" if len(ms) > 12 else "")
+                             + (f" (본 것 {k}장 뺌)" if k and not args.all else "")]
+                            for g, t, c, n, ms, k in shown[:40]])
+            if len(shown) > 40:
+                lines += ["", f"… {len(shown) - 40}줄 더 — 빠진 장수가 많은 순으로 40줄만 실었다"]
         lines += [""]
     lines += [f"### 태그가 하나도 없는 장면 묶음 — 큰 것 20개 (태그 없는 이미지 모두 "
               f"{sum(1 for r in rows if not r['tags']):,}장: " +
@@ -551,8 +604,10 @@ def main() -> None:
     if seen:
         print(f"  새로 걸린 것 {n_new}장 — " + " · ".join(
             f"{c} {sum(1 for r in flagged if c in r['new'])}" for c in CHECKS) + f"  (이미 본 것: {seen_path})")
-    if args.mark_seen:
-        print(f"  이미 본 것으로 {marked}건 적음 → {seen_path}")
+    print(f"일부가 빠진 태그 {len(partial_in_grp)}줄 · 빠진 이미지 {n_miss}장"
+          + (f" — {miss_new_txt}" if n_miss != n_miss_new else ""))
+    if args.mark_seen or mark_tags:
+        print(f"  이미 본 것으로 적음 — 도메인 의심 {marked}건 · 빠진 태그 {marked_tm}건 → {seen_path}")
     elif not seen:
         print("  다 봤으면 --mark-seen 으로 다시 돌릴 것 — 다음부터 새로 걸린 것만 나온다")
     print(f"→ {out}")

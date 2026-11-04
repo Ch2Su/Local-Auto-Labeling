@@ -774,6 +774,7 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
   domain_review.py     도메인(CCTV·비CCTV·드론)·태그 점검 — 의심 이미지 id 목록·대조 시트,
                        태그의 포함 관계·오타 후보·같은 카메라 누수 (DB 읽기 전용, data/visible/domain_review/)
                        — 다 본 뒤 --mark-seen 으로 적어 두면 다음부터 새로 걸린 것만 낸다 (--all 이면 전부)
+                       — '일부가 빠진 태그' 표는 태그별로 다 본 뒤 --mark-tag <태그> (--mark-seen 은 이 표를 적지 않는다)
 ```
 
 `data/`·`models/`·`weights/`·`export/`·`.venv/` 는 git 에 없습니다(데이터·가중치는 백업으로 지킵니다).
