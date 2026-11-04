@@ -44,7 +44,10 @@ const S = {
   tags: [],                   // [{id, name, n}] 이름순 (/api/tags)
   tagName: {},                // id -> 이름
   curTag: null,               // T 로 붙일 태그 id (오른쪽 태그 목록에서 줄을 눌러 고른다)
-  filterTag: "",              // 태그 필터: "" 전체 / 태그 id / "__none__" 태그 없음
+  // 태그 필터(2026-11-04 여러 개·제외): 넣을 태그 id·뺄 태그 id·넣을 것이 '하나라도' 면 any·'태그 없음' 이면 none
+  tagF: { inc: [], exc: [], any: false, none: false },
+  tagNoneCount: 0,            // 태그가 하나도 없는 이미지 수 (/api/tags 의 none)
+  tagNoneKey: "__none__",     // '태그 없음' 을 뜻하는 tag= 값 (/api/tags 의 none_key)
   tagBusy: false,             // T 가 도는 중 — 꾹 눌렀을 때 반복 입력이 겹치지 않게
   listBusy: false,            // '새로 받기' 가 도는 중 — 그동안의 Q·W·E·T 는 버린다(다음 줄을 엉뚱하게 고른다)
   loadedCount: 0,     // 이 이미지를 열었을 때의 박스 수. 저장 뒤 이보다 적으면 표시한다
@@ -61,6 +64,9 @@ const S = {
 
 // 지금 보기: "label" 라벨링 / "gallery" 이미지 보기(gallery.js). setView 로만 바꾼다 (2026-11-04)
 let VIEW = "label";
+// 왼쪽 태그 필터 칸(makeTagFilter)과, 태그 조건을 바꿔 목록을 다시 받는 중인지(applyTagFilter)
+let tagFilter = null;
+let tagApplying = false, tagApplyAgain = false;
 
 const canvas = $("#canvas");
 const ctx = canvas.getContext("2d");
@@ -991,8 +997,17 @@ function listUrl(limit, offset) {
   if (S.filterCamera) url += `&camera=${encodeURIComponent(S.filterCamera)}`;
   if (S.filterDomain) url += `&domain=${encodeURIComponent(S.filterDomain)}`;
   if (S.filterSplit) url += `&split=${encodeURIComponent(S.filterSplit)}`;
-  if (S.filterTag) url += `&tag=${encodeURIComponent(S.filterTag)}`;
-  return url;
+  return url + tagQuery();
+}
+
+/** 태그 조건을 목록 API 주소 조각으로 (server._tag_filter). 안 걸렸으면 "". */
+function tagQuery() {
+  const tf = S.tagF;
+  if (tf.none) return `&tag=${encodeURIComponent(S.tagNoneKey)}`;
+  let q = "";
+  if (tf.inc.length) q += `&tag=${tf.inc.join(",")}` + (tf.any && tf.inc.length > 1 ? "&tagmode=any" : "");
+  if (tf.exc.length) q += `&xtag=${tf.exc.join(",")}`;
+  return q;
 }
 
 /** 개수를 붙인 필터 select 를 다시 채운다. 고른 값이 아직 있으면 그대로 두고, 없어졌으면 전체로. */
@@ -1009,106 +1024,194 @@ function fillCountFilter(sel, keep, allText, items, names, noneText, none, noneK
   const value = [...sel.options].some((o) => o.value === keep) ? keep : "";
   sel.value = value;
   sel.classList.toggle("on", !!value);
-  sel._picker?.sync();
   return value;
 }
 
-/* ── 찾기 되는 고르기 칸 (2026-11-04) ── 태그 필터처럼 항목이 백 개 넘는 select 에 쓴다(기본 select 에는 찾기가
- * 없다 — 사용자 요청). 원래 select 는 숨겨 값·항목의 원본으로만 둔다. 고르면 그 select 의 value 를 바꾸고 change 를
- * 보내므로 원래 배선(onchange·fillCountFilter·clearFilters)이 그대로 돈다. 값·항목·꺼짐을 코드로 바꾼 뒤에는
- * sel._picker.sync() 로 단추를 맞춘다. 칸: 펼치면 찾기 칸에 바로 쓸 수 있고, ↑·↓·Enter 로 고르고 Esc 로 닫는다. */
-function makePicker(sel, placeholder) {
-  const wrap = document.createElement("div");
-  wrap.className = "picker";
+/* ── 태그 필터 (2026-11-04 사용자 요청) ── 태그를 여럿 넣고(포함) 뺄(제외) 수 있다. 칸을 펼치면 맨 위가 찾기 칸이다
+ * (태그가 백 개를 넘는다). 줄을 누르거나 Enter 면 포함, 줄 끝 `−` 나 Shift+Enter 면 제외, 다시 누르면 풀린다. 포함이
+ * 둘 이상이면 '모두 붙은 것 / 하나라도' 를 고른다(기본 모두 — 클래스 필터와 같은 교집합). '태그 없음' 은 다른 태그와
+ * 함께 걸 수 없다. 상태는 S.tagF 하나이고, 바꿀 때마다 목록을 다시 받는다(applyTagFilter). 칸을 다시 그릴 때는
+ * 목록의 스크롤을 지킨다 — 아래쪽 줄을 눌렀는데 맨 위로 튀지 않게. 고른 것(칩)·'모두/하나라도' 는 목록 **아래**에
+ * 둔다 — 위에 두면 칩이 늘 때마다 누르던 줄이 밀려 내려간다. */
+function makeTagFilter(wrap) {
+  const help = wrap.title;
+  wrap.removeAttribute("title");     // 칸 안 어디에 마우스를 올려도 긴 설명이 뜨지 않게 — 단추에만 단다
+  wrap.classList.add("picker", "tag-filter");
   wrap.innerHTML = '<button type="button" class="picker-btn"></button>'
-    + `<div class="picker-panel hidden"><input type="search" class="picker-q" autocomplete="off" placeholder="${placeholder}">`
-    + '<ul class="picker-list"></ul></div>';
-  sel.after(wrap);
-  sel.classList.add("picker-native");
+    + '<div class="picker-panel hidden">'
+    + '<input type="search" class="picker-q" autocomplete="off" placeholder="태그 찾기"'
+    + ' title="글자를 넣으면 맞는 태그만 남습니다. ↑·↓ 로 고르고 Enter 포함 · Shift+Enter 제외 · Esc 닫기">'
+    + '<ul class="picker-list"></ul>'
+    + '<div class="tf-mode"><span>포함 태그가</span>'
+    + '<button type="button" data-any="0">모두 붙은 것</button><button type="button" data-any="1">하나라도</button></div>'
+    + '<div class="tf-chips"></div>'
+    + '<div class="tf-foot"><span class="tf-n"></span><button type="button" class="tf-clear">태그 조건 풀기</button></div>'
+    + "</div>";
   const btn = wrap.querySelector(".picker-btn"), panel = wrap.querySelector(".picker-panel");
   const q = wrap.querySelector(".picker-q"), ul = wrap.querySelector(".picker-list");
-  btn.title = sel.title;
-  let shown = [], hot = -1;
+  const mode = wrap.querySelector(".tf-mode"), chips = wrap.querySelector(".tf-chips");
+  const foot = wrap.querySelector(".tf-n"), clear = wrap.querySelector(".tf-clear");
+  let shown = [], hot = 0, disabled = false;
 
-  const parts = (o) => {      // '이름 (장수)' → [이름, 장수]
-    const m = o.textContent.match(/^(.*?)\s*\(([\d,]+)\)$/);
-    return m ? [m[1], m[2]] : [o.textContent, ""];
+  const isOpen = () => !panel.classList.contains("hidden");
+  const state = (key) => {             // "inc" | "exc" | ""
+    const tf = S.tagF;
+    if (key === "none") return tf.none ? "inc" : "";
+    return tf.inc.includes(key) ? "inc" : tf.exc.includes(key) ? "exc" : "";
   };
-  const sync = () => {
-    const o = sel.selectedOptions[0];
-    btn.textContent = o ? o.textContent : "";
-    btn.classList.toggle("on", !!sel.value);
-    btn.disabled = sel.disabled;
-    if (sel.disabled) close();
-  };
-  const render = () => {
-    const words = q.value.trim().toLowerCase();
-    shown = [...sel.options].filter((o) => !words || parts(o)[0].toLowerCase().includes(words));
-    if (hot >= shown.length) hot = shown.length - 1;
-    ul.innerHTML = "";
-    if (!shown.length) {
-      ul.innerHTML = '<li class="empty">맞는 항목이 없습니다</li>';
-      return;
+  /** key 를 kind(inc|exc) 로 건다 — 이미 그렇게 걸려 있으면 푼다. 'none'(태그 없음)은 다른 태그 조건을 다 푼다. */
+  const toggle = (key, kind) => {
+    const tf = S.tagF;
+    if (key === "none") {
+      S.tagF = { inc: [], exc: [], any: tf.any, none: !tf.none };
+    } else {
+      const was = state(key);
+      const inc = tf.inc.filter((x) => x !== key), exc = tf.exc.filter((x) => x !== key);
+      if (was !== kind) (kind === "inc" ? inc : exc).push(key);
+      S.tagF = { inc, exc, any: tf.any, none: false };
     }
-    shown.forEach((o, i) => {
-      const [name, n] = parts(o);
+    render();
+    applyTagFilter();
+  };
+  const chip = (text, kind, onX) => {
+    const s = document.createElement("span");
+    s.className = `tf-chip ${kind}`;
+    s.innerHTML = '<span class="nm"></span><button type="button" title="풀기">×</button>';
+    s.querySelector(".nm").textContent = text;
+    s.querySelector("button").onclick = onX;
+    return s;
+  };
+  function render(scroll = false) {
+    const tf = S.tagF, text = tagFilterText();
+    btn.textContent = text || "태그: 전체";
+    btn.title = (text ? `태그 조건: ${text}\n\n` : "") + help;
+    btn.classList.toggle("on", !!text);
+    btn.disabled = disabled;
+    if (!isOpen()) return;
+    const words = q.value.trim().toLowerCase();
+    shown = [{ key: "none", name: "태그 없음", n: S.tagNoneCount }, ...S.tags.map((t) => ({ key: t.id, name: t.name, n: t.n }))]
+      .filter((it) => !words || it.name.toLowerCase().includes(words));
+    hot = Math.max(0, Math.min(hot, shown.length - 1));
+    const top = ul.scrollTop;
+    ul.innerHTML = "";
+    if (!shown.length) ul.innerHTML = '<li class="empty">맞는 태그가 없습니다</li>';
+    shown.forEach((it, i) => {
+      const st = state(it.key);
       const li = document.createElement("li");
-      li.className = (o.value === sel.value ? "sel" : "") + (i === hot ? " hot" : "");
-      li.innerHTML = '<span class="nm"></span><span class="n"></span>';
-      li.querySelector(".nm").textContent = name;
-      li.querySelector(".n").textContent = n;
-      li.onmousedown = (e) => e.preventDefault();      // 찾기 칸의 포커스를 잃지 않게
-      li.onclick = () => choose(o.value);
+      li.className = [st, i === hot ? "hot" : "", it.key === "none" ? "none" : ""].filter(Boolean).join(" ");
+      li.innerHTML = '<span class="mk"></span><span class="nm"></span><span class="n"></span>'
+        + (it.key === "none" ? "" : '<button type="button" class="tf-x" title="제외 (Shift+Enter)">−</button>');
+      li.querySelector(".nm").textContent = it.name;
+      li.querySelector(".n").textContent = Number(it.n || 0).toLocaleString();
+      li.onclick = () => { hot = i; toggle(it.key, "inc"); };
+      const x = li.querySelector(".tf-x");
+      if (x) x.onclick = (e) => { e.stopPropagation(); hot = i; toggle(it.key, "exc"); };
       ul.appendChild(li);
     });
-    ul.children[hot]?.scrollIntoView({ block: "nearest" });
-  };
+    ul.scrollTop = top;
+    if (scroll) ul.children[hot]?.scrollIntoView({ block: "nearest" });
+    mode.classList.toggle("hidden", tf.inc.length < 2);
+    for (const b of mode.querySelectorAll("button")) b.classList.toggle("on", (b.dataset.any === "1") === tf.any);
+    chips.innerHTML = "";
+    if (tf.none) chips.appendChild(chip("태그 없음", "inc", () => toggle("none")));
+    for (const id of tf.inc) chips.appendChild(chip(`#${S.tagName[id] ?? id}`, "inc", () => toggle(id, "inc")));
+    for (const id of tf.exc) chips.appendChild(chip(`#${S.tagName[id] ?? id}`, "exc", () => toggle(id, "exc")));
+    chips.classList.toggle("hidden", !chips.children.length);
+    foot.textContent = tagApplying ? "목록 받는 중…" : `목록 ${(S.total ?? 0).toLocaleString()}장`;
+    clear.disabled = !text;
+  }
   const open = () => {
-    if (sel.disabled) return;
+    if (disabled) return;
     panel.classList.remove("hidden");
     q.value = "";
-    hot = [...sel.options].findIndex((o) => o.value === sel.value);
-    render();
+    hot = 0;
+    ul.scrollTop = 0;
+    render(true);
     q.focus();
   };
   function close() {
-    if (panel.classList.contains("hidden")) return;
+    if (!isOpen()) return;
     panel.classList.add("hidden");
     q.blur();                 // 단축키(↑·↓·Space)가 다시 이미지 쪽으로 가게
   }
-  const choose = (value) => {
-    close();
-    if (value !== sel.value) {
-      sel.value = value;
-      sel.dispatchEvent(new Event("change"));
-    }
-    sync();
-  };
 
   btn.onclick = (e) => {
     e.stopPropagation();
-    if (panel.classList.contains("hidden")) open(); else close();
+    btn.blur();               // 포커스가 남으면 Space 가 이 단추와 함께 승인까지 누른다 ('새로 받기' 단추와 같다)
+    if (isOpen()) close(); else open();
   };
-  q.addEventListener("input", () => { hot = 0; render(); });
+  // 칸 안(줄·−·칩 ×·모두/하나라도·풀기)을 눌러도 포커스는 찾기 칸에 둔다 — 같은 까닭이고, 이어서 글자·↑↓·Enter 를 쓰게
+  panel.addEventListener("mousedown", (e) => { if (e.target !== q) e.preventDefault(); });
+  q.addEventListener("input", () => { hot = 0; ul.scrollTop = 0; render(true); });
   q.addEventListener("keydown", (e) => {
     if (e.isComposing) return;            // 한글 조합 중의 Enter·화살표는 조합 몫이다
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       if (shown.length) hot = (hot + (e.key === "ArrowDown" ? 1 : shown.length - 1)) % shown.length;
-      render();
+      render(true);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (shown[hot] || shown[0]) choose((shown[hot] || shown[0]).value);
+      const it = shown[hot] || shown[0];
+      if (it) toggle(it.key, e.shiftKey && it.key !== "none" ? "exc" : "inc");
     } else if (e.key === "Escape" || e.key === "Tab") {
       e.preventDefault();
       close();
     }
   });
-  document.addEventListener("click", (e) => { if (!wrap.contains(e.target)) close(); });
-  sel.addEventListener("change", sync);
-  sel._picker = { sync, open, close };
-  sync();
-  return sel._picker;
+  mode.onclick = (e) => {
+    const b = e.target.closest("button");
+    if (!b || (b.dataset.any === "1") === S.tagF.any) return;
+    S.tagF = { ...S.tagF, any: b.dataset.any === "1" };
+    render();
+    if (S.tagF.inc.length > 1) applyTagFilter();
+  };
+  clear.onclick = () => {
+    S.tagF = { inc: [], exc: [], any: S.tagF.any, none: false };
+    render();
+    applyTagFilter();
+  };
+  // 칸 밖을 누르면 닫는다. 칸 안에서 누른 줄·칩은 다시 그리느라 이미 문서에서 빠졌을 수 있어 target 이 아니라
+  // 눌렀을 때의 경로로 본다 — target 으로 보면 줄을 누를 때마다 닫혔다.
+  document.addEventListener("click", (e) => { if (!e.composedPath().includes(wrap)) close(); });
+  const setDisabled = (d) => {
+    disabled = d;
+    if (d) close();
+    render();
+  };
+  render();
+  return { render, setDisabled, close };
+}
+
+/** 태그 조건을 한 줄로 — 단추와 필터 요약이 같이 쓴다. 안 걸렸으면 "". */
+function tagFilterText() {
+  const tf = S.tagF, nm = (id) => `#${S.tagName[id] ?? id}`;
+  if (tf.none) return "태그 없음";
+  const out = [];
+  if (tf.inc.length) out.push(tf.inc.map(nm).join(", ") + (tf.inc.length > 1 ? (tf.any ? " 중 하나" : " 모두") : ""));
+  if (tf.exc.length) out.push(`제외 ${tf.exc.map(nm).join(", ")}`);
+  return out.join(" · ");
+}
+
+/** 태그 조건이 바뀔 때마다 목록을 다시 받는다. 받는 사이 또 바뀌면 끝난 뒤 마지막 조건으로 한 번 더 받는다 —
+ * 두 번 받기가 겹치면 늦게 시작한 쪽이 먼저 끝나 옛 조건의 목록이 남을 수 있다. */
+async function applyTagFilter() {
+  if (tagApplying) {
+    tagApplyAgain = true;
+    return;
+  }
+  tagApplying = true;
+  tagFilter?.render();
+  try {
+    do {
+      tagApplyAgain = false;
+      await reloadList();
+    } while (tagApplyAgain);
+  } catch (err) {
+    toast(`목록을 받지 못했습니다: ${err.message}`, true);
+  } finally {
+    tagApplying = false;
+    tagFilter?.render();
+  }
 }
 
 /* ── 분할(train·val·test) ── 보기만 한다. 분할을 바꾸는 것은 labeler.py split 뿐이다(2026-11-03). */
@@ -1205,8 +1308,13 @@ async function loadTags() {
   S.tags = data.tags;
   S.tagName = Object.fromEntries(data.tags.map((t) => [t.id, t.name]));
   if (S.curTag != null && !(S.curTag in S.tagName)) S.curTag = null;   // 다른 창에서 지웠다
-  S.filterTag = fillCountFilter($("#filter-tag"), S.filterTag, "태그: 전체",
-    data.tags.map((t) => ({ key: String(t.id), n: t.n })), S.tagName, "태그 없음", data.none, data.none_key);
+  S.tagNoneCount = data.none;
+  S.tagNoneKey = data.none_key;
+  const tf = S.tagF;          // 지운 태그(다른 창에서도)는 태그 조건에서 뺀다
+  if ([...tf.inc, ...tf.exc].some((id) => !(id in S.tagName))) {
+    S.tagF = { ...tf, inc: tf.inc.filter((id) => id in S.tagName), exc: tf.exc.filter((id) => id in S.tagName) };
+  }
+  tagFilter?.render();
   renderTagList();
   if (VIEW === "gallery") galleryTagsChanged();   // 이름·개수가 바뀌었을 수 있다 (gallery.js)
 }
@@ -1364,9 +1472,9 @@ async function deleteTag(t) {
   const drop = (im) => { if (im.tags) im.tags = im.tags.filter((x) => x !== t.id); };
   if (S.cur) drop(S.cur);
   S.images.forEach(drop);
-  const filtered = S.filterTag === String(t.id);
-  await loadTags();       // 고른 필터가 없어지면 '전체' 로 돌아간다
-  // 그 태그로 거르던 중이면 '전체' 로 다시 받되 지금 줄은 화면의 같은 높이에 둔다. 아니면 그 줄만 고친다.
+  const filtered = S.tagF.inc.includes(t.id) || S.tagF.exc.includes(t.id);
+  await loadTags();       // 지운 태그는 태그 조건에서도 빠진다
+  // 그 태그로 거르던(넣거나 빼던) 중이면 다시 받되 지금 줄은 화면의 같은 높이에 둔다. 아니면 그 줄만 고친다.
   if (filtered) await keepCurrentRow(() => loadImageList());
   else refreshRows(hit);
 }
@@ -1480,7 +1588,8 @@ function renderFilterSummary() {
   if (S.filterCamera) parts.push(`카메라 ${optText($("#filter-camera"))}`);
   if (S.filterDomain) parts.push(`도메인 ${optText($("#filter-domain"))}`);
   if (S.filterSplit) parts.push(`분할 ${optText($("#filter-split"))}`);
-  if (S.filterTag) parts.push(S.filterTag === "__none__" ? "태그 없음" : `#${optText($("#filter-tag"))}`);
+  const tags = tagFilterText();
+  if (tags) parts.push(tags);
   const sum = $("#filters-sum");
   sum.textContent = parts.length ? parts.join(" · ") : "필터 없음";
   sum.title = parts.length ? `걸린 필터: ${sum.textContent}` : "";
@@ -1498,12 +1607,13 @@ function toggleFilters(open = $("#filters-body").classList.contains("hidden")) {
 function clearFilters() {
   S.filterClasses.clear();
   S.filterEmpty = false;
-  S.filterCamera = S.filterDomain = S.filterSplit = S.filterTag = "";
-  for (const s of ["#filter-camera", "#filter-domain", "#filter-split", "#filter-tag"]) {
+  S.filterCamera = S.filterDomain = S.filterSplit = "";
+  S.tagF = { inc: [], exc: [], any: false, none: false };
+  for (const s of ["#filter-camera", "#filter-domain", "#filter-split"]) {
     $(s).value = "";
     $(s).classList.remove("on");
-    $(s)._picker?.sync();
   }
+  tagFilter?.render();
   syncClassFilter();
   reloadList();
 }
@@ -2175,8 +2285,7 @@ async function loadImageList(keepOpen = null) {
   $("#filter-camera").disabled = status === "ids";  // 카메라 필터도 마찬가지
   $("#filter-domain").disabled = status === "ids";
   $("#filter-split").disabled = status === "ids";
-  $("#filter-tag").disabled = status === "ids";
-  $("#filter-tag")._picker?.sync();
+  tagFilter?.setDisabled(status === "ids");
   if (status === "ids") $("#cf-panel").classList.add("hidden");
   renderFilterSummary();
 
@@ -2616,13 +2725,8 @@ $("#filter-split").onchange = () => {
   $("#filter-split").classList.toggle("on", !!S.filterSplit);
   reloadList();
 };
-$("#filter-tag").onchange = () => {
-  S.filterTag = $("#filter-tag").value;
-  $("#filter-tag").classList.toggle("on", !!S.filterTag);
-  reloadList();
-};
-// 태그가 백 개를 넘어 찾기 되는 칸으로 고른다 (2026-11-04 사용자 요청). 위 onchange 는 그대로 돈다
-makePicker($("#filter-tag"), "태그 찾기");
+// 태그 필터 — 여러 개 넣고 빼기, 찾기 칸 (2026-11-04 사용자 요청, makeTagFilter)
+tagFilter = makeTagFilter($("#filter-tags"));
 $("#btn-add-tag").onclick = () => createTag();
 $("#new-tag").addEventListener("keydown", (e) => {
   if (e.key === "Enter") createTag();

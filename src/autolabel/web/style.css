@@ -363,8 +363,7 @@ kbd {
 .filters-body .class-filter { border-bottom: none; padding: 6px 10px; }
 .filters-body .camera-filter { border-bottom: none; padding: 3px 10px; }
 
-/* 찾기 되는 고르기 칸 (2026-11-04, app.js makePicker) — 원래 select 는 숨기고 값의 원본으로만 쓴다 */
-.picker-native { display: none !important; }
+/* 찾기 되는 고르기 칸 (2026-11-04) — 지금은 왼쪽 태그 필터(app.js makeTagFilter)가 쓴다 */
 .picker { position: relative; min-width: 0; }
 .picker-btn {
   position: relative; display: block; width: 100%; text-align: left; cursor: pointer;
@@ -392,6 +391,46 @@ kbd {
 .picker-list .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-list .n { flex: none; color: var(--fg-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
 .picker-list .empty { color: var(--fg-dim); cursor: default; }
+/* 태그 필터 — 여러 개 넣고(+, 파랑) 빼기(−, 빨강) (2026-11-04, app.js makeTagFilter) */
+.tag-filter .picker-list li { gap: 6px; }
+.tag-filter .picker-list li.none { border-bottom: 1px solid var(--line); border-radius: 4px 4px 0 0; }
+.tag-filter .picker-list .mk { flex: none; width: 12px; text-align: center; font-weight: 700; }
+.tag-filter .picker-list li.inc .mk::before { content: "+"; color: var(--accent); }
+.tag-filter .picker-list li.exc .mk::before { content: "−"; color: var(--err); }
+.tag-filter .picker-list li.inc .nm { color: var(--accent); font-weight: 600; }
+.tag-filter .picker-list li.exc .nm { color: var(--err); font-weight: 600; text-decoration: line-through; }
+.tag-filter .tf-x {
+  flex: none; width: 20px; height: 18px; padding: 0; line-height: 16px; cursor: pointer;
+  background: transparent; color: var(--fg-dim); border: 1px solid var(--line); border-radius: 3px; font: inherit;
+}
+.tag-filter .tf-x:hover { color: var(--err); border-color: var(--err); }
+.tag-filter li.exc .tf-x { color: #fff; background: var(--err); border-color: var(--err); }
+.tf-mode { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--fg-dim); }
+.tf-mode span { margin-right: 2px; }
+.tf-mode button {
+  padding: 1px 8px; cursor: pointer; font: inherit; color: var(--fg-dim);
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px;
+}
+.tf-mode button.on { color: var(--fg); background: var(--accent-2); border-color: var(--accent); }
+.tf-chips { display: flex; flex-wrap: wrap; gap: 4px; max-height: 78px; overflow-y: auto; }
+.tf-chip {
+  display: inline-flex; align-items: center; max-width: 100%; padding: 0 0 0 7px;
+  border: 1px solid; border-radius: 10px; font-size: 11px;
+}
+.tf-chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tf-chip.inc { color: var(--accent); border-color: var(--accent); }
+.tf-chip.exc { color: var(--err); border-color: var(--err); }
+.tf-chip.exc .nm { text-decoration: line-through; }
+.tf-chip button { padding: 0 6px 0 4px; cursor: pointer; color: inherit; background: none; border: none; font: inherit; }
+.tf-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding-top: 4px; border-top: 1px solid var(--line); font-size: 11px; color: var(--fg-dim);
+}
+.tf-clear {
+  padding: 1px 8px; cursor: pointer; font: inherit; color: var(--fg);
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: 4px;
+}
+.tf-clear:disabled { opacity: .45; cursor: default; }
 .cf-panel {
   position: absolute; z-index: 20; top: 100%; left: 10px; right: 10px;
   max-height: 300px; overflow: auto;

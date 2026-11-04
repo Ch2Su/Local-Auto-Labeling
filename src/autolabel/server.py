@@ -28,7 +28,7 @@ from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
 from .stopper import StopSignal
-from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, Store
+from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, Store, TagFilter
 from .tidy import prune_missing, purge_trashed, tidy_approved
 from .trainer import find_resume_point
 from .trainer import resume_train as run_resume
@@ -138,6 +138,26 @@ class SegmentIn(BaseModel):
     cls: int = Field(0, ge=0)
 
 
+def _id_list(text: str | None, what: str) -> list[int]:
+    """'3,7 12' → [3, 7, 12] (겹치면 하나만, 준 순서대로). 숫자가 아닌 조각이 있으면 400."""
+    tokens = [t for t in (text or "").replace(",", " ").split() if t]
+    if not all(t.isdigit() for t in tokens):
+        raise HTTPException(400, f"{what}는 번호를 쉼표로 구분해 주세요.")
+    return list(dict.fromkeys(int(t) for t in tokens))
+
+
+def _tag_filter(tag: str | None, xtag: str | None, tagmode: str) -> TagFilter | None:
+    """목록 API 의 태그 조건(store.TagFilter). `tag=__none__` 이면 태그 없는 것 — xtag·tagmode 는 보지 않는다."""
+    if tag == NO_TAG:
+        return TagFilter(none=True)
+    if tagmode not in ("all", "any"):
+        raise HTTPException(400, f"알 수 없는 tagmode: {tagmode} (all 또는 any)")
+    inc, exc = _id_list(tag, "태그"), _id_list(xtag, "뺄 태그")
+    if set(inc) & set(exc):
+        raise HTTPException(400, "같은 태그를 넣기와 빼기에 함께 줄 수 없습니다.")
+    return TagFilter(tuple(inc), tuple(exc), tagmode == "any") if inc or exc else None
+
+
 def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
     store = Store(cfg.db)
     jobs = JobManager(label)          # label 은 'GPU 를 누가 쓰는 중' 안내에 쓰인다
@@ -232,12 +252,13 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         status: str = "pending", limit: int = 300, offset: int = 0, order: str = "uncertainty",
         ids: str | None = None, cls: str | None = None, empty: bool = False,
         camera: str | None = None, domain: str | None = None, split: str | None = None,
-        tag: str | None = None,
+        tag: str | None = None, xtag: str | None = None, tagmode: str = "all",
     ) -> dict:
         """`cls=2,4` 는 **두 클래스를 모두 가진** 이미지만, `empty=1` 은 박스가 없는 이미지만.
 
         둘을 같이 주면 `empty` 가 이긴다 (store.list_images 참고). `domain=__none__` 은 미분류,
-        `split=__none__` 은 미배정, `tag=<id>` 는 그 태그가 붙은 것, `tag=__none__` 은 태그 없는 것.
+        `split=__none__` 은 미배정. `tag=3,7` 은 그 태그가 **모두** 붙은 것(`tagmode=any` 면 하나라도),
+        `xtag=5,9` 는 그중 하나라도 붙은 것을 뺀다. `tag=__none__` 은 태그 없는 것(`xtag` 는 보지 않는다).
         """
         if ids is not None:
             # 'id 로 열기': 쉼표·공백으로 구분한 id 목록. 상태 필터를 무시하고 준 순서대로.
@@ -256,11 +277,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
 
         wanted_cls: list[int] | None = None
         if cls:
-            tokens = [t for t in cls.replace(",", " ").split() if t]
-            if not all(t.isdigit() for t in tokens):
-                raise HTTPException(400, "클래스는 번호를 쉼표로 구분해 주세요.")
             n_classes = len(store.get_classes())
-            wanted_cls = sorted({int(t) for t in tokens})
+            wanted_cls = sorted(_id_list(cls, "클래스"))
             if any(c >= n_classes for c in wanted_cls):
                 raise HTTPException(400, f"없는 클래스 번호입니다: {wanted_cls}")
 
@@ -271,14 +289,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         split = split or None
         if split and split not in (*SPLITS, NO_SPLIT):
             raise HTTPException(400, f"알 수 없는 분할: {split}")
-        tag_f: int | str | None = None
-        if tag:
-            if tag == NO_TAG:
-                tag_f = NO_TAG
-            elif tag.isdigit():
-                tag_f = int(tag)
-            else:
-                raise HTTPException(400, f"알 수 없는 태그: {tag}")
+        tag_f = _tag_filter(tag, xtag, tagmode)
         rows = store.list_images(
             status=status, limit=limit, offset=offset, order=order,
             classes=wanted_cls, empty=empty, camera=camera, domain=domain, split=split, tag=tag_f,

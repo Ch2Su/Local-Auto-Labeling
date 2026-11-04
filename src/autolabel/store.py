@@ -14,6 +14,7 @@ import json
 import sqlite3
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
@@ -153,6 +154,29 @@ NO_SPLIT = "__none__"    # 분할 필터에서 '미배정'(다음 학습·split 
 NO_TAG = "__none__"      # 태그 필터에서 '태그 없음' 을 뜻하는 값
 TAG_NAME_MAX = 40
 
+
+@dataclass(frozen=True)
+class TagFilter:
+    """목록의 태그 조건 (2026-11-04 사용자 요청 — 여러 개를 넣고 빼기).
+
+    `inc` 는 붙어 있어야 할 태그 — `match_any` 가 거짓이면 **전부**(클래스 필터와 같은 교집합), 참이면 하나라도.
+    `exc` 는 하나라도 붙어 있으면 빼는 태그. `none` 이면 태그가 하나도 없는 것만이고 `inc`·`exc` 는 보지 않는다.
+    """
+    inc: tuple[int, ...] = ()
+    exc: tuple[int, ...] = ()
+    match_any: bool = False
+    none: bool = False
+
+    @classmethod
+    def of(cls, tag: int | str | TagFilter | None) -> TagFilter | None:
+        """예전 꼴(태그 id 하나, NO_TAG)도 받는다."""
+        if tag is None or isinstance(tag, TagFilter):
+            return tag
+        if tag == NO_TAG:
+            return cls(none=True)
+        return cls(inc=(int(tag),))
+
+
 # 목록이 한 장마다 받는 열: 박스 수와 붙은 태그 id(쉼표로 이은 문자열, 없으면 NULL)
 _LIST_COLS = (
     "i.*, (SELECT COUNT(*) FROM boxes b WHERE b.image_id=i.id) AS n_boxes,"
@@ -172,7 +196,7 @@ def clean_tag_name(name: str) -> str:
 
 def _list_where(
     status: str | None, classes: list[int] | None, empty: bool, camera: str | None = None,
-    domain: str | None = None, split: str | None = None, tag: int | str | None = None,
+    domain: str | None = None, split: str | None = None, tag: int | str | TagFilter | None = None,
 ) -> tuple[str, list]:
     """목록·개수가 함께 쓰는 WHERE 절. 둘이 어긋나면 묶음 수가 틀어진다.
 
@@ -200,11 +224,21 @@ def _list_where(
     elif split:
         parts.append("i.split=?")
         args.append(split)
-    if tag == NO_TAG:                # 태그 — 하나를 고르면 그 태그가 붙은 것, NO_TAG 면 하나도 없는 것
+    tf = TagFilter.of(tag)           # 태그 — 넣을 것(전부/하나라도)·뺄 것, 또는 하나도 없는 것 (TagFilter)
+    if tf is not None and tf.none:
         parts.append("NOT EXISTS (SELECT 1 FROM image_tags t WHERE t.image_id=i.id)")
-    elif tag is not None:
-        parts.append("EXISTS (SELECT 1 FROM image_tags t WHERE t.image_id=i.id AND t.tag_id=?)")
-        args.append(int(tag))
+    elif tf is not None:
+        has = "EXISTS (SELECT 1 FROM image_tags t WHERE t.image_id=i.id AND t.tag_id IN ({}))"
+        if tf.inc and (tf.match_any or len(tf.inc) == 1):
+            parts.append(has.format(",".join("?" * len(tf.inc))))
+            args += list(tf.inc)
+        else:                        # 전부 — 태그마다 따로 묻는다
+            for t in tf.inc:
+                parts.append(has.format("?"))
+                args.append(t)
+        if tf.exc:
+            parts.append("NOT " + has.format(",".join("?" * len(tf.exc))))
+            args += list(tf.exc)
     if empty:
         parts.append("NOT EXISTS (SELECT 1 FROM boxes b WHERE b.image_id=i.id)")
     elif classes:
@@ -359,7 +393,7 @@ class Store:
         camera: str | None = None,
         domain: str | None = None,
         split: str | None = None,
-        tag: int | str | None = None,
+        tag: int | str | TagFilter | None = None,
     ) -> list[dict]:
         """검수 대상 목록. 기본은 불확실도 높은 순(= 사람이 볼 가치가 큰 순).
 
@@ -423,7 +457,7 @@ class Store:
 
     def _list_rare(self, status, classes, empty, limit: int, offset: int,
                    camera: str | None = None, domain: str | None = None,
-                   split: str | None = None, tag: int | str | None = None) -> list[dict]:
+                   split: str | None = None, tag: int | str | TagFilter | None = None) -> list[dict]:
         """'드문 클래스 먼저' 정렬. 이미지 점수 = 박스마다 (신뢰도 × 그 클래스의 희소도) 중 최댓값.
 
         자동 라벨이 van·pickup 처럼 드문 클래스를 확신하는 이미지가 맨 앞에 온다 — 검수할
@@ -465,7 +499,7 @@ class Store:
         camera: str | None = None,
         domain: str | None = None,
         split: str | None = None,
-        tag: int | str | None = None,
+        tag: int | str | TagFilter | None = None,
     ) -> int:
         """`list_images` 와 같은 조건으로 개수만 센다.
 
