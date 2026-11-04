@@ -173,7 +173,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
 | `tools/legacy_groups.py` | legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안(DB 읽기 전용) — 사전학습 임베딩을 평균 연결로 묶어 `data/visible/legacy_groups/` 에 CSV·대조 시트. 카메라 후보는 거칠다(웹 사진과 CCTV 크롭이 한 후보에 섞이기도 한다) |
-| `tools/domain_review.py` | 도메인(CCTV·비CCTV·드론)·태그 점검(DB 읽기 전용) — 같은 태그·장면 묶음과 다른 도메인, 비슷한 이미지(임베딩 이웃)와 다른 도메인, EXIF 제조사, 태그 포함 관계·오타 후보, 같은 카메라 누수를 `data/visible/domain_review/` 에 id 목록·대조 시트로. **의심일 뿐이다** — 11-04 에 456장을 눈으로 보니 오류는 5장이었다 |
+| `tools/domain_review.py` | 도메인(CCTV·비CCTV·드론)·태그 점검(DB 읽기 전용) — 같은 태그·장면 묶음과 다른 도메인, 비슷한 이미지(임베딩 이웃)와 다른 도메인, EXIF 제조사, 태그 포함 관계·오타 후보, 같은 카메라 누수를 `data/visible/domain_review/` 에 id 목록·대조 시트로. **의심일 뿐이다** — 11-04 에 의심 이미지를 다 눈으로 보니 고칠 것은 6장이었고, 고친 뒤에도 440장이 남는다(아래 '이미지 도메인' 기준대로 둔 것 포함) |
 | `tools/scheduled_stop.py` | 정해진 시각에 웹 UI 학습을 정상 중단(탭 서버에서는 `/api/projects` 로 학습 중인 프로젝트를 찾는다) |
 
 ## 라벨 기준
@@ -203,6 +203,11 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 - van 을 다시 나누게 되면 그때의 기준(`git show e788f84:CLAUDE.md`)과 합치기 직전 DB
   (`data/visible/labeling.db.bak_merge_20261102_133352`)를 볼 것.
 
+**이미지 도메인(`images.domain`) — 공중에서 찍었거나 드론이 찍었으면 드론이다**(11-04 사용자 결정, 예시는 docs/label-rules.md).
+영화의 공중 장면·헬기 추격 화면도, 드론 영상에서 눈높이로 내려온 프레임도 드론이다(뒤쪽은 '일단'). 이런 이미지는
+`tools/domain_review.py` 가 이웃·태그·장면 묶음과 다르다고 계속 띄운다 — 다시 오류로 올리지 말 것. CCTV 와 비CCTV 의
+경계는 아직 적어 둔 기준이 없다(애매하면 물을 것).
+
 **EXIF 회전 이미지가 49장 있다**(Orientation=6). 라벨은 회전을 적용한 화면 기준 정규화 좌표이고, **DB 의 width/height 는 회전
 전 원시 크기다**(`labeler.py check` 도 원시 크기와 견준다). 정사각이 아닌 4장(id 1050·1126·1692·3181)만 가로·세로가 뒤바뀐다.
 그래서 **화면·SAM·크롭 좌표는 회전 적용 크기로**(`yolo_io.display_size`, 크롭은 `ImageOps.exif_transpose`) 계산한다 — PIL 로
@@ -216,7 +221,7 @@ bicycle 1,512  bus 985  car 11,341  motorcycle 1,457  person 17,439
 scooter 1,026  truck 1,046  pickup 713
 검수 대기 0, 미라벨 0, 건너뜀 0, 휴지통 0, 박스 없는 승인 이미지 130
 분할: train 4,469 / val 707 / test 802(박스 4,236) / 미배정 135 — DB 의 images.split 에 고정, 미배정은 다음 학습 때 배정된다
-도메인: CCTV 4,511 / 비CCTV 1,344 / 드론 258 / 미분류 0 · 태그 114개, 붙은 이미지 4,603장 (사용자가 더 손본다)
+도메인: CCTV 4,507 / 비CCTV 1,345 / 드론 261 / 미분류 0 · 태그 114개, 붙은 이미지 4,603장 (사용자가 더 손본다)
 ```
 
 - **클래스는 8개다**(pickup 은 09-20 에 사용자가 검수 UI 에서 추가했고, 같은 날 추가한 van 은 11-02 에 car 로 합쳤다).
@@ -490,13 +495,14 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - **분류는 `images.domain`(cctv·noncctv·drone, NULL=미분류)에 담는다** — 검수 UI 의 Q·W·E 버튼과 도메인 필터(같은 장면
      묶음째 정하던 `묶음째` 는 11-04 사용자 결정으로 뺐다). 라벨이 아니라 `updated_at`·변경 이력에 남기지 않는다.
      `test_baseline.py` 는 11-04 부터 이 칸으로 가른다. 분할(`split.py`)은 아직 이 칸을 보지 않는다.
-   - **11-04 점검(`tools/domain_review.py`, 시트로 눈 확인)** — 손으로 나눈 도메인은 거의 일관됐다. 의심 456장을 보니
-     오류 후보는 5장(1038·1553·1554 창밖 폰 사진 계열인데 CCTV, 6689·6697 경찰 추격 헬기 화면인데 비CCTV)이고, 나머지는
-     임베딩이 기기(폰·라이브캠)를 못 가린 것이다. 기준을 물을 것: 영화 공중 장면(El Camino 6473 드론 · Tenet 6246 비CCTV),
-     드론 영상의 눈높이 장면(5850·5792·5829). 옛 test_baseline 규칙과는 크게 다르다(옛 CCTV 5,312장 중 909장이 비CCTV·
-     128장이 드론, 옛 비CCTV 716장 중 236장이 CCTV). **지금 분할은 test 802장 중 198장이 train 과 같은 잎 태그(카메라)를
-     쓴다**(드론 55/95 — 주차장 드론 영상·Shibuya 라이브캠 등) — 다시 나눌 때는 태그를 묶음으로 쓸 것(장면 묶음은 30초
-     스크린샷·숫자 이름에서 다른 카메라를 합친다). 태그 오타 후보: `Moive`, `deque de caxias`(파일은 duque), `stablilized`.
+   - **11-04 점검(`tools/domain_review.py`, 시트로 눈 확인 — 메모 `data/visible/domain_review/검토_20261104.md`)** — 손으로
+     나눈 도메인은 거의 일관됐다. 고칠 것 6장(1038·1553·1554·1589 → 비CCTV, 6689·6697 → 드론)과 기준 두 가지(위 '라벨
+     기준' 의 이미지 도메인)는 사용자가 같은 날 정리했고, 다시 돌리면 의심 440장·새로 나온 것 0이다 — 남은 것은 임베딩이
+     기기(폰·라이브캠)를 못 가린 것, 숫자 이름 묶음 g000942(180장 — CCTV 크롭 117·창밖 폰 사진 63)가 두 출처를 합친 것,
+     그 기준대로 둔 드론이다. 옛 test_baseline 규칙과는 크게 다르다(옛 CCTV 5,312장 중 913장이 비CCTV·128장이 드론, 옛
+     비CCTV 716장 중 236장이 CCTV). **지금 분할은 test 802장 중 198장이 train 과 같은 잎 태그(카메라)를 쓴다**(드론 55/95 —
+     주차장 드론 영상·Shibuya 라이브캠 등) — 다시 나눌 때는 태그를 묶음으로 쓸 것(장면 묶음은 30초 스크린샷·숫자 이름에서
+     다른 카메라를 합친다). 태그 오타는 `Moive`·`stablilized` 를 고쳤고 `deque de caxias`(파일은 duque_de_caxias, 110장)가 남았다.
 
 ## 사용자에 대해
 
