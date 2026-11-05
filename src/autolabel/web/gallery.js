@@ -137,8 +137,18 @@ async function galleryLoad(focusId = undefined) {
     return;
   }
   if (seq !== G.seq) return;                      // 그새 또 받았다
-  const keepId = focusId !== undefined ? focusId : G.items[G.focus]?.id ?? null;
+  let keepId = focusId !== undefined ? focusId : G.items[G.focus]?.id ?? null;
   const keepTop = focusId !== undefined ? null : cellTop(keepId);
+  if (focusId === undefined && keepId != null) {
+    // 지금 칸이 새 목록에 없으면(필터에서 빠졌다) 옛 순서에서 그 뒤의 첫 생존 칸(없으면 앞쪽의 마지막 생존 칸)을
+    // 지금 칸으로 하고, 빠진 칸이 있던 높이에 둔다 — 예전에는 맨 위로 튀었다(2026-11-05, 라벨링 keepCurrentRow 와 같다).
+    const alive = new Set(data.images.map((im) => im.id));
+    if (!alive.has(keepId)) {
+      const next = G.items.slice(G.focus + 1).find((im) => alive.has(im.id))
+        ?? G.items.slice(0, G.focus).reverse().find((im) => alive.has(im.id));
+      keepId = next ? next.id : null;
+    }
+  }
   G.items = data.images;
   G.pos = new Map(G.items.map((im, i) => [im.id, i]));
   for (const id of [...G.sel]) if (!G.pos.has(id)) G.sel.delete(id);
@@ -271,11 +281,17 @@ function toggleFocusSel() {
 
 /* ───────────────────────── 라벨링으로 ───────────────────────── */
 
-/** 그 이미지를 라벨링 보기에서 연다 — 지금 필터의 목록 안에서(↑·↓ 가 이어진다). */
+/** 그 이미지를 라벨링 보기에서 연다 — 지금 필터의 목록 안에서(↑·↓ 가 이어진다). 라벨링 목록을 먼저 다시 받는다 —
+ *  여기서 바꾼 것(Q·W·E·T)으로 서버 쪽 묶음 경계가 밀려 있으면, 옛 묶음으로 펼친 목록에서 줄이 빠졌다 (2026-11-05). */
 async function openInLabel(id) {
-  await setView("label");
-  await openChunkWith([id]);      // 묶음 보기에서 그 이미지가 닫힌 묶음에 있으면 펼친다
-  await loadImage(id);
+  try {
+    await setView("label");
+    await loadImageList();
+    await openChunkWith([id]);      // 묶음 보기에서 그 이미지가 닫힌 묶음에 있으면 펼친다
+    await loadImage(id);
+  } catch (err) {
+    toast(`라벨링에서 열지 못했습니다: ${err.message}`, true);
+  }
 }
 
 /** 고른 이미지만 라벨링 목록으로 넘긴다('지정한 id', 그리드 순서). 고른 것이 없으면 지금 칸 하나를 연다. */
@@ -286,8 +302,12 @@ async function openSelInLabel() {
     else toast("이미지를 먼저 고르세요");
     return;
   }
-  await setView("label");
-  await openIds(ids);
+  try {
+    await setView("label");
+    await openIds(ids);           // 목록을 못 받으면 앞 상태로 되돌리고 던진다
+  } catch (err) {
+    toast(`라벨링 목록으로 넘기지 못했습니다: ${err.message}`, true);
+  }
 }
 
 /* ───────────────────────── 한꺼번에 바꾸기 ───────────────────────── */
@@ -515,6 +535,7 @@ $("#gs-tag-q").addEventListener("keydown", (e) => {
 });
 $("#gs-add-tag").onclick = () => createTag($("#gs-new-tag"));
 $("#gs-new-tag").addEventListener("keydown", (e) => {
+  if (e.isComposing || e.keyCode === 229) return;     // 한글 조합 중의 Enter (app.js #new-tag 와 같다, 2026-11-05)
   if (e.key === "Enter") createTag($("#gs-new-tag"));
   if (e.key === "Escape") e.target.blur();
 });

@@ -24,6 +24,8 @@ const S = {
   sel: -1,            // 선택된 박스 인덱스
   curClass: 0,        // 새 박스에 붙일 클래스
   img: null,          // HTMLImageElement
+  imgId: null,        // S.img 가 어느 이미지의 사진인가 (onload 때 정한다). S.cur.id 와 다르면 아직 안 떴다
+  loadSeq: 0,         // loadImage 순번 — 겹치면 마지막 것만 반영한다
   view: { scale: 1, ox: 0, oy: 0 },
   mode: "box",        // "box" = 새 박스 / "pan" = 화면 끌기 / "sam" = SAM 클릭
   ctrl: false,        // Ctrl 을 누르고 있는 동안 두 모드가 뒤바뀐다
@@ -40,6 +42,7 @@ const S = {
   filterCamera: "",           // 카메라(출처) 필터: "" 전체 / 카메라키 / "__none__" 출처 없음
   filterDomain: "",           // 도메인 필터: "" 전체 / cctv·noncctv·drone / "__none__" 미분류
   filterSplit: "",            // 분할 필터: "" 전체 / train·val·test / "__none__" 미배정
+  statusBusy: false,          // 승인·건너뛰기(setStatus)가 도는 중 — navBusy 참고
   domainBusy: false,          // 도메인 지정이 도는 중 — 그동안의 Q·W·E(꾹 눌렀을 때 반복 입력)는 버린다
   tags: [],                   // [{id, name, n}] 이름순 (/api/tags)
   tagName: {},                // id -> 이름
@@ -57,6 +60,7 @@ const S = {
   predOn: false,      // 예측 비교(P) 켜짐
   pred: null,         // 지금 이미지의 예측 {weights, device, ms, model_classes, preds}
   predLoading: false,
+  predSeq: 0,         // 예측 요청 순번 — fetchPreds 를 다시 부르면 앞 요청의 결과를 버린다
   findings: [],       // 라벨과 예측이 어긋나는 곳 (computeFindings)
   predIgnore: new Set(),  // 이 이미지에서 '무시' 한 항목의 키
   findHot: -1,        // 목록에서 마우스를 올린 항목 (캔버스에서 굵게)
@@ -93,8 +97,25 @@ async function api(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(errorText(data.detail ?? data.error) || `HTTP ${res.status}`);
+    err.status = res.status;      // 부르는 쪽이 404(지워진 이미지) 등을 가린다 (2026-11-05)
+    throw err;
+  }
   return data;
+}
+
+/** 서버 오류 본문을 한 줄로. FastAPI 의 입력 검사 실패(422)는 detail 이 [{loc, msg, …}] 배열이라 그대로 Error 에
+ *  넣으면 '[object Object]' 가 됐다(2026-11-05) — 항목마다 '어디: 무엇' 으로 잇는다. */
+function errorText(detail) {
+  if (detail == null) return "";
+  if (typeof detail === "string") return detail;
+  if (!Array.isArray(detail)) return JSON.stringify(detail);
+  return detail.map((d) => {
+    if (!d || typeof d !== "object") return String(d);
+    const loc = Array.isArray(d.loc) ? d.loc.filter((x) => x !== "body").join(".") : "";
+    return (loc ? `${loc}: ` : "") + (d.msg ?? JSON.stringify(d));
+  }).join("; ");
 }
 
 
@@ -137,6 +158,12 @@ function rectToBox(x, y, w, h) {
   const W = S.cur.width, H = S.cur.height;
   const [rx, ry, rw, rh] = clipRect(x, y, w, h);
   return { cx: (rx + rw / 2) / W, cy: (ry + rh / 2) / H, w: rw / W, h: rh / H };
+}
+
+/** 서버가 받지 않는 크기인가 — 폭·높이가 0 이면 저장이 422 로 막히고(BoxIn w·h > 0), 1e-4 이하면 저장할 때 조용히
+ *  빠진다(yolo_io.is_valid). 이미지 1px 보다 좁아도 쓸모가 없어 함께 막는다 (2026-11-05). */
+function tooSmall(b) {
+  return Math.min(b.w * S.cur.width, b.h * S.cur.height) < 1 || Math.min(b.w, b.h) <= 2e-4;
 }
 
 /** 이동용. 크기를 유지한 채 이미지 안으로 밀어 넣는다 (잘라서 줄이지 않는다). */
@@ -190,6 +217,9 @@ function handlePositions(b) {
 }
 
 function draw() {
+  // 지금 이미지의 사진이 아직 안 떴으면(받는 중) 앞 장 그림을 그대로 둔다 — 앞 사진 위에 이 이미지의 박스를
+  // 그리지 않게(2026-11-05). 받지 못했으면 loadImage 의 onerror 가 S.img 를 비워 빈 화면이 된다.
+  if (S.cur && S.img && S.imgId !== S.cur.id) return;
   const cw = canvas.clientWidth, ch = canvas.clientHeight;
   ctx.clearRect(0, 0, cw, ch);
   if (!S.cur || !S.img) return;
@@ -268,6 +298,22 @@ const clsName = (i) => S.classes[i] ?? `cls_${i}`;
 
 let drag = null;
 
+/** 끄는 동안 대상이 없어졌나 — 끄던 박스가 지워졌거나(Ctrl+Z·Delete·우클릭·SAM 다듬기·되돌리기) 그리던 이미지에서
+ *  넘어갔다. 예전에는 mousemove 가 TypeError 를 냈고, mouseup 이 관계없는 되돌리기 한 칸을 버렸다 (2026-11-05). */
+function dragLost() {
+  if (!S.cur) return true;
+  if (drag.box) return !S.boxes.includes(drag.box);
+  return drag.id !== undefined && drag.id !== S.cur.id;
+}
+
+/** 끄는 박스를 nb 로 바꾼다. 되돌리기는 처음 바꿀 때 한 번 쌓는다 — 누르기만 하고 놓으면 쌓을 것도 거둘 것도 없다. */
+function editDragBox(nb) {
+  if (!drag.edited) { pushUndo(); drag.edited = true; }
+  Object.assign(drag.box, nb);
+  markDirty();
+  draw();
+}
+
 function mousePos(e) {
   const r = canvas.getBoundingClientRect();
   return [e.clientX - r.left, e.clientY - r.top];
@@ -343,7 +389,8 @@ async function samBox({ point, box, replace = -1 }) {
     if (target && at < 0) { toast("다듬는 사이에 박스가 바뀌어 SAM 결과를 버렸습니다"); return; }
     pushUndo();
     if (target) {
-      S.boxes[at] = { ...r.box, cls: target.cls };
+      // 열었을 때의 클래스(cls0)도 남긴다 — '같은 자리 일괄 수정' 이 원래 클래스로 짝을 찾는다 (2026-11-05)
+      S.boxes[at] = { ...r.box, cls: target.cls, cls0: target.cls0 };
       selectBox(at);
     } else {
       S.boxes.push(r.box);
@@ -390,7 +437,8 @@ function hitBox(sx, sy) {
 }
 
 canvas.addEventListener("mousedown", (e) => {
-  if (!S.cur) return;
+  // 지금 이미지의 사진이 뜨기 전(받는 중·받지 못함)에는 받지 않는다 — 보이지 않는 이미지에 박스가 생겼다 (2026-11-05)
+  if (!S.cur || S.imgId !== S.cur.id) return;
   const [sx, sy] = mousePos(e);
 
   // 가운데 버튼은 모드와 무관하게 항상 화면 끌기
@@ -415,34 +463,34 @@ canvas.addEventListener("mousedown", (e) => {
   if (effectiveMode() === "sam") {
     selectBox(-1);
     const [ix, iy] = toImage(sx, sy);
-    drag = { mode: "new", ix, iy, sam: true };
+    drag = { mode: "new", ix, iy, sam: true, id: S.cur.id };
     return;
   }
 
+  // 이동·크기 조절은 끄는 박스(box)를 붙잡아 둔다. 되돌리기는 실제로 바꿀 때 쌓는다(editDragBox)
   const handle = hitHandle(sx, sy);
   if (handle) {
-    pushUndo();
-    drag = { mode: "resize", handle, start: boxRect(S.boxes[S.sel]), sx, sy };
+    drag = { mode: "resize", handle, start: boxRect(S.boxes[S.sel]), sx, sy, box: S.boxes[S.sel] };
     return;
   }
 
   const hit = hitBox(sx, sy);
   if (hit >= 0) {
     selectBox(hit);
-    pushUndo();
     const [ix, iy] = toImage(sx, sy);
     const [x, y] = boxRect(S.boxes[hit]);
-    drag = { mode: "move", dx: ix - x, dy: iy - y, sx, sy };
+    drag = { mode: "move", dx: ix - x, dy: iy - y, sx, sy, box: S.boxes[hit] };
     return;
   }
 
   selectBox(-1);
   const [ix, iy] = toImage(sx, sy);
-  drag = { mode: "new", ix, iy };
+  drag = { mode: "new", ix, iy, id: S.cur.id };
 });
 
 window.addEventListener("mousemove", (e) => {
   if (!drag || !S.cur) return;
+  if (dragLost()) { drag = null; renderMode(); draw(); return; }
   const [sx, sy] = mousePos(e);
   const [ix, iy] = toImage(sx, sy);
 
@@ -475,12 +523,9 @@ window.addEventListener("mousemove", (e) => {
   }
 
   if (drag.mode === "move") {
-    const b = S.boxes[S.sel];
-    const [, , w, h] = boxRect(b);
+    const [, , w, h] = boxRect(drag.box);
     // 이동은 크기를 지킨다. 잘라내면 이미지 밖으로 끌었을 때 박스가 쪼그라든다.
-    Object.assign(b, rectToBoxInside(ix - drag.dx, iy - drag.dy, w, h));
-    markDirty();
-    draw();
+    editDragBox(rectToBoxInside(ix - drag.dx, iy - drag.dy, w, h));
     return;
   }
 
@@ -491,17 +536,17 @@ window.addEventListener("mousemove", (e) => {
     if (drag.handle.includes("s")) y2 = iy;
     if (drag.handle.includes("w")) x = ix;
     if (drag.handle.includes("e")) x2 = ix;
-    Object.assign(
-      S.boxes[S.sel],
-      rectToBox(Math.min(x, x2), Math.min(y, y2), Math.abs(x2 - x), Math.abs(y2 - y))
-    );
-    markDirty();
-    draw();
+    const nb = rectToBox(Math.min(x, x2), Math.min(y, y2), Math.abs(x2 - x), Math.abs(y2 - y));
+    // 가장자리에 붙은 박스의 반대쪽 핸들을 이미지 밖까지 끌면 잘린 폭·높이가 0 이 된다 — 그 저장이 422 로 막혀
+    // 수정 표시가 안 풀리고 넘기기도 막혔다(2026-11-05). 그만큼 줄이는 움직임은 받지 않는다(직전 크기로 남는다).
+    if (tooSmall(nb)) return;
+    editDragBox(nb);
   }
 });
 
 window.addEventListener("mouseup", (e) => {
   if (!drag) return;
+  if (dragLost()) { drag = null; renderMode(); draw(); return; }
 
   // 끌기 모드에서 거의 움직이지 않았으면 '클릭'으로 보고 박스를 선택한다.
   if (drag.mode === "pan") {
@@ -550,29 +595,27 @@ window.addEventListener("mouseup", (e) => {
       const [x1, y1] = [Math.min(drag.ix, drag.cur[0]), Math.min(drag.iy, drag.cur[1])];
       const [x2, y2] = [Math.max(drag.ix, drag.cur[0]), Math.max(drag.iy, drag.cur[1])];
       const nb = rectToBox(x1, y1, x2 - x1, y2 - y1);
-      // 이미지 밖에서만 그렸으면 잘라낸 결과가 비어 있다. 그때는 만들지 않는다.
-      if (nb.w > 0 && nb.h > 0) {
+      // 이미지 밖에서만 그렸으면 잘라낸 결과가 비어 있다. 그때는 만들지 않는다. 남은 것이 1px 도 안 되면(가장자리에
+      // 걸친 것·크게 확대한 것) 서버가 저장할 때 조용히 버리므로 그것도 만들지 않는다 (tooSmall, 2026-11-05).
+      if (!tooSmall(nb)) {
         pushUndo();
         S.boxes.push({ cls: S.curClass, ...nb, conf: null, origin: "human" });
         selectBox(S.boxes.length - 1);
         markDirty();
       } else {
-        toast("이미지 바깥에는 박스를 만들 수 없습니다");
+        toast(nb.w > 0 && nb.h > 0 ? "박스가 너무 작습니다 (이미지에서 1px 미만)" : "이미지 바깥에는 박스를 만들 수 없습니다");
       }
     }
   }
   if (drag.mode === "move" || drag.mode === "resize") {
-    if (drag.changed) {
+    if (drag.edited) {
       // 사람이 손댄 박스는 더 이상 모델 예측이 아니다. 끄는 도중에 자동 저장이 한 번
       // 돌았을 수 있으므로 이 변경도 저장 대상으로 올린다.
-      const b = S.boxes[S.sel];
-      if (b) { b.origin = "human"; b.conf = null; }
+      drag.box.origin = "human"; drag.box.conf = null;
       markDirty();
-    } else {
-      // 클릭해서 고르기만 했다. 누를 때 쌓은 되돌리기를 거둔다. 예전에는 고르기만 해도
-      // 자동 라벨이 '수동' 으로 바뀌고 신뢰도가 지워져, 다음 저장 때 그대로 DB 로 갔다.
-      S.undo.pop();
     }
+    // 클릭해서 고르기만 했으면(또는 받지 않은 움직임뿐이면) 아무것도 바꾸지 않는다 — 되돌리기도 쌓지 않았다.
+    // 예전에는 고르기만 해도 자동 라벨이 '수동' 으로 바뀌고 신뢰도가 지워져, 다음 저장 때 그대로 DB 로 갔다.
     renderBoxList();      // 옮긴 박스로 예측 비교도 다시 맞춘다
   }
   drag = null;
@@ -599,6 +642,7 @@ canvas.addEventListener("wheel", (e) => {
 canvas.addEventListener("contextmenu", (e) => {
   // 우클릭으로 박스 삭제
   e.preventDefault();
+  if (!S.cur || S.imgId !== S.cur.id) return;     // 사진이 뜨기 전에는 보이지 않는 박스를 지우지 않게 (mousedown 과 같다)
   const [sx, sy] = mousePos(e);
   const hit = hitBox(sx, sy);
   if (hit >= 0) { pushUndo(); S.boxes.splice(hit, 1); selectBox(-1); markDirty(); refresh(); }
@@ -670,10 +714,18 @@ async function saveBoxes() {
       setHistCount(res.n_history);
       if (S.histOpen) loadHistory();
     }
+    setRowBoxes(id, res.n_boxes);     // 왼쪽 줄의 박스 수도 서버가 센 값으로
     // 박스를 고쳤으면 클래스별 집계도 달라진다.
     loadState().catch(() => {});
   } catch (err) {
-    toast(`저장 실패: ${err.message}`, true);
+    if (err.status === 404 && S.cur && S.cur.id === id) {
+      // 그새 다른 곳(다른 창의 휴지통 비우기·정리 등)에서 DB 에서 지워졌다 — 저장할 곳이 없으니 수정 표시를 내려
+      // 넘기기를 막지 않는다. 예전에는 S.dirty 가 남아 새로 고칠 때까지 아무 데도 못 갔다 (2026-11-05)
+      S.dirty = false;
+      toast("이 이미지는 DB 에서 지워져 수정을 저장하지 못했습니다 — 다른 이미지로 넘어가세요", true);
+    } else {
+      toast(`저장 실패: ${err.message}`, true);
+    }
   } finally {
     S.saving = null;
   }
@@ -845,7 +897,7 @@ function itemRow(im, pos) {
     tag.title = `${clsName(im.rare_cls)} — 승인 데이터에서 이 클래스가 나온 장면 묶음 ${im.rare_groups}개`
       + ` · 점수 ${im.rare_score} (신뢰도 × 희소도)`;
   }
-  li.onclick = () => loadImage(im.id);
+  li.onclick = () => openImage(im.id);
   return li;
 }
 
@@ -1253,6 +1305,19 @@ function refreshRows(ids) {
   });
 }
 
+/** 목록 줄의 박스 수를 n 으로 고친다(그 줄만). 예전에는 저장해도 목록을 다시 받기 전까지 열었을 때의 수가 남았다
+ *  (2026-11-05). */
+function setRowBoxes(id, n) {
+  const row = S.images.find((im) => im.id === id);
+  if (!row || n === undefined || row.n_boxes === n) return;
+  row.n_boxes = n;
+  refreshRows([id]);
+}
+
+/** 승인·건너뛰기(setStatus)·도메인(Q·W·E)·태그(T)·'새로 받기'(refreshList)는 하나씩만 돈다 — 하나가 도는 동안 들어온
+ * 것은 버린다. 겹치면 다음 이미지를 엉뚱하게 고르거나, 화면에 뜨지도 않은 다음 이미지까지 승인했다 (2026-11-05). */
+const navBusy = () => S.statusBusy || S.domainBusy || S.tagBusy || S.listBusy;
+
 /** 도메인을 정하고 다음 이미지로. 이미 그 값이어도 풀지 않는다(다른 키를 누르면 바뀐다).
  *
  * 하나가 끝나기 전에 들어온 누름은 버린다. 키를 꾹 누르면 초당 30번쯤 반복 입력이 들어오는데,
@@ -1260,7 +1325,7 @@ function refreshRows(ids) {
  * 처리하는 데 25초 동안 화면이 멈췄다(2026-11-03, 6,229줄 '전체' 보기). 이제는 꾹 누르면
  * 처리가 끝나는 대로 한 장씩 넘어간다. */
 async function setDomain(domain) {
-  if (!S.cur || S.domainBusy || S.listBusy) return;
+  if (!S.cur || navBusy()) return;
   S.domainBusy = true;
   try {
     await setDomainNow(domain);
@@ -1401,7 +1466,7 @@ async function toggleImageTag(tagId, on) {
 /** T: 고른 태그를 이 이미지에 붙이고 다음으로. 이미 붙어 있으면 넘어가기만 한다(떼지 않는다 —
  * Q·W·E 와 같다). 꾹 누르면 하나씩 처리한다(setDomain 참고). */
 async function tagAndNext() {
-  if (!S.cur || S.tagBusy || S.listBusy) return;
+  if (!S.cur || navBusy()) return;
   if (S.curTag == null) { toast("오른쪽 태그 목록에서 붙일 태그를 먼저 누르세요 (없으면 만드세요)", true); return; }
   S.tagBusy = true;
   try {
@@ -1544,6 +1609,7 @@ function renderClassFilter() {
     cb.checked = S.filterClasses.has(i);
     cb.disabled = S.filterEmpty;
     cb.onchange = () => {
+      cb.blur();      // 포커스가 남으면 Space 가 승인 대신 이 칸을 다시 눌러 필터를 바꾼다 (2026-11-05)
       cb.checked ? S.filterClasses.add(i) : S.filterClasses.delete(i);
       syncClassFilter();
       reloadList();
@@ -1564,6 +1630,7 @@ function renderClassFilter() {
   cb.type = "checkbox";
   cb.checked = S.filterEmpty;
   cb.onchange = () => {
+    cb.blur();        // 위와 같다
     S.filterEmpty = cb.checked;
     if (S.filterEmpty) S.filterClasses.clear();   // 둘은 함께 쓸 수 없다
     syncClassFilter();
@@ -1633,6 +1700,11 @@ function parseIds(text) {
     const m = t.match(/^(\d+)(?:-(\d+))?$/);
     if (!m) throw new Error(`id 로 읽을 수 없는 조각: '${t}' — 숫자나 범위(5493-5497)를 쉼표·공백으로 구분해 주세요.`);
     const a = Number(m[1]), b = m[2] === undefined ? a : Number(m[2]);
+    // 2^53 부터는 Number 로 정확히 못 담는다 — 범위면 i += step 이 제자리라 끝나지 않았고(창이 멈췄다), 한 개면
+    // 옆 수로 바뀌어 조용히 빠졌다(2026-11-05). 그런 조각은 읽지 않고 알린다.
+    if (!Number.isSafeInteger(a) || !Number.isSafeInteger(b)) {
+      throw new Error(`id 가 너무 큽니다: '${t}' — ${Number.MAX_SAFE_INTEGER} 까지 쓸 수 있습니다.`);
+    }
     if (out.size + Math.abs(b - a) + 1 > IDS_MAX) {
       throw new Error(`id 는 한 번에 ${IDS_MAX.toLocaleString()}개까지 열 수 있습니다.`);
     }
@@ -1666,14 +1738,26 @@ function idsFromHash() {
   try { return parseIds(m[1]); } catch { return null; }
 }
 
-/** 지정한 id 들만 목록으로 만들어 첫 장을 연다. 화살표·승인은 이 목록 안에서 움직인다. */
+/** 지정한 id 들만 목록으로 만들어 첫 장을 연다. 화살표·승인은 이 목록 안에서 움직인다.
+ *  목록을 받지 못하면 앞 상태(S.ids·상태 칸·입력칸)로 되돌리고 오류를 다시 던진다 — 부르는 쪽이 알린다. 예전에는
+ *  되돌리지 않아 상태 칸은 '지정한 id' 인데 목록은 그 전 것이 남았다 (2026-11-05). */
 async function openIds(ids) {
+  const sel = $("#filter-status"), opt = sel.querySelector('option[value="ids"]'), input = $("#goto-ids");
+  const prev = { ids: S.ids, status: sel.value, hidden: opt.hidden, text: input.value };
   S.ids = ids;
-  const sel = $("#filter-status");
-  sel.querySelector('option[value="ids"]').hidden = false;
+  opt.hidden = false;
   sel.value = "ids";
-  $("#goto-ids").value = compressIds(ids, ", ");
-  await loadImageList(new Set([0]));
+  input.value = compressIds(ids, ", ");
+  try {
+    await loadImageList(new Set([0]));
+  } catch (err) {
+    S.ids = prev.ids;
+    opt.hidden = prev.hidden;
+    sel.value = prev.status;
+    input.value = prev.text;
+    syncListControls();
+    throw err;
+  }
   if (S.images.length) await loadImage(S.images[0].id);
   // 알림은 한 번에 하나만 보이므로 없는 id 경고를 장수와 한 줄로 합친다.
   const miss = S.missingIds;
@@ -1787,6 +1871,7 @@ async function restoreEntry(h) {
     S.ghost = null;
     showSaved(r.n_boxes);
     setHistCount(r.n_history);
+    setRowBoxes(id, r.n_boxes);
     refresh();
     loadHistory();
     loadState().catch(() => {});
@@ -1853,7 +1938,10 @@ async function openAudit(mode = "shrunk") {
     ? `${rows.length}건 · 이미지 ${ids.length}장 (최근 500건까지)`
     : "";
   $("#audit-open").disabled = !ids.length;
-  $("#audit-open").onclick = () => { closeModal(); openIds(ids); };
+  $("#audit-open").onclick = () => {
+    closeModal();
+    openIds(ids).catch((err) => toast(`목록으로 열지 못했습니다: ${err.message}`, true));
+  };
   if (!rows.length) {
     $("#audit-body").innerHTML = mode === "shrunk"
       ? "<p>박스 수가 줄어든 저장이 없습니다.</p>"
@@ -1870,7 +1958,8 @@ async function openAudit(mode = "shrunk") {
         <td>${esc(SRC_KO[r.source] || r.source)}</td>
       </tr>`).join("")}</tbody></table>`;
   $("#audit-body").querySelectorAll("tr.link").forEach((tr) => {
-    tr.onclick = () => { closeModal(); loadImage(Number(tr.dataset.id)); };
+    // 이미지 보기에서 눌렀으면 라벨링으로 먼저 간다 — 아니면 뒤에 숨은 라벨링에서만 열려 화면이 그대로였다 (2026-11-05)
+    tr.onclick = async () => { closeModal(); await setView("label"); openImage(Number(tr.dataset.id)); };
   });
 }
 
@@ -1990,7 +2079,11 @@ async function openSamePlace() {
 
   $("#sp-iou").onchange = (e) => { st.iou = Number(e.target.value); preview(); };
   $("#sp-any").onchange = (e) => { st.any = e.target.checked; preview(); };
-  $("#sp-list").onclick = () => { const ids = st.preview.ids; closeModal(); openIds(ids); };
+  $("#sp-list").onclick = () => {
+    const ids = st.preview.ids;
+    closeModal();
+    openIds(ids).catch((err) => toast(`목록으로 열지 못했습니다: ${err.message}`, true));
+  };
   $("#sp-apply").onclick = async () => {
     $("#sp-apply").disabled = true;
     try {
@@ -2199,17 +2292,29 @@ function ignoreFinding(f) {
   draw();
 }
 
-async function fetchPreds() {
+/** P: 지금 이미지의 예측을 받는다. 화면('예측 중…')은 바로 바꾸고 요청은 delay 뒤에 보낸다 — P 를 켠 채 빨리 넘기면
+ *  지나친 장마다 서버에서 추론이 쌓였다(2026-11-05). 이미지 보기에서는 보내지 않는다 — 거기서 필터를 바꾸면 숨은
+ *  라벨링의 첫 장마다 추론이 돌았다. 라벨링으로 돌아올 때 setView 가 다시 부른다. */
+const PRED_DELAY = 200;
+function fetchPreds(delay = PRED_DELAY) {
+  clearTimeout(S._predTimer);
   if (!S.predOn || !S.cur) return;
-  const id = S.cur.id;
+  const id = S.cur.id, seq = ++S.predSeq;
   S.pred = null;
-  S.predLoading = true;
-  $("#pred-info").textContent = "예측 중…";
+  S.predLoading = VIEW === "label";
+  $("#pred-info").textContent = S.predLoading ? "예측 중…" : "";
   $("#pred-info").title = "";
   updateFindings();
+  if (S.predLoading) S._predTimer = setTimeout(() => requestPreds(id, seq), delay);
+}
+
+async function requestPreds(id, seq) {
+  // 그새 넘어갔거나 P 를 껐거나 다시 불렀으면(seq) 버린다 — 보내기 전에도, 받은 뒤에도
+  const live = () => seq === S.predSeq && S.predOn && !!S.cur && S.cur.id === id;
+  if (!live()) return;
   try {
     const r = await api(`/api/images/${id}/predict`);
-    if (!S.cur || S.cur.id !== id || !S.predOn) return;
+    if (!live()) return;
     S.pred = r;
     $("#pred-info").textContent = `${r.weights} · ${r.device === "cpu" ? "CPU" : "GPU"} ${Math.round(r.ms)}ms`;
     $("#pred-info").title = (r.device === "cpu" ? "GPU 에서 학습·자동 라벨링이 도는 중이라 CPU 로 돌렸습니다.\n" : "")
@@ -2217,12 +2322,12 @@ async function fetchPreds() {
         ? `이 모델은 ${r.unknown_classes.join("·")} 를 모릅니다 — 그 클래스의 라벨은 비교하지 않습니다.`
         : "");
   } catch (err) {
-    if (S.cur && S.cur.id === id) {
+    if (live()) {
       $("#pred-info").textContent = "실패";
       toast(`예측 실패: ${err.message}`, true);
     }
   } finally {
-    if (S.cur && S.cur.id === id) {
+    if (live()) {
       S.predLoading = false;
       updateFindings();
       draw();
@@ -2236,8 +2341,8 @@ function togglePred(on = !S.predOn) {
   $("#btn-pred").classList.toggle("on", on);
   $("#pred-head").classList.toggle("hidden", !on);
   $("#pred-list").classList.toggle("hidden", !on);
-  if (on) fetchPreds();
-  else { S.pred = null; S.findings = []; S.findHot = -1; draw(); }
+  if (on) fetchPreds(0);        // 누른 것이니 기다리지 않는다
+  else { clearTimeout(S._predTimer); S.pred = null; S.predLoading = false; S.findings = []; S.findHot = -1; draw(); }
 }
 
 /** 서버에서 박스가 바뀌었을 때(일괄 수정·되돌리기) 지금 이미지의 박스를 다시 읽는다. */
@@ -2309,20 +2414,26 @@ function syncModelDot() {
   $("#model-dot").classList.toggle("hidden", !any);
 }
 
+/** 상태가 '지정한 id' 면 정렬·클래스·카메라·도메인·분할·태그 필터를 끈다(id 목록은 그것들을 보지 않는다).
+ *  openIds 가 목록을 못 받아 상태를 되돌릴 때도 부른다. */
+function syncListControls() {
+  const ids = $("#filter-status").value === "ids";
+  $("#filter-order").disabled = ids;   // 지정한 id 는 넣은 순서 그대로
+  $("#cf-toggle").disabled = ids;      // id 목록은 클래스 필터를 무시한다
+  $("#filter-camera").disabled = ids;  // 카메라 필터도 마찬가지
+  $("#filter-domain").disabled = ids;
+  $("#filter-split").disabled = ids;
+  tagFilter?.setDisabled(ids);
+  if (ids) $("#cf-panel").classList.add("hidden");
+  renderFilterSummary();
+}
+
 /** 목록을 묶음 단위로 다시 구성한다. keepOpen 에 있는 묶음 번호는 열린 채로 둔다. */
 async function loadImageList(keepOpen = null) {
-  const status = $("#filter-status").value;
   // '전체' 는 묶음 하나에 다 담는다 (2026-11-03 사용자 요청)
   const chunkValue = $("#chunk-size").value;
   const size = chunkValue === "all" ? 1e9 : Number(chunkValue) || 500;
-  $("#filter-order").disabled = status === "ids";   // 지정한 id 는 넣은 순서 그대로
-  $("#cf-toggle").disabled = status === "ids";      // id 목록은 클래스 필터를 무시한다
-  $("#filter-camera").disabled = status === "ids";  // 카메라 필터도 마찬가지
-  $("#filter-domain").disabled = status === "ids";
-  $("#filter-split").disabled = status === "ids";
-  tagFilter?.setDisabled(status === "ids");
-  if (status === "ids") $("#cf-panel").classList.add("hidden");
-  renderFilterSummary();
+  syncListControls();
 
   const openBefore = keepOpen ?? new Set(
     S.chunks.filter((c) => c.open).map((c) => c.start)
@@ -2368,12 +2479,50 @@ async function saveBeforeLeaving() {
   return false;
 }
 
+/** 아래 단추를 지금 이미지의 상태에 맞춘다. 상태를 바꾸고 그 이미지에 머물 때(묶음의 마지막 장)도 부른다 —
+ *  휴지통으로 보낸 채 머물면 '승인' 이 그대로 보였다 (2026-11-05). */
+function renderStatusButtons() {
+  const status = S.cur ? S.cur.status : null;
+  const skipBtn = $("#btn-skip");
+  if (status === "pending") {
+    skipBtn.innerHTML = '건너뛰기 <kbd>S</kbd>';
+    skipBtn.title = "이 이미지를 '건너뜀'으로 표시하고 다음으로";
+  } else {
+    skipBtn.innerHTML = '다음 <kbd>S</kbd>';
+    skipBtn.title = "상태를 바꾸지 않고 다음 이미지로";
+  }
+
+  // 휴지통에 있는 이미지는 '복원'과 '비우기'를, 그 외에는 '휴지통'을 보여준다.
+  const inTrash = status === "trashed";
+  $("#btn-trash").classList.toggle("hidden", inTrash);
+  $("#btn-restore").classList.toggle("hidden", !inTrash);
+  $("#btn-purge").classList.toggle("hidden", !inTrash);
+  $("#btn-approve").classList.toggle("hidden", inTrash);
+}
+
+/** 목록 줄·화살표·변경 기록에서 연다 — 받지 못하면 알린다(부르는 쪽이 기다리지 않는다). */
+function openImage(id) {
+  loadImage(id).catch((err) => toast(`이미지를 열지 못했습니다: ${err.message}`, true));
+}
+
 async function loadImage(id) {
+  // 빨리 넘기면 여러 번이 겹친다. 마지막으로 부른 것만 반영한다 — 예전에는 늦게 온 앞 응답이 이겨, 마지막에
+  // 누른 것과 다른 이미지가 열렸다 (2026-11-05)
+  const seq = ++S.loadSeq;
   if (!(await saveBeforeLeaving())) return;
-  const meta = await api(`/api/images/${id}`);
+  let meta;
+  try {
+    meta = await api(`/api/images/${id}`);
+  } catch (err) {
+    if (seq !== S.loadSeq) return;      // 그새 다른 이미지를 열었다 — 이 실패는 알릴 것이 없다
+    throw err;
+  }
   // 받아 오는 사이에 지금 이미지를 또 고쳤을 수 있다. 바꾸기 직전에 한 번 더 저장한다.
-  if (!(await saveBeforeLeaving())) return;
+  if (seq !== S.loadSeq || !(await saveBeforeLeaving()) || seq !== S.loadSeq) return;
   S.cur = meta;
+  // 이번에 연 사진이 뜰 때까지(onload) 승인·그리기를 막는다 — 같은 이미지를 다시 열어도(작업 뒤 syncCurrentAfterJob)
+  // 새 박스가 그려지기 전에 Space 가 승인하지 않게
+  S.imgId = null;
   // cls0 = 열었을 때의 클래스. '같은 자리 일괄 수정' 이 원래 클래스로 짝을 찾는 데 쓴다.
   // 저장 페이로드에는 들어가지 않는다 (saveBoxes 가 필드를 골라 보낸다).
   S.boxes = meta.boxes.map((b) => ({ ...b, cls0: b.cls }));
@@ -2389,23 +2538,9 @@ async function loadImage(id) {
   S.findings = [];
   S.predIgnore = new Set();
   S.findHot = -1;
-  if (S.predOn) fetchPreds();
+  fetchPreds();             // P 가 켜져 있을 때만, 잠깐 뒤에 (fetchPreds)
 
-  const skipBtn = $("#btn-skip");
-  if (meta.status === "pending") {
-    skipBtn.innerHTML = '건너뛰기 <kbd>S</kbd>';
-    skipBtn.title = "이 이미지를 '건너뜀'으로 표시하고 다음으로";
-  } else {
-    skipBtn.innerHTML = '다음 <kbd>S</kbd>';
-    skipBtn.title = "상태를 바꾸지 않고 다음 이미지로";
-  }
-
-  // 휴지통에 있는 이미지는 '복원'과 '비우기'를, 그 외에는 '휴지통'을 보여준다.
-  const inTrash = meta.status === "trashed";
-  $("#btn-trash").classList.toggle("hidden", inTrash);
-  $("#btn-restore").classList.toggle("hidden", !inTrash);
-  $("#btn-purge").classList.toggle("hidden", !inTrash);
-  $("#btn-approve").classList.toggle("hidden", inTrash);
+  renderStatusButtons();
 
   $("#img-name").textContent = meta.name;
   $("#img-meta").textContent =
@@ -2422,8 +2557,8 @@ async function loadImage(id) {
 
   const img = new Image();
   img.onload = () => {
-    // 빨리 넘기면 앞 이미지가 늦게 도착할 수 있다. 지금 이미지가 아니면 버린다.
-    if (!S.cur || S.cur.id !== id) return;
+    // 빨리 넘기면 앞 이미지가 늦게 도착할 수 있다. 지금 이미지가 아니면 버린다(같은 이미지를 다시 열었으면 뒤의 것만).
+    if (S.cur !== meta) return;
     // 화면 좌표는 **브라우저가 그린 크기**로 계산한다. EXIF 회전이 있는 사진은 DB 크기
     // (회전 전 원시 크기, 예: 4000x3000)와 브라우저가 그린 크기(3000x4000)가 뒤바뀌어
     // 찌그러져 보였다. 박스는 정규화 좌표이고 학습(Ultralytics)도 회전을 적용한 화면
@@ -2431,9 +2566,16 @@ async function loadImage(id) {
     // (2026-09-23, 정사각이 아닌 4장: id 1050·1126·1692·3181).
     S.cur.width = img.naturalWidth || S.cur.width;
     S.cur.height = img.naturalHeight || S.cur.height;
-    S.img = img; S.pendingFit = true; fitView(); refresh();
+    S.img = img; S.imgId = id; S.pendingFit = true; fitView(); refresh();
   };
-  img.onerror = () => { if (S.cur && S.cur.id === id) toast("이미지를 불러오지 못했습니다.", true); };
+  img.onerror = () => {
+    if (S.cur !== meta) return;
+    // 앞 장 사진을 남겨 두면 그 위에 이 이미지의 박스가 그려지고 Space 가 이 이미지를 승인했다(2026-11-05).
+    // 비워서 빈 화면으로 두고(승인·그리기는 막힌다 — setStatus·mousedown), 오른쪽 박스 목록은 이 이미지 것으로.
+    S.img = null; S.imgId = null;
+    refresh();
+    toast("이미지를 불러오지 못했습니다 — 승인은 막고, 건너뛰기·휴지통은 됩니다.", true);
+  };
   // 예전 스키마에서는 id 가 재사용됐다(CLAUDE.md 함정 11). URL 에 갱신 시각을 붙여 캐시를
   // 가른다. 서버도 Cache-Control: no-cache 를 보내지만, 그 헤더가 없던 시절에 이미 캐시된
   // 항목은 브라우저가 서버에 묻지도 않고 내주므로 URL 자체가 달라져야 한다.
@@ -2445,13 +2587,49 @@ async function loadImage(id) {
 
 /* ───────────────────────── 검수 동작 ───────────────────────── */
 
-/** 상태를 바꾸고 다음 이미지로. status=null 이면 상태는 그대로 두고 넘어가기만 한다. */
+/** 상태를 바꾸고 다음 이미지로. status=null 이면 상태는 그대로 두고 넘어가기만 한다.
+ *  하나가 끝나기 전에 들어온 것(연타)과 Q·W·E·T·새로 받기가 도는 동안 들어온 것은 버린다(navBusy) — 예전에는 Space 를
+ *  누르고 있으면 겹쳐 돌아, 화면에 뜨지도 않은 다음 이미지까지 승인됐다. 실패도 알린다 — 예전에는 묻혔다 (2026-11-05). */
 async function setStatus(status) {
-  if (!S.cur) return;
+  if (!S.cur || navBusy()) return;
+  if (status === "approved" && S.cur.status === "trashed") {
+    toast("휴지통 이미지는 [복원] 한 뒤 승인하세요", true);
+    return;
+  }
+  if (status === "approved" && S.imgId !== S.cur.id) {
+    toast("이 이미지의 사진이 아직 화면에 없어 승인하지 않았습니다 (받는 중이거나 받지 못했습니다)", true);
+    return;
+  }
+  S.statusBusy = true;
+  try {
+    await setStatusNow(status);
+  } catch (err) {
+    toast(`${status ? "상태는 바꿨지만 " : ""}다음 이미지로 넘어가지 못했습니다: ${err.message}`, true);
+  } finally {
+    S.statusBusy = false;
+  }
+}
+
+async function setStatusNow(status) {
+  const id = S.cur.id;
   // 저장에 실패한 채로 승인하면 화면과 다른 박스가 학습에 들어간다.
   if (!(await saveBeforeLeaving())) return;
-
-  const id = S.cur.id;
+  // 저장을 기다리는 사이 다른 이미지로 갔으면(↑·↓·목록 클릭) 멈춘다 — 그 이미지를 대신 승인하지 않게
+  if (!S.cur || S.cur.id !== id) {
+    if (status) toast("저장하는 사이 다른 이미지로 넘어가 상태를 바꾸지 않았습니다", true);
+    return;
+  }
+  // 자동 라벨링이 도는 중이면 승인 전에 서버의 박스를 한 번 더 본다 — 보는 사이 작업이 이 이미지에 박스를 넣었으면
+  // 사람이 보지 않은 박스가 승인된다(2026-11-05). 작업이 끝난 뒤는 syncCurrentAfterJob 이 맞춘다.
+  if (status === "approved" && S.jobKind === "predict") {
+    const now = await api(`/api/images/${id}`);
+    if (!S.cur || S.cur.id !== id) return;
+    if (!sameBoxes(now.boxes, S.boxes)) {
+      toast("자동 라벨링이 그새 이 이미지에 박스를 넣었습니다 — 다시 읽었으니 확인한 뒤 승인하세요", true);
+      await loadImage(id);
+      return;
+    }
+  }
   const before = S.images.map((im) => im.id);
 
   if (status === "approved") {
@@ -2467,7 +2645,14 @@ async function setStatus(status) {
   }
 
   if (status) {
-    await api(`/api/images/${id}/status`, { method: "POST", body: { status } });
+    try {
+      await api(`/api/images/${id}/status`, { method: "POST", body: { status } });
+    } catch (err) {
+      toast(`상태를 바꾸지 못했습니다: ${err.message}`, true);
+      return;
+    }
+    // 이 이미지에 머물게 되면(묶음의 마지막) 화면도 새 상태를 따른다 — 휴지통으로 보낸 뒤 Space 가 승인하지 않게
+    if (S.cur && S.cur.id === id) { S.cur.status = status; renderStatusButtons(); }
     await loadState();
     // 다시 받으면 그새 필터에 맞지 않게 된 줄(Q·W·E·T)도 함께 빠진다. 보던 자리는 화면에서 그대로
     const after = before.slice(before.indexOf(id) + 1);
@@ -2509,8 +2694,9 @@ async function skipOrAdvance() {
 function step(delta) {
   if (!S.images.length) return;
   const idx = S.images.findIndex((im) => S.cur && im.id === S.cur.id);
-  const next = Math.min(S.images.length - 1, Math.max(0, (idx < 0 ? 0 : idx) + delta));
-  loadImage(S.images[next].id);
+  // 지금 이미지가 목록에 없으면(목록 밖에서 열었거나 빠졌다) 첫 줄로 — 예전에는 ↓ 가 둘째 줄로 갔다 (2026-11-05)
+  const next = idx < 0 ? 0 : Math.min(S.images.length - 1, Math.max(0, idx + delta));
+  openImage(S.images[next].id);
 }
 
 function setClass(i) {
@@ -2540,9 +2726,76 @@ async function startJob(kind, body = {}) {
   }
 }
 
+/** 이미지를 바꾸는 작업 — 끝나면 지금 이미지를 서버와 맞춘다(syncCurrentAfterJob). 학습·스캔·내보내기는 보던 이미지를
+ *  바꾸지 않아 넣지 않는다 — 학습까지 넣으면 긴 학습이 끝나는 순간 편집 중이던 되돌리기·확대가 날아간다. */
+const IMAGE_JOBS = new Set(["predict", "purge", "tidy"]);
+
+/** 두 박스 목록이 같은가(순서까지). 서버가 다시 잘라 넣으며 생기는 부동소수 잡음은 같은 것으로 본다(store._box_key 와 같은 뜻). */
+function sameBoxes(a, b) {
+  const near = (x, y) => (x == null || y == null ? (x ?? null) === (y ?? null) : Math.abs(x - y) < 1e-6);
+  return a.length === b.length && a.every((p, i) => {
+    const q = b[i];
+    return p.cls === q.cls && (p.origin || "human") === (q.origin || "human")
+      && ["cx", "cy", "w", "h", "conf"].every((k) => near(p[k], q[k]));
+  });
+}
+
+/** 지금 이미지를 비운다(지워진 이미지 — syncCurrentAfterJob). 남은 수정·되돌리기·예측·사진도 함께 버린다. */
+function clearCurrent() {
+  clearTimeout(S._saveTimer);
+  clearTimeout(S._predTimer);
+  Object.assign(S, {
+    cur: null, boxes: [], sel: -1, undo: [], dirty: false, img: null, imgId: null,
+    ghost: null, history: [], pred: null, predLoading: false, findings: [], findHot: -1,
+  });
+  $("#img-name").textContent = "";
+  $("#img-meta").textContent = "";
+  $("#save-state").textContent = "";
+  $("#save-state").className = "save-state";
+  $("#empty-hint").classList.remove("hidden");
+  setHistCount(0);
+  if (S.histOpen) renderHistory();
+  renderStatusButtons();
+  renderDomainBar();
+  renderTagList();
+  refresh();
+  markCurrent();
+}
+
+/** 이미지를 바꾸는 작업(자동 라벨링·휴지통 비우기·정리)이 끝난 뒤 지금 이미지를 서버와 맞춘다 (2026-11-05). 예전에는
+ *  목록만 다시 받아, 지운 이미지가 화면에 남거나(박스를 그리면 저장이 404 로 막혀 새로 고쳐야 했다) 자동 라벨링이 보던
+ *  미라벨 이미지에 넣은 박스가 화면에 없어, 사람이 보지 않은 박스가 Space 로 승인됐다.
+ *  - 남은 수정은 먼저 저장한다(사람이 마지막에 본 것이 이긴다). 저장하지 못했는데 이미지가 남아 있으면 그대로 둔다.
+ *  - 이미지가 없어졌으면(404) 남은 수정은 둘 곳이 없으니 버리고 지금 목록의 첫 장으로.
+ *  - 박스·상태가 서버와 다르면 다시 연다. 같으면 손대지 않는다(되돌리기·확대를 지킨다). */
+async function syncCurrentAfterJob() {
+  if (!S.cur) return;
+  const id = S.cur.id;
+  await flushSave();
+  let meta = null;
+  try {
+    meta = await api(`/api/images/${id}`);
+  } catch (err) {
+    if (err.status !== 404) throw err;
+  }
+  if (!S.cur || S.cur.id !== id) return;          // 그새 다른 이미지로 갔다
+  if (!meta) {
+    const lost = S.dirty;
+    clearCurrent();
+    toast(`보던 이미지(id ${id})가 지워져 ${S.images.length ? "첫 장을 엽니다" : "비웠습니다"}`
+      + (lost ? " — 저장하지 못한 수정은 버렸습니다" : ""), lost);
+    if (S.images.length) await loadImage(S.images[0].id);
+    return;
+  }
+  if (S.dirty) return;      // 저장하지 못했다(알림은 saveBoxes 가 띄웠다) — 수정을 잃지 않게 그대로 둔다
+  if (meta.status === S.cur.status && sameBoxes(meta.boxes, S.boxes)) return;
+  await loadImage(id);
+}
+
 function watchJob(id) {
   clearInterval(S.jobPoll);
   $("#job").classList.remove("hidden");
+  let ended = false;
   const tick = async () => {
     let job;
     try {
@@ -2551,6 +2804,7 @@ function watchJob(id) {
       clearInterval(S.jobPoll);
       return;
     }
+    S.jobKind = job.status === "running" ? job.kind : null;     // 도는 작업 — 자동 라벨링 중 승인 확인(setStatusNow)
     $("#job-kind").textContent = { scan: "폴더 스캔", predict: "자동 라벨링", train: "학습", resume: "이어서 학습", train_wsl: "WSL 학습", resume_wsl: "WSL 이어하기", tidy: "정리", purge: "휴지통 비우기", export: "내보내기" }[job.kind] || job.kind;
     $("#job-status").textContent = { running: "진행 중…", done: "완료", error: "실패" }[job.status];
     $("#job-status").className = job.status;
@@ -2578,6 +2832,8 @@ function watchJob(id) {
 
     if (job.status !== "running") {
       clearInterval(S.jobPoll);
+      if (ended) return;      // 앞 tick 의 응답이 늦어 둘이 겹쳤다 — 끝 처리는 한 번만
+      ended = true;
       $("#job-stop").classList.add("hidden");
       const early = job.result && job.result.stopped_early;
       toast(
@@ -2586,10 +2842,16 @@ function watchJob(id) {
           : `실패: ${job.error}`,
         job.status === "error"
       );
-      await loadState();
-      refreshResumeButton();
-      await loadImageList();
-      if (!S.cur && S.images.length) await loadImage(S.images[0].id);
+      try {
+        await loadState();
+        refreshResumeButton();
+        await loadImageList();
+        // 실패로 끝났어도 그때까지 바꾼 이미지가 있을 수 있다
+        if (IMAGE_JOBS.has(job.kind)) await syncCurrentAfterJob();
+        if (!S.cur && S.images.length) await loadImage(S.images[0].id);
+      } catch (err) {
+        toast(`작업 뒤 목록·지금 이미지를 다시 받지 못했습니다: ${err.message}`, true);
+      }
       if (isWsl) refreshWslButtons();
     }
   };
@@ -2719,7 +2981,7 @@ async function reloadList() {
  * 않게 된 채 남겨 둔 줄이 빠진다. 보던 자리는 화면에서 그대로 두고, 지금 이미지가 빠졌으면 원래
  * 그 뒤에 있던 줄 가운데 남은 첫 줄로 간다. */
 async function refreshList() {
-  if (S.listBusy || S.domainBusy || S.tagBusy) return;
+  if (navBusy()) return;
   S.listBusy = true;
   try {
     await loadState();
@@ -2764,6 +3026,8 @@ $("#filter-split").onchange = () => {
 tagFilter = makeTagFilter($("#filter-tags"));
 $("#btn-add-tag").onclick = () => createTag();
 $("#new-tag").addEventListener("keydown", (e) => {
+  // 한글 조합 중의 Enter 는 조합을 끝내는 몫이다 — 받으면 조합을 끝내는 Enter 와 그 뒤 Enter 로 두 번 만들려 했다 (2026-11-05)
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === "Enter") createTag();
   if (e.key === "Escape") e.target.blur();
 });
@@ -2833,7 +3097,12 @@ async function setView(v) {
   try { localStorage.setItem(VIEW_KEY, v); } catch { /* 저장 못 해도 그만 */ }
   closeMenus();
   if (v === "gallery") await galleryShow();
-  else { resizeCanvas(); markCurrent(); }
+  else {
+    resizeCanvas();
+    markCurrent();
+    // 이미지 보기에서 연 이미지(필터를 바꾸면 첫 장)는 예측을 받지 않았다 — 돌아와서 받는다 (fetchPreds)
+    if (S.predOn && !S.pred && !S.predLoading) fetchPreds(0);
+  }
 }
 document.querySelectorAll("#view-switch .seg-btn").forEach((b) => {
   b.onclick = () => { b.blur(); setView(b.dataset.view); };
@@ -2894,6 +3163,7 @@ $("#btn-add-class").onclick = async () => {
   }
 };
 $("#new-class").addEventListener("keydown", (e) => {
+  if (e.isComposing || e.keyCode === 229) return;     // 한글 조합 중의 Enter (#new-tag 와 같다)
   if (e.key === "Enter") $("#btn-add-class").click();
 });
 
@@ -2921,15 +3191,19 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "Control") return;
   }
 
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undo(); return; }
+  // 한글 입력 상태면 e.key 가 'ㅋ' 이다 (이미지 보기의 Ctrl+'ㅁ' 와 같다, 2026-11-05)
+  if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "z" || e.key === "ㅋ" || e.code === "KeyZ")) {
+    e.preventDefault(); undo(); return;
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
 
   switch (e.key) {
+    // 누르고 있을 때의 반복 입력은 버린다 — 화면에 뜨지도 않은 다음 이미지까지 승인·건너뜀이 찍혔다 (2026-11-05)
     case " ":
     case "Enter":
-      e.preventDefault(); setStatus("approved"); break;
+      e.preventDefault(); if (!e.repeat) setStatus("approved"); break;
     case "s": case "S": case "ㄴ":
-      e.preventDefault(); skipOrAdvance(); break;
+      e.preventDefault(); if (!e.repeat) skipOrAdvance(); break;
     // 목록이 세로라 위·아래로 넘긴다 (2026-11-03 사용자 요청, 전에는 ←·→)
     case "ArrowDown": e.preventDefault(); step(1); break;
     case "ArrowUp":   e.preventDefault(); step(-1); break;
@@ -2937,7 +3211,7 @@ window.addEventListener("keydown", (e) => {
       if (S.sel >= 0) { e.preventDefault(); pushUndo(); S.boxes.splice(S.sel, 1); S.sel = -1; markDirty(); refresh(); }
       break;
     case "Escape": selectBox(-1); break;
-    case "f": case "F": fitView(); break;
+    case "f": case "F": case "ㄹ": fitView(); break;
     case "d": case "D": case "ㅇ": e.preventDefault(); setMode("pan"); break;
     case "b": case "B": case "ㅠ": e.preventDefault(); setMode("box"); break;
     case "c": case "C": case "ㅊ": e.preventDefault(); setMode("sam"); break;
@@ -3022,11 +3296,16 @@ async function loadProjects() {
     refreshResumeButton();
     refreshWslButtons();  // 같은 이유. WSL 이 잠들어 있으면 깨우는 데 몇 초 걸린다
 
-    // 주소에 #ids=812,904 가 있으면 그 목록부터 연다 (라벨 점검 결과를 바로 고칠 때).
+    // 주소에 #ids=812,904 가 있으면 그 목록부터 연다 (라벨 점검 결과를 바로 고칠 때). 목록을 못 받으면 openIds 가
+    // 상태를 되돌려 두므로 아래의 보통 목록으로 이어 간다 (2026-11-05 — 예전에는 '초기화 실패' 로 빈 화면에 멈췄다).
     const hashIds = idsFromHash();
     if (hashIds) {
-      await openIds(hashIds);
-      return;
+      try {
+        await openIds(hashIds);
+        return;
+      } catch (err) {
+        toast(`주소의 id 목록을 열지 못했습니다: ${err.message}`, true);
+      }
     }
 
     await loadImageList();
