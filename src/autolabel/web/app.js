@@ -988,7 +988,7 @@ async function fetchChunk(idx) {
 function listUrl(limit, offset) {
   const status = $("#filter-status").value;
   if (status === "ids") {
-    return `/api/images?ids=${(S.ids || []).join(",")}&limit=${limit}&offset=${offset}`;
+    return `/api/images?ids=${compressIds(S.ids || [])}&limit=${limit}&offset=${offset}`;
   }
   const order = $("#filter-order").value;
   let url = `/api/images?status=${status}&order=${order}&limit=${limit}&offset=${offset}`;
@@ -1618,17 +1618,52 @@ function clearFilters() {
   reloadList();
 }
 
-/** "812, 904 1001" -> [812, 904, 1001]. 숫자가 아닌 조각이 있으면 null. */
+/** 'id 로 열기' 의 입력 — "5532, 5493–5497 4435" -> [5532, 5493, …, 5497, 4435] (2026-11-05 범위 추가).
+ *  쉼표·공백·세미콜론·가운뎃점(·)으로 나누고, 범위는 - – — ~ 어느 것이든 된다(거꾸로 쓰면 거꾸로 연다).
+ *  넣은 순서대로, 겹치는 id 는 처음 것만. 읽을 수 없거나 IDS_MAX 개를 넘으면 Error — 서버 `_id_ranges` 와 같은 규칙. */
+const IDS_MAX = 10000;
 function parseIds(text) {
-  const tokens = String(text).split(/[\s,]+/).filter(Boolean);
-  if (!tokens.length || !tokens.every((t) => /^\d+$/.test(t))) return null;
-  return [...new Set(tokens.map(Number))];
+  const norm = String(text).normalize("NFKC")          // 전각 숫자·쉼표·물결표를 보통 글자로
+    .replace(/[‐-―−~〜]/g, "-")    // 하이픈·대시·빼기표·물결표 -> '-'
+    .replace(/\s*-\s*/g, "-");
+  const tokens = norm.split(/[\s,;·、]+/).filter(Boolean);
+  if (!tokens.length) throw new Error("열 id 를 넣어 주세요 — 예: 5532, 5493-5497");
+  const out = new Set();
+  for (const t of tokens) {
+    const m = t.match(/^(\d+)(?:-(\d+))?$/);
+    if (!m) throw new Error(`id 로 읽을 수 없는 조각: '${t}' — 숫자나 범위(5493-5497)를 쉼표·공백으로 구분해 주세요.`);
+    const a = Number(m[1]), b = m[2] === undefined ? a : Number(m[2]);
+    if (out.size + Math.abs(b - a) + 1 > IDS_MAX) {
+      throw new Error(`id 는 한 번에 ${IDS_MAX.toLocaleString()}개까지 열 수 있습니다.`);
+    }
+    const step = a <= b ? 1 : -1;
+    for (let i = a; i !== b + step; i += step) out.add(i);
+  }
+  return [...out];
 }
 
-/** 주소의 #ids=812,904 (또는 #id=812). 없거나 잘못됐으면 null. */
+/** [5493, 5494, 5495, 5532] -> "5493-5495,5532" — 1씩 이어지는(거꾸로도) 세 개 이상만 범위로 묶는다(순서는 그대로).
+ *  주소(`ids=`)와 입력칸을 짧게 하려고 — 펼친 목록을 주소에 다 넣으면 수천 개에서 요청 줄이 너무 길다. */
+function compressIds(ids, sep = ",") {
+  const out = [];
+  let k = 0;
+  while (k < ids.length) {
+    const step = ids[k + 1] - ids[k];
+    let j = k;
+    if (step === 1 || step === -1) {
+      while (j + 1 < ids.length && ids[j + 1] - ids[j] === step) j++;
+    }
+    if (j - k >= 2) { out.push(`${ids[k]}-${ids[j]}`); k = j + 1; }
+    else { out.push(ids[k]); k += 1; }
+  }
+  return out.join(sep);
+}
+
+/** 주소의 #ids=812,904 (또는 #id=812, #ids=5493-5497). 없거나 잘못됐으면 null. */
 function idsFromHash() {
   const m = decodeURIComponent(location.hash).match(/^#ids?=(.+)$/);
-  return m ? parseIds(m[1]) : null;
+  if (!m) return null;
+  try { return parseIds(m[1]); } catch { return null; }
 }
 
 /** 지정한 id 들만 목록으로 만들어 첫 장을 연다. 화살표·승인은 이 목록 안에서 움직인다. */
@@ -1637,7 +1672,7 @@ async function openIds(ids) {
   const sel = $("#filter-status");
   sel.querySelector('option[value="ids"]').hidden = false;
   sel.value = "ids";
-  $("#goto-ids").value = ids.join(", ");
+  $("#goto-ids").value = compressIds(ids, ", ");
   await loadImageList(new Set([0]));
   if (S.images.length) await loadImage(S.images[0].id);
   // 알림은 한 번에 하나만 보이므로 없는 id 경고를 장수와 한 줄로 합친다.
@@ -2832,8 +2867,8 @@ document.addEventListener("click", (e) => {
 
 $("#goto-ids").addEventListener("keydown", async (e) => {
   if (e.key !== "Enter") return;
-  const ids = parseIds(e.target.value);
-  if (!ids) { toast("id 는 숫자만 쉼표로 구분해 넣어 주세요.", true); return; }
+  let ids;
+  try { ids = parseIds(e.target.value); } catch (err) { toast(err.message, true); return; }
   e.target.blur();   // 곧바로 단축키(화살표·Space)를 쓸 수 있게
   try {
     await openIds(ids);

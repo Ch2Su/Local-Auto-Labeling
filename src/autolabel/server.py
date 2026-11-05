@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
+import unicodedata
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -146,6 +148,33 @@ def _id_list(text: str | None, what: str) -> list[int]:
     return list(dict.fromkeys(int(t) for t in tokens))
 
 
+_DASHES = str.maketrans(dict.fromkeys("‐‑‒–—―−~〜", "-"))
+IDS_MAX = 10_000
+
+
+def _id_ranges(text: str) -> list[int]:
+    """'id 로 열기' 의 id 목록 — '5532, 5493–5497 4435' (2026-11-05 범위 추가, app.js `parseIds` 와 같은 규칙).
+
+    쉼표·공백·세미콜론·가운뎃점으로 나누고, 범위는 -·–·—·~ 어느 것이든 된다(거꾸로 쓰면 거꾸로).
+    넣은 순서대로, 겹치는 id 는 처음 것만. 읽을 수 없는 조각이 있거나 IDS_MAX 개를 넘으면 400.
+    """
+    norm = re.sub(r"\s*-\s*", "-", unicodedata.normalize("NFKC", text).translate(_DASHES))
+    out: dict[int, None] = {}
+    for tok in re.split(r"[\s,;·、]+", norm):
+        if not tok:
+            continue
+        m = re.fullmatch(r"(\d+)(?:-(\d+))?", tok)
+        if not m:
+            raise HTTPException(400, f"id 로 읽을 수 없는 조각: '{tok}' — 숫자나 범위(5493-5497)를 쉼표·공백으로 구분해 주세요.")
+        a = int(m.group(1))
+        b = int(m.group(2)) if m.group(2) else a
+        if len(out) + abs(b - a) + 1 > IDS_MAX:
+            raise HTTPException(400, f"id 는 한 번에 {IDS_MAX:,}개까지 열 수 있습니다.")
+        step = 1 if a <= b else -1
+        out.update(dict.fromkeys(range(a, b + step, step)))
+    return list(out)
+
+
 def _tag_filter(tag: str | None, xtag: str | None, tagmode: str) -> TagFilter | None:
     """목록 API 의 태그 조건(store.TagFilter). `tag=__none__` 이면 태그 없는 것 — xtag·tagmode 는 보지 않는다."""
     if tag == NO_TAG:
@@ -261,11 +290,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         `xtag=5,9` 는 그중 하나라도 붙은 것을 뺀다. `tag=__none__` 은 태그 없는 것(`xtag` 는 보지 않는다).
         """
         if ids is not None:
-            # 'id 로 열기': 쉼표·공백으로 구분한 id 목록. 상태 필터를 무시하고 준 순서대로.
-            tokens = [t for t in ids.replace(",", " ").split() if t]
-            if not all(t.isdigit() for t in tokens):
-                raise HTTPException(400, "id 는 숫자만 쉼표로 구분해 주세요.")
-            wanted = list(dict.fromkeys(int(t) for t in tokens))
+            # 'id 로 열기': 쉼표·공백으로 구분한 id 와 범위(5493-5497). 상태 필터를 무시하고 준 순서대로.
+            wanted = _id_ranges(ids)
             found = store.list_images(ids=wanted, limit=len(wanted) or 1)
             found_ids = {r["id"] for r in found}
             return {
