@@ -164,12 +164,12 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 
 | | |
 |---|---|
-| `tools/test_baseline.py` | 지금 DB 라벨로 test 를 잰다(DB 읽기 전용). `--domains` 로 전체·CCTV·드론·비CCTV·드론 제외를 한 번에 재 `runs/test_baseline/history.jsonl` 에 클래스별로 쌓고, `--history` 로 표를 본다. CCTV·드론·비CCTV 는 11-04 부터 `images.domain`(손 분류) |
+| `tools/test_baseline.py` | 지금 DB 라벨로 test 를 잰다(DB 읽기 전용). `--domains` 로 전체·CCTV·드론·비CCTV·드론 제외를 한 번에 재 `runs/test_baseline/history.jsonl` 에 클래스별로 쌓고, `--history` 로 표를 본다. CCTV·드론·비CCTV 는 11-04 부터 `images.domain`(손 분류, `tools/test_tiles.py` 도 11-05 부터 같다). 모델 클래스 순서가 DB 와 다르면 멈춘다 |
 | `tools/label_qa.py` | 승인 라벨과 예측이 어긋나는 곳, 라벨끼리 겹친 곳(IoU ≥ 0.85 — `--dup-only` 면 모델 없이)을 후보 CSV·대조 시트로(DB 읽기 전용) |
 | `tools/label_qa_claude.py` | missing 후보를 Claude API 로 거르는 파일럿 — API 키 필요, 아직 한 번도 호출 안 함 |
 | `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
 | `tools/import_o365.py` | Objects365 사진을 검수 대기로 넣는다(위 'Objects365') |
-| `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다) |
+| `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
 | `tools/legacy_groups.py` | legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안(DB 읽기 전용) — 사전학습 임베딩을 평균 연결로 묶어 `data/visible/legacy_groups/` 에 CSV·대조 시트. 카메라 후보는 거칠다(웹 사진과 CCTV 크롭이 한 후보에 섞이기도 한다) |
@@ -246,8 +246,14 @@ scooter 1,026  truck 1,046  pickup 713
   `g003305` 는 사실상 같은 장면이라 반드시 같은 쪽에 둘 것.
 - 09-24 에 이름 계열 규칙을 고쳐(자릿수·이미지 크기가 같아야 한 계열) **다음 학습(또는 `split`) 때 `g000001`(1,433장)이
   360묶음으로 나뉜다** — 옮겨지는 이미지는 0장이다.
-- 묶을 때 로보플로(`_jpg.rf.<해시>`)·tidy(`__<sha1 8자>`·`_2`) 꼬리표는 떼고 보고, dHash 는 EXIF 회전을 적용해 잰다. 누수는
-  `labeler.py split --leak` 으로 다시 잰다.
+- 묶을 때 로보플로(`_jpg.rf.<해시>`, 두 번 내보낸 `_png_png.rf.<해시>` 까지 전부)·tidy(`__<sha1 8자>`·`_2`) 꼬리표는 떼고 보고,
+  dHash 는 EXIF 회전을 적용해 잰다. 영문 `Screenshot …` 도 30초 스크린샷 규칙을 탄다. **이름 계열은 카메라 안에서만 잇는다**
+  (다른 카메라끼리는 dHash 로만). 누수는 `labeler.py split --leak` 으로 다시 잰다.
+- **11-05 에 꼬리표 규칙을 고쳐, 다음 학습(또는 `split`) 때 두 분할에 걸친 묶음 29개(366장)가 알림으로 뜬다** — 예:
+  `duque_de_caxias` 110장(한 카메라)이 train 98·val 9·test 3. 기존 배정은 고정이라 옮기지 않는다(DB 사본 시뮬레이션 moved 0).
+  계층화는 섞인 묶음을 다수결 분할로 센다(비중이 조금 어긋남 — 고치지 않았다). 누수를 없애려면 분할 재배정(사용자 결정).
+- `train.test_ratio`(또는 val_ratio)를 0 으로 바꿔 이미 배정된 분할이 비율에서 빠지면, reset 이 아닌 한 **아무것도 쓰기 전에
+  멈춘다**(11-05 — 전에는 test 가 경고 없이 train·val 로 흡수됐다).
 - **09-16 재배정 전 모델(train-3·visible·visible-2)의 test 점수는 쓰면 안 된다**(지금 val/test 를 학습에 썼다). 옛 모델과는 두
   모델 모두 장면째 못 본 이미지로만 비교한다(docs/experiments.md).
 
@@ -260,7 +266,8 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
   `legacy/` 밖에 둔다.** 새 이미지의 tidy 결과는 `legacy/` 가 아니라 새 `labeled/` 에 쌓인다(`config.yaml` 의 `labeled`).
 - `legacy/seed/seed1`·`seed2` — 로보플로 COCO 내보내기(**유일한 사본**). `seed_coco: data/visible/legacy/seed` 는 하위 폴더까지 COCO 주석
   json 을 **전부** 찾아(`coco_io.find_annotation_files`) 검수 없이 승인으로 넣으니, 검토 전 데이터나 json 사본을 `legacy/seed/` 아래에
-  두지 말 것(새 회차는 `seedN/` 에 `coco/*.json` + `images/`). `legacy/labeled/` — 11-03 전에 tidy 가 옮긴 검수분. `unlabeled/` — 새로 넣는 사진.
+  두지 말 것(새 회차는 `seedN/` 에 `coco/*.json` + `images/`). `legacy/labeled/` — 11-03 전에 tidy 가 옮긴 검수분(그 `labels/*.txt` 는 정리 시점 사본이라 지금 DB 와 다르다 — 11-05 에
+  716장 중 98장, 옛 van 8번 44개. 되살리기는 DB 백업으로). `unlabeled/` — 새로 넣는 사진.
 - **출처 기록 (11-03, [docs/provenance.md](docs/provenance.md))** — 새 수집분은 `unlabeled/<카메라키>/…` 에 두고 카메라를
   `data/visible/cameras.yaml`(실제 장소 — git 에 넣지 말 것)에 먼저 등록한다. 등록 안 된 폴더가 있으면 scan 이 아무것도 넣지
   않고 멈춘다. 들어온 이미지는 `source='collected'`·`images.camera`·`captured_at`(파일 이름 → EXIF, 못 찾으면 NULL), tidy 는
@@ -272,8 +279,9 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개).
   `classes.txt` 는 DB 옆이다. `thumbs/`(11-04)는 이미지 보기 썸네일 캐시 — 지워도 되고 백업하지 않는다.
-- `export/<프로젝트>/` — 내보내기 기본 폴더. 표식(`export_info.json`)이 있는 폴더만 비우고 다시 쓴다. 저장소 안의 다른 폴더로
-  내보내면 그 폴더에 `.gitignore`(`*`)를 둔다.
+- `export/<프로젝트>/` — 내보내기 기본 폴더. 표식(`export_info.json`)이 있고 그 DB 가 지금 DB 인 폴더만 비우고 다시 쓴다. 저장소
+  안의 다른 폴더로 내보내면 그 폴더에 `.gitignore`(`*`)를 둔다. `data.yaml` 은 DB 분할 그대로의 목록(`train.txt`·`val.txt`·
+  `test.txt`, 미배정은 빠짐)을 가리킨다(11-05 — 전에는 train = val = images 라 test 가 섞였다).
 
 **받는 이미지 형식은 `yolo_io.IMG_EXTS` 하나로 정한다** — 여기 없는 확장자는 `scan` 이 **조용히 건너뛴다.** 지금
 `.jpg .jpeg .png .bmp .webp .tif .tiff .avif`. AVIF 는 Pillow 11.3+ 에서 된다. `.heic` 를 받으려면 `pillow-heif` 를 먼저 깔고 추가할 것.
@@ -313,6 +321,9 @@ PC 에서 시작하기' 4·5단계대로 네 폴더만** 가져온다 — 백업
   복사한다. 프로젝트를 늘리면 WSL 데이터셋 폴더를 **반드시 다르게** 둘 것(`--delete` 동기화가 서로 덮는다).
 - **서버를 죽여도 WSL 학습은 계속 돈다** — 그때는 STOP 파일을 직접 만든다. `--stop-at N` 은 N epoch 을 마치면 정지 파일처럼
   멈춘다(lr 스케줄은 그대로, `--resume` 으로 잇는다).
+- [중단] 을 누른 뒤에는 학습이 끝날 때까지 STOP 이 없으면 0.5초마다 다시 만든다(11-05 — train_wsl.py 는 시작할 때 STOP 을 지워
+  시작 직후의 중단이 씹혔다. 그 동작은 그대로 둔다). 'WSL 이어하기' 는 train_wsl.py 가 쓸 수 있는 resume.pt·last.pt 만 띄우고,
+  `--resume` 은 results.csv 를 체크포인트 epoch 까지 자른다(원본 `.csv.bak`).
 - 비교 학습은 `runs/compare_0918/run_compare.sh`(결과는 `runs_cmp/` — 'WSL 이어하기' 가 집어 가지 않게). **순서 스크립트를
   `pkill` 하지 말 것**(학습도 같이 죽는다) — 멈출 때는 `touch ~/new_env/yolo/runs_cmp/HALT ~/new_env/yolo/runs_cmp/STOP`. 도는
   동안 웹 UI 로 학습을 시작하지 말 것.
@@ -468,6 +479,20 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   이름이 바뀔 수 있으니 id 로 가리킬 것.
 - 이미지를 밖에서 편집해 확장자·크기가 바뀌면 조용히 어긋난다 — **`labeler.py check`**(파일 없음·열리지 않음·크기 불일치·경로
   표기), 크기만 바뀌었으면 `--fix-size`(박스 값은 그대로 둔다).
+- **사람이 보지 않은 것은 승인되지 않게 (11-05).** 승인·건너뛰기·Q·W·E·T·새로 받기는 서로 겹치지 않는다(`navBusy()` — 도는 중에
+  들어온 것은 버린다), Space·Enter·S 는 키 반복(`e.repeat`)을 버린다. 승인은 지금 이미지의 사진이 뜬 뒤에만(`S.imgId` — 로드는
+  `S.loadSeq` 로 마지막 것만, 사진이 뜨기 전에는 앞 장 그림을 두고 캔버스 입력도 받지 않는다), 휴지통 이미지는 승인하지 않는다(복원
+  먼저). 자동 라벨링이 도는 중(`S.jobKind`)에는 승인 전에 서버 박스를 다시 보고 다르면 다시 읽는다. 이미지를 바꾸는 작업
+  (자동 라벨링·휴지통 비우기·정리, `IMAGE_JOBS`)이 끝나면 `syncCurrentAfterJob` 이 지금 이미지를 맞춘다(404 면 비우고 첫 장) —
+  학습·스캔은 넣지 말 것(긴 학습이 끝날 때 되돌리기·확대가 날아간다). 서버 쪽 `AutoLabeler.run` 도 시작 때의 (상태, updated_at)
+  과 같을 때만 쓴다(`store.apply_prediction`).
+- 끄는 박스는 `drag.box` 로 붙잡고 되돌리기는 처음 바꿀 때 쌓는다(`editDragBox`), 그 박스가 없어지면 끌기를 끝낸다(`dragLost`).
+  크기 조절·새 박스는 1px 아래로 만들지 않는다(`tooSmall` — 서버는 w·h 0 을 422, 1e-4 이하를 조용히 버린다). 예측(P) 요청은
+  200ms 미뤄 마지막 장만 보내고(`S.predSeq`) 이미지 보기에서는 보내지 않는다.
+- **검수 서버는 다른 사이트에서 부르기를 막는다**(11-05, `server._RequestGuard` — 바깥 앱에 한 번). GET·HEAD·OPTIONS 가 아닌
+  요청은 `Sec-Fetch-Site` 가 same-origin·none 이 아니거나 `Origin` 이 Host 와 다르면 403, Host 가 루프백·bind 주소가 아니면 400
+  (`--host 0.0.0.0` 이면 Host 는 안 본다). 헤더 없는 요청(urllib·curl)은 통과한다. **TestClient 는 `base_url="http://127.0.0.1:7860"`**
+  으로(기본 testserver 는 400). 엔드포인트의 `-> dict` 반환 주석은 지우지 말 것 — 그 덕에 결과의 NaN 이 null 로 나간다.
 
 ---
 
@@ -477,7 +502,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 **`predict.imgsz` 640 이 정점**(960·1280 은 낮다), close_mosaic 마지막 30 epoch 은 두 번 연속 이득이 없었다.
 
 3. **미검토 제안.** 640 입력에서 박스의 23.3% 가 32px 미만이다. 학습 자체를 960 으로 올리는 것은 s 로는 해 보지 않았다 —
-   해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). SAHI 식 타일 추론은 `tools/test_tiles.py` 로 재 봤다(11-03, visible-3·CCTV test) — mAP50-95 는 +0.035\~0.038 이지만 같은 conf 에서 FP 가 늘고(대부분 라벨 누락이 아니라 진짜 오검출), FP 를 맞추면 이득이 16px 미만 객체(+4.5pt)로 좁혀져 `AutoLabeler` 에는 아직 넣지 않았다 — 타일↔통째 사이에만 NMS IoU 0.3 을 걸면 F1 이 통째와 같고(0.890) 재현율 +1.8pt·mAP +0.035(CCTV)라 넣을 만하지만, 사용자가 FP 표본 48개를 직접 확인한 뒤 정한다(표·한계는 docs/experiments.md '타일 추론').
+   해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). SAHI 식 타일 추론은 `tools/test_tiles.py` 로 재 봤다(11-03, visible-3·CCTV test) — mAP50-95 는 +0.035\~0.038 이지만 같은 conf 에서 FP 가 늘고(대부분 라벨 누락이 아니라 진짜 오검출), FP 를 맞추면 이득이 16px 미만 객체(+4.5pt)로 좁혀져 `AutoLabeler` 에는 아직 넣지 않았다 — 타일↔통째 사이에만 NMS IoU 0.3 을 걸면 F1 이 통째와 같고(0.890) 재현율 +1.8pt·mAP +0.035(CCTV)라 넣을 만하지만, 사용자가 FP 표본 48개를 직접 확인한 뒤 정한다(표·한계는 docs/experiments.md '타일 추론' — 그 CCTV 는 11-04 전 규칙으로 가른 것이라, 다시 잴 때는 손 분류 도메인으로 바뀐다).
 4. **8클래스로 다시 학습하기 — 운영 모델(visible-3)은 pickup 을 모르고, car 에 옛 van 이 섞였다.** 학습하면
    `tools/test_baseline.py --weights <새 가중치> --domains` 로 visible-3(지금 라벨로 다시 잰 값)과 **클래스별로** 비교하고, 그
    모델로 `tools/label_qa.py` 를 돌려 176px 아래의 truck·pickup·car 판정을 거른다(눈으로는 176px 위만 봤다 — 그 아래는 사람도
@@ -485,7 +510,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - **사용자 결정 거리:** `g000001` 에 섞여 train 에 갇혔던 CCTV 가 아닌 사진(약 640장)을 val·test 로도 보내려면
      `labeler.py split --reset --yes` 가 필요하다 — 그러면 지금까지의 점수 비교가 끊긴다.
 5. **기준선을 처음부터 새로 잰다 (11-03 사용자 결정).** 순서: test 점검 → 압축 백업 뒤 구내식당 CCTV 338장(seed1
-   `cam1_1hour_*`, person 만 4,992박스, test 162장) 삭제 → 이미지 추가 → legacy 를 **크롭 여부 → 카메라·출처** 순으로 다시 묶기 →
+   `cam1_1hour_*`, person 만 4,992박스, test 162장) 삭제(11-03 에 했다) → 이미지 추가 → legacy 를 **크롭 여부 → 카메라·출처** 순으로 다시 묶기 →
    (사용자가) 분할 재배정 → visible-3 으로 새 기준선. 그 전의 test 점수(11-03 점검 전 `history.jsonl` 6줄 포함)와는 견주지 않는다.
    - legacy CCTV 5,426장의 크기는 3,501가지다(한 번만 나온 크기가 3,396) — `스크린샷 …`(1,959장)·`T#_#_#_C_D_R_#`(443)·
      `cctv#_#`·`duque_de_caxias-#` 등은 크기가 제각각이라 화면을 잘라 낸 크롭이고, 높이만 1080·720 으로 같은 계열은 한 카메라

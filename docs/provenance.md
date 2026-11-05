@@ -36,9 +36,9 @@ data/visible/unlabeled/<카메라키>/[<YYYYMMDD>/]<파일>
   한글·공백을 피한다.
 - 날짜 폴더는 정리용이고 없어도 된다(시각은 아래 순서로 따로 읽는다).
 - `unlabeled/` 바로 아래 둔 파일은 지금처럼 출처 없이(`source='unlabeled'`) 들어가고 scan 이 경고한다.
-- 지금 tidy 는 승인분을 `labeled/images/` **한 폴더에 평평하게** 옮긴다(`tidy.tidy_approved` → `_free_name`). DB 의
+- 11-03 전 tidy 는 승인분을 `labeled/images/` **한 폴더에 평평하게** 옮겼다(`tidy.tidy_approved` → `_free_name`). DB 의
   `camera` 열은 남지만, DB 를 잃으면 `labeled/` 만으로는 카메라를 되찾을 수 없다 — 그래서 tidy 가 카메라 폴더를
-  유지하게 바꾼다(`labeled/images/<카메라>/…` ↔ `labels/<카메라>/…`, 구현 순서 1).
+  유지하게 바꿨다(`labeled/images/<카메라>/…` ↔ `labels/<카메라>/…`, 구현 순서 1).
 
 ## 등록 파일 `data/visible/cameras.yaml`
 
@@ -76,8 +76,10 @@ cameras:
 | `camera` | 카메라키 | NULL |
 | `captured_at` | 촬영 시각 ISO 8601, 시간대 포함(`2026-11-03T14:05:12+09:00`) | NULL |
 
-- 카메라 폴더로 들어온 이미지의 `source` 는 **`collected`** — 지금 `source='unlabeled'` 는 `tools/test_baseline.py` 에서
-  '비CCTV' 를 뜻하므로 새 CCTV 를 거기 섞지 않는다. 공개 데이터셋은 지금처럼 데이터셋 이름(`o365`, `virat`)을 쓴다.
+- 카메라 폴더로 들어온 이미지의 `source` 는 **`collected`** — 정할 때(11-03)는 `source='unlabeled'` 가 `tools/test_baseline.py`
+  에서 '비CCTV' 를 뜻해서 새 CCTV 를 거기 섞지 않으려 했다. 11-04 부터 test_baseline 의 CCTV·드론·비CCTV 는 사람이 정한
+  `images.domain`(비어 있으면 카메라 등록으로 짐작)이고, `source` 는 `legacy`(seed·unlabeled)와 `collected` 를 가르는 데
+  쓴다. 공개 데이터셋은 지금처럼 데이터셋 이름(`o365`, `virat`)을 쓴다.
 - `ingest_batch` 는 경로가 이미 있으면 `source` 를 다시 쓴다(`store.py`) — `camera`·`captured_at` 은 **처음 넣을 때만**
   쓰고 덮지 않는다.
 
@@ -112,6 +114,11 @@ cameras:
 
 - `grouping.group_images` 에서 **같은 카메라는 하나로 합친다**(지금의 연번·연사·dHash 합집합에 하나를 더한다).
   그래서 카메라 하나 = 묶음 하나(dHash 로 다른 이미지와 이어지면 더 커진다).
+- **이름 계열(연번·30초 연사)은 카메라 안에서만 잇는다**(11-05) — 다른 카메라 폴더의 `IMG_####`·스크린샷·`frame_####`
+  같은 이름은 번호나 시각이 이어져도 한 묶음이 되지 않는다. 서로 다른 카메라는 dHash 로만 이어질 수 있다(고정 분할이
+  다른 카메라가 그렇게 이어지면 아래처럼 분할이 멈춘다).
+- 이름을 견줄 때 로보플로 꼬리표는 이중(`_png_png.rf.<해시>`)까지 다 떼고, 영문 `Screenshot …` 이름도 30초 스크린샷
+  규칙에 든다(11-05).
 - `cameras.yaml` 의 `split` 이 있으면 그 묶음은 그 분할로 고정한다. 없으면 지금의 계층화가 묶음째 배정한다.
 - **기존 이미지는 움직이지 않는다**는 규칙은 그대로다. 새 카메라 묶음이 dHash 로 legacy 묶음과 이어지면 옮기지 않고
   `[알림] … 두 분할에 걸칩니다` 로 알린다.

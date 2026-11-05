@@ -227,7 +227,7 @@ epoch 3·30·53 에서 세 번 중단했다 이어서, **epoch 276 조기 종료
 | test 부분 | 장 / 박스 | mAP50-95 | 비고 |
 |---|---|---|---|
 | 드론만 (`--like stabilized_`) | 36 / 487 | **0.5297** | car 0.7665, **person 0.2929 (recall 0.299)** |
-| 비CCTV만 (그때는 `--like "data\labeled"`, 지금은 `--domain noncctv`) | 139 / 489 | **0.4947** | person 0.43, scooter 0.30, truck 0.33, motorcycle 0.36 |
+| 비CCTV만 (그때는 `--like "data\labeled"` — 11-03 까지의 `--domain noncctv`(`source='unlabeled'`)에 해당한다. 11-04 부터의 noncctv 는 손 분류라 이 범위가 아니다) | 139 / 489 | **0.4947** | person 0.43, scooter 0.30, truck 0.33, motorcycle 0.36 |
 | 드론 뺀 나머지 (`--not-like stabilized_`) | 937 / 5,984 | 0.6919 | |
 
 **visible-2 와 비교하는 법.** 두 모델은 train 이 달라서 '둘 다 못 본 것'만 써야 한다.
@@ -413,7 +413,8 @@ mAP50: test 전체 visible-3 0.8607 / s640 0.8531 / l960 0.9013 / x960 0.8976,
 ## 타일 추론(SAHI 식) 대 통째 추론 (2026-11-03, `tools/test_tiles.py`)
 
 운영 코드(`AutoLabeler`)는 이미지를 통째로 한 번 추론한다. 작은 박스(640 입력에서 23.3% 가 32px 미만)를 더 잡는지 test 로
-재 봤다. 조건: visible-3(`models/best.pt`, 7클래스 — pickup 을 모른다) · test 968장(CCTV 793 / 비CCTV 139 / 드론 36)
+재 봤다. 조건: visible-3(`models/best.pt`, 7클래스 — pickup 을 모른다) · test 968장(CCTV 793 / 비CCTV 139 / 드론 36 —
+**11-04 전 규칙(source·경로 `stabilized_`)으로 가른 수**다. 11-05 부터 `test_tiles.py` 도 `images.domain`(손 분류)으로 가른다)
 · **11-03 라벨** · 추론 640. 타일은 K×K 격자(겹침 20%)이고 타일마다 640 으로 추론한 뒤, 안쪽 경계에 닿아 잘린 박스는 버리고
 클래스별 NMS 로 합친다. mAP 는 모델이 아는 7클래스의 평균이며 평가기는 단일 라벨이다(`model.val` 은 `multi_label=True` 라
 같은 모델이 0.5869 대 0.5731, 약 0.014 높게 나온다 — 변형끼리는 같은 평가기라 상관없다). `python tools/test_tiles.py` 로 약 2.5분.
