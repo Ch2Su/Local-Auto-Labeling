@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from .yolo_io import Box
 
@@ -579,16 +579,20 @@ class Store:
                 "SELECT tag_id FROM image_tags WHERE image_id=? ORDER BY tag_id", (image_id,))]
 
     def set_image_tag(self, image_ids: list[int], tag_id: int, on: bool) -> int:
-        """이미지들에 태그를 붙이거나(on) 뗀다. 실제로 바뀐 이미지 수. 없는 태그면 ValueError."""
+        """이미지들에 태그를 붙이거나(on) 뗀다. 실제로 바뀐 이미지 수. 없는 태그면 ValueError.
+
+        없는 이미지 id(다른 창에서 지운 것 등)는 건너뛴다 (2026-11-05) — `INSERT OR IGNORE` 는 FK 위반을 무시하지
+        않아서, 예전에는 한 장만 없어도 통째로 롤백되고 /api/bulk/tag 가 500 이었다. 그래서 있는 이미지에서만 붙인다.
+        """
         if not image_ids:
             return 0
         with _write_lock, self.connect() as con:
             if not con.execute("SELECT 1 FROM tags WHERE id=?", (tag_id,)).fetchone():
                 raise ValueError("없는 태그입니다(다른 창에서 지웠을 수 있습니다).")
-            sql = ("INSERT OR IGNORE INTO image_tags(image_id, tag_id) VALUES(?, ?)" if on
-                   else "DELETE FROM image_tags WHERE image_id=? AND tag_id=?")
+            sql = ("INSERT OR IGNORE INTO image_tags(image_id, tag_id) SELECT id, ? FROM images WHERE id=?" if on
+                   else "DELETE FROM image_tags WHERE tag_id=? AND image_id=?")
             before = con.total_changes
-            con.executemany(sql, [(i, tag_id) for i in image_ids])
+            con.executemany(sql, [(tag_id, i) for i in image_ids])
             return con.total_changes - before
 
     def set_domain(self, image_ids: list[int], domain: str | None) -> int:
@@ -675,6 +679,36 @@ class Store:
             con.execute(f"UPDATE images SET {', '.join(fields)} WHERE id=?", args)
         return n_old, len(new)
 
+    def apply_prediction(
+        self,
+        image_id: int,
+        boxes: list[Box],
+        *,
+        expect: tuple[str, str],
+        uncertainty: float,
+        model_version: str,
+    ) -> bool:
+        """자동 라벨링 결과로 박스를 바꾸고 검수 대기(pending)로 둔다 — **작업을 시작할 때 본 뒤로 아무도 손대지
+        않았을 때만** (2026-11-05). expect 는 시작 때의 (status, updated_at). 지금 값이 다르면 아무것도 쓰지 않고
+        False 를 돌려준다.
+
+        자동 라벨링은 수천 장에 몇십 분씩 돈다. 예전에는 시작 때 고른 이미지를 상태를 다시 보지 않고 덮어써서, 그
+        사이 사람이 승인·휴지통·직접 수정한 이미지가 예측 박스와 '검수 대기' 로 되돌아갔다. 확인과 쓰기를 한 잠금·한
+        트랜잭션에서 해야 그 틈에 끼어드는 저장이 없다. 박스는 `_replace_boxes` 로 바꿔 이력이 남는다.
+        updated_at 은 초 단위라, 시작한 바로 그 초에 한 번 더 고친 것은 가리지 못한다.
+        """
+        new = [b for b in boxes if b.is_valid()]
+        with _write_lock, self.connect() as con:
+            row = con.execute("SELECT status, updated_at FROM images WHERE id=?", (image_id,)).fetchone()
+            if row is None or (row["status"], row["updated_at"]) != tuple(expect):
+                return False
+            self._replace_boxes(con, image_id, new, source="predict", batch=None)
+            con.execute(
+                "UPDATE images SET status='pending', uncertainty=?, model_version=?, updated_at=? WHERE id=?",
+                (float(uncertainty), model_version, _now(), image_id),
+            )
+        return True
+
     @staticmethod
     def _replace_boxes(con: sqlite3.Connection, image_id: int, new: list[Box], *,
                        source: str, batch: str | None) -> int:
@@ -737,12 +771,17 @@ class Store:
         matches = [m for _, m in sorted(best.values(), key=lambda t: t[1]["image_id"])]
         return {"grp": grp, "group_size": int(size), "matches": matches}
 
-    def set_class_bulk(self, box_ids: dict[int, list[int]], to_cls: int, *, batch: str) -> int:
+    def set_class_bulk(self, box_ids: dict[int, list[int]], to_cls: int, *, batch: str,
+                       score: Callable[[list[Box]], float] | None = None) -> int:
         """{이미지 id: [박스 행 id, ...]} 의 박스 클래스를 한 트랜잭션으로 바꾼다.
 
         사람이 정한 것이므로 origin='human', conf=NULL 로 둔다(검수 UI 에서 클래스를 바꿀 때와
         같다). 이미지마다 이력(source='bulk', 같은 batch)을 남기므로 묶음째 되돌릴 수 있다.
         바뀐 이미지 수를 돌려준다.
+
+        박스 행 id 는 **그 이미지의 것만** 바꾼다 (2026-11-05) — 예전에는 `WHERE id=?` 뿐이라 다른 이미지의 박스 id 가
+        섞이면 그 이미지가 이력 없이 바뀌었다. score 를 주면 바뀐 이미지의 검수 우선순위(uncertainty)를 새 박스로
+        다시 매긴다 — 서버의 `save_boxes` 와 같은 식(scoring)을 서버가 넘긴다(설정값이 서버에 있다).
         """
         now = _now()
         changed = 0
@@ -765,19 +804,25 @@ class Store:
                     (image_id, now, "bulk", batch, _boxes_json(old), _boxes_json(new),
                      len(old), len(new)),
                 )
-                con.executemany("UPDATE boxes SET cls=?, conf=NULL, origin='human' WHERE id=?",
-                                [(to_cls, i) for i in target])
-                con.execute("UPDATE images SET updated_at=? WHERE id=?", (now, image_id))
+                con.executemany("UPDATE boxes SET cls=?, conf=NULL, origin='human' WHERE id=? AND image_id=?",
+                                [(to_cls, i, image_id) for i in target])
+                if score is not None:
+                    con.execute("UPDATE images SET updated_at=?, uncertainty=? WHERE id=?",
+                                (now, float(score(new)), image_id))
+                else:
+                    con.execute("UPDATE images SET updated_at=? WHERE id=?", (now, image_id))
                 changed += 1
         return changed
 
-    def revert_batch(self, batch: str) -> tuple[int, int]:
+    def revert_batch(self, batch: str, *,
+                     score: Callable[[list[Box]], float] | None = None) -> tuple[int, int]:
         """일괄 수정 한 묶음을 되돌린다. (되돌린 이미지 수, 건너뛴 이미지 수)
 
         **그 뒤에 또 고친 이미지는 건드리지 않는다** — 지금 박스가 일괄 수정 직후와 같을
         때만 그 전으로 돌린다. 되돌린 것도 이력(source='revert', batch='취소: …')에 남는다.
         되돌릴 박스가 클래스 목록에 없는 번호를 쓰면 아무것도 바꾸지 않고 ValueError — 클래스를 합쳐
         뺀 묶음(tools/merge_class.py, 2026-11-02 van → car)은 그 클래스를 먼저 되살려야 되돌린다.
+        score 는 `set_class_bulk` 와 같다 — 되돌린 박스로 uncertainty 를 다시 매긴다 (2026-11-05).
         """
         skipped = 0
         with _write_lock, self.connect() as con:
@@ -803,7 +848,11 @@ class Store:
                                  " — '클래스 추가' 로 그 클래스를 먼저 되살리세요.")
             for image_id, before in todo:
                 self._replace_boxes(con, image_id, before, source="revert", batch=f"취소: {batch}")
-                con.execute("UPDATE images SET updated_at=? WHERE id=?", (_now(), image_id))
+                if score is not None:
+                    con.execute("UPDATE images SET updated_at=?, uncertainty=? WHERE id=?",
+                                (_now(), float(score(before)), image_id))
+                else:
+                    con.execute("UPDATE images SET updated_at=? WHERE id=?", (_now(), image_id))
         return len(todo), skipped
 
     # ---------------------------------------------------------------- 변경 이력
@@ -1047,11 +1096,14 @@ class Store:
         """이미지 dHash 를 저장한다. 한 번 구하면 다시 계산하지 않는다."""
         self._set_column("dhash", pairs)
 
-    def approved_with_boxes(self) -> list[tuple[dict, list[Box]]]:
-        """학습 데이터셋 빌드용: 승인된 이미지 + 그 박스 전체."""
+    def approved_with_boxes(self, statuses: tuple[str, ...] = ("approved",)) -> list[tuple[dict, list[Box]]]:
+        """학습 데이터셋 빌드·내보내기용: 승인된 이미지(statuses 를 주면 그 상태들) + 그 박스 전체. 연결 하나로 읽는다."""
+        if not statuses:
+            return []
+        marks = ",".join("?" * len(statuses))
         with self.connect() as con:
             imgs = con.execute(
-                "SELECT * FROM images WHERE status='approved' ORDER BY id"
+                f"SELECT * FROM images WHERE status IN ({marks}) ORDER BY id", list(statuses)
             ).fetchall()
             out = []
             for im in imgs:

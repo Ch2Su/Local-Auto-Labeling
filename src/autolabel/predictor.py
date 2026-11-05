@@ -22,6 +22,7 @@ class PredictReport:
     boxes: int = 0
     empty_images: int = 0
     dropped_unknown_class: int = 0
+    skipped_changed: int = 0     # 도는 동안 사람이 바꿔서 그대로 둔 이미지 (store.apply_prediction)
     weights: str = ""
     errors: list[str] = field(default_factory=list)
 
@@ -31,6 +32,11 @@ class PredictReport:
             f"처리한 이미지 : {self.processed}장",
             f"생성된 박스   : {self.boxes}개 (검출 0인 이미지 {self.empty_images}장)",
         ]
+        if self.skipped_changed:
+            lines.append(
+                f"  건너뛴 이미지 {self.skipped_changed}장: 자동 라벨링을 시작한 뒤 사람이 승인·휴지통·수정해서 "
+                "그대로 두었습니다"
+            )
         if self.dropped_unknown_class:
             lines.append(
                 f"  버린 검출 {self.dropped_unknown_class}개: "
@@ -75,11 +81,18 @@ class AutoLabeler:
         *,
         progress: ProgressFn | None = None,
     ) -> PredictReport:
-        """미라벨(또는 지정한) 이미지에 추론을 돌려 pending 상태로 만든다."""
+        """미라벨(또는 지정한) 이미지에 추론을 돌려 pending 상태로 만든다.
+
+        **시작할 때 본 뒤로 사람이 손댄 이미지는 덮지 않는다** (2026-11-05). 시작 때의 (상태, 수정 시각)을 떠 두고,
+        쓸 때 `store.apply_prediction` 이 같은 트랜잭션에서 다시 견준다 — 예전에는 도는 동안 승인·휴지통·직접 수정한
+        이미지가 예측 박스와 '검수 대기' 로 되돌아갔다. 건너뛴 수는 진행 로그와 report.skipped_changed 에 남는다.
+        """
         report = PredictReport(weights=self.weights)
 
+        # 시작 때의 행. 모델을 올리는 몇 초 사이에 사람이 바꾼 것도 놓치지 않게 대상을 고르는 같은 순간에 뜬다.
+        rows = {r["id"]: r for r in self.store.list_images(status="all", limit=10**9)}
         if image_ids is None:
-            targets = [r["id"] for r in self.store.list_images(status="unlabeled", limit=10**9)]
+            targets = [i for i, r in rows.items() if r["status"] == "unlabeled"]
         else:
             targets = list(image_ids)
         if not targets:
@@ -105,16 +118,27 @@ class AutoLabeler:
         high = float(self.cfg.get("review.high_band", 0.80))
         empty_score = float(self.cfg.get("review.empty_score", 0.60))
 
-        rows = {r["id"]: r for r in self.store.list_images(status="all", limit=10**9)}
         total = len(targets)
+
+        def changed(path: Path) -> None:
+            report.skipped_changed += 1
+            print(f"\n[건너뜀] {path.name}: 자동 라벨링을 시작한 뒤 사람이 바꿔서(승인·휴지통·수정) 그대로 둡니다.",
+                  flush=True)
 
         for n, image_id in enumerate(targets, 1):
             row = rows.get(image_id) or self.store.get_image(image_id)
             if row is None:
                 continue
+            expect = (row["status"], row["updated_at"])
             path = Path(row["path"])
             if progress:
                 progress(n, total, path.name)
+            # 추론 전에 한 번 본다 — 이미 바뀐 이미지에 GPU 를 쓰지 않고, 정리(tidy)로 옮겨진 승인 이미지를
+            # '파일 없음' 오류로 세지 않게. 덮을지 말지는 아래 apply_prediction 이 쓰기와 함께 다시 정한다.
+            now = self.store.get_image(image_id)
+            if now is None or (now["status"], now["updated_at"]) != expect:
+                changed(path)            # 지워졌거나(휴지통 비우기) 바뀌었다
+                continue
             if not path.exists():
                 report.errors.append(f"파일 없음: {path}")
                 continue
@@ -154,11 +178,12 @@ class AutoLabeler:
             score = image_uncertainty(
                 [b.conf for b in boxes], low=low, high=high, empty=empty_score
             )
-            self.store.set_boxes(
-                image_id, boxes, uncertainty=score, model_version=Path(self.weights).name,
-                source="predict",
-            )
-            self.store.set_status(image_id, "pending")
+            if not self.store.apply_prediction(
+                image_id, boxes, expect=expect, uncertainty=score,
+                model_version=Path(self.weights).name,
+            ):
+                changed(path)            # 추론하는 사이에 사람이 바꿨다
+                continue
 
             report.processed += 1
             report.boxes += len(boxes)
@@ -232,8 +257,10 @@ class LiveDetector:
         """이미지 한 장의 예측. 좌표는 라벨과 같은 정규화 (cx, cy, w, h) — EXIF 회전을 적용한 화면 기준."""
         from .jobs import gpu_busy
 
-        device = "cpu" if gpu_busy() else self.cfg.device
         with self._lock:
+            # 장치는 잠금을 쥔 뒤에 정한다 (2026-11-05). 밖에서 정하면 앞 요청을 기다리는 사이 학습이 시작돼
+            # free_gpu() 가 모델을 내려도, 깨어난 요청이 예전 판단대로 GPU 에 다시 올렸다.
+            device = "cpu" if gpu_busy() else self.cfg.device
             model = self._load(device)
             t0 = time.perf_counter()
             res = model.predict(

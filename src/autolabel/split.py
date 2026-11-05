@@ -149,9 +149,12 @@ def _camera_pins(cfg: Config, groups: dict[str, list[dict]],
             continue
         if len(want) > 1:
             detail = ", ".join(f"{s}: {'·'.join(sorted(k))}" for s, k in sorted(want.items()))
+            # 이름 계열은 카메라 안에서만 잇는다(grouping, 2026-11-05) — 카메라가 다른 이미지가 한 묶음이 되는
+            # 길은 dHash 뿐이다(사이에 출처 없는 legacy 이미지를 거칠 수는 있다).
             raise RuntimeError(
                 f"묶음 {g} 에 split 고정이 서로 다른 카메라가 함께 있습니다({detail}) — 내용이 거의 같은 이미지로 "
-                "이어진 것입니다. cameras.yaml 의 split 을 맞추거나 한쪽 고정을 지운 뒤 다시 돌리세요.")
+                "(사이에 출처 없는 이미지를 거쳐서일 수도 있다) 이어진 것입니다. cameras.yaml 의 split 을 맞추거나 "
+                "한쪽 고정을 지운 뒤 다시 돌리세요.")
         s = next(iter(want))
         if s not in ratios:
             raise RuntimeError(f"카메라 {'·'.join(sorted(want[s]))} 의 split: {s} 은 지금 비율 설정에 없습니다"
@@ -290,6 +293,18 @@ def ensure_splits(cfg: Config, store: Store, *, reset: bool = False,
     report = SplitReport(total=len(items), ratios=ratios, reset=reset)
     if not items:
         return {}, report
+    # 이미 배정된 분할이 지금 비율 설정에 없으면 **아무것도 쓰기 전에** 멈춘다 (2026-11-05). test_ratio 를 0 으로
+    # 바꾸면 _ratios 가 test 를 빼서, 예전에는 test 이미지가 경고 없이('새로 배정' 으로 세어) train·val 로 다시
+    # 배정됐다 — 학습한 적 없는 test 기준선이 사라지고 다음 학습이 그 이미지를 쓴다.
+    if not reset:
+        stray = Counter(it["split"] for it in items if it["split"] and it["split"] not in ratios)
+        if stray:
+            detail = ", ".join(f"{s} {n}장" for s, n in sorted(stray.items()))
+            raise RuntimeError(
+                f"이미 배정된 이미지 가운데 지금 비율 설정에 없는 분할이 있습니다({detail}). 그대로 두면 다른 분할로 "
+                "옮겨지므로 아무것도 바꾸지 않고 멈췄습니다 — config.yaml 의 train.test_ratio(또는 val_ratio)를 "
+                "되돌리거나, 정말 그 분할을 없애려면 `labeler.py split --reset --yes` 로 전체를 다시 나누세요"
+                "(이전 학습과 점수 비교가 끊깁니다).")
 
     report.hashed = _ensure_dhash(store, items)
     need_group = reset or regroup or report.hashed > 0 or any(not it["grp"] for it in items)

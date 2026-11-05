@@ -124,15 +124,15 @@ def cmd_review(args) -> int:
     # `--config` 를 직접 준 것은 '이 설정 하나만' 이라는 뜻이다. 안 줬으면 projects.yaml 의
     # 프로젝트를 모두 띄우고 상단 탭으로 오간다 (2026-09-21).
     if args.config:
-        cfg = Config.load(args.config)
-        app, projects = create_app(cfg), None
+        cfg, projects = Config.load(args.config), None
     else:
         projects = load_projects()
         cfg = projects[0].cfg
-        app = create_multi_app(projects)
 
     host = args.host or str(cfg.get("server.host", "127.0.0.1"))
     port = args.port or int(cfg.get("server.port", 7860))
+    # 연 주소를 앱에 알린다 — 다른 Host 로 들어온 요청(DNS rebinding)을 막는 데 쓴다 (server._RequestGuard, 2026-11-05)
+    app = create_app(cfg, bind_host=host) if projects is None else create_multi_app(projects, bind_host=host)
     # 안내 문구는 여기서 낸다. run.bat 에 한글을 넣으면 chcp 65001 상태의 cmd.exe 가
     # 줄 조각을 명령으로 실행해 버린다 (run.bat 주석 참고).
     print(f"검수 UI: http://{host}:{port}   (Ctrl+C 로 종료)")

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import secrets
@@ -13,12 +14,17 @@ import unicodedata
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from starlette.datastructures import Headers
+from starlette.responses import JSONResponse, PlainTextResponse
 
 from .config import ROOT, Config, resolve
 from .export import default_export_dir, export_yolo
@@ -39,8 +45,16 @@ from .yolo_io import Box, display_size
 
 WEB_DIR = Path(__file__).parent / "web"
 
+# 이미지를 열거나 EXIF 를 읽다 나는 예외 (2026-11-05). OSError(열 수 없는 파일)만 잡았더니 손상된 EXIF 는
+# SyntaxError('not a TIFF file'), 아주 큰 이미지는 DecompressionBombError, 일부 손상은 ValueError 로 나와 500 이 됐다.
+_UNREADABLE = (OSError, SyntaxError, ValueError, Image.DecompressionBombError)
+
 
 class BoxIn(BaseModel):
+    # NaN·Infinity 는 422 (2026-11-05). FastAPI 는 본문을 json.loads 로 읽어 NaN 리터럴을 받고, 그 박스는
+    # Box.clamped 에서 '이미지 전체' 박스로 둔갑했다.
+    model_config = ConfigDict(allow_inf_nan=False)
+
     cls: int = Field(ge=0)
     cx: float
     cy: float
@@ -117,6 +131,8 @@ class RestoreIn(BaseModel):
 class SamePlaceIn(BaseModel):
     """같은 자리 일괄 수정. box 는 기준 박스의 정규화 (cx, cy, w, h)."""
 
+    model_config = ConfigDict(allow_inf_nan=False)       # 좌표는 BoxIn 과 같이 유한한 수만
+
     box: list[float] = Field(min_length=4, max_length=4)
     to_cls: int = Field(ge=0)
     from_cls: list[int] | None = None       # None 이면 모든 클래스
@@ -135,17 +151,35 @@ class SegmentIn(BaseModel):
     둘 다 주면 박스로 범위를 가두고 점으로 대상을 가리킨다(겹친 객체에 가장 정확).
     """
 
+    model_config = ConfigDict(allow_inf_nan=False)       # 좌표는 BoxIn 과 같이 유한한 수만
+
     point: list[float] | None = Field(None, min_length=2, max_length=2)
     box: list[float] | None = Field(None, min_length=4, max_length=4)
     cls: int = Field(0, ge=0)
 
 
+_ID_MAX = 2**63 - 1      # SQLite INTEGER 의 상한
+
+
+def _to_id(tok: str) -> int | None:
+    """ASCII 숫자로만 된 2^63 미만의 수면 그 값, 아니면 None (2026-11-05).
+
+    str.isdigit 은 '²'·'٣' 같은 유니코드 숫자도 참이라 int() 에서 500 이 나거나(²) 다른 수로 읽혔고(٣ → 3),
+    2^63 이상은 SQLite 에 넘길 때 OverflowError(500)였다. 자릿수를 먼저 봐서 아주 긴 숫자로 int() 를 부르지 않는다.
+    """
+    if not (tok.isascii() and tok.isdigit()) or len(tok.lstrip("0")) > 19:
+        return None
+    v = int(tok)
+    return v if v <= _ID_MAX else None
+
+
 def _id_list(text: str | None, what: str) -> list[int]:
     """'3,7 12' → [3, 7, 12] (겹치면 하나만, 준 순서대로). 숫자가 아닌 조각이 있으면 400."""
     tokens = [t for t in (text or "").replace(",", " ").split() if t]
-    if not all(t.isdigit() for t in tokens):
-        raise HTTPException(400, f"{what}는 번호를 쉼표로 구분해 주세요.")
-    return list(dict.fromkeys(int(t) for t in tokens))
+    ids = [_to_id(t) for t in tokens]
+    if any(i is None for i in ids):
+        raise HTTPException(400, f"{what}는 번호(0 이상 정수)를 쉼표로 구분해 주세요.")
+    return list(dict.fromkeys(ids))
 
 
 _DASHES = str.maketrans(dict.fromkeys("‐‑‒–—―−~〜", "-"))
@@ -163,16 +197,98 @@ def _id_ranges(text: str) -> list[int]:
     for tok in re.split(r"[\s,;·、]+", norm):
         if not tok:
             continue
-        m = re.fullmatch(r"(\d+)(?:-(\d+))?", tok)
+        # [0-9] 로 받는다 — \d 는 NFKC 뒤에도 남는 유니코드 숫자(٣ 등)까지 받는데 app.js 의 \d 는 ASCII 뿐이다
+        m = re.fullmatch(r"([0-9]+)(?:-([0-9]+))?", tok)
         if not m:
             raise HTTPException(400, f"id 로 읽을 수 없는 조각: '{tok}' — 숫자나 범위(5493-5497)를 쉼표·공백으로 구분해 주세요.")
-        a = int(m.group(1))
-        b = int(m.group(2)) if m.group(2) else a
+        a = _to_id(m.group(1))
+        b = _to_id(m.group(2)) if m.group(2) else a
+        if a is None or b is None:
+            raise HTTPException(400, f"id 가 너무 큽니다: '{tok}' (2^63 미만)")
         if len(out) + abs(b - a) + 1 > IDS_MAX:
             raise HTTPException(400, f"id 는 한 번에 {IDS_MAX:,}개까지 열 수 있습니다.")
         step = 1 if a <= b else -1
         out.update(dict.fromkeys(range(a, b + step, step)))
     return list(out)
+
+
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _host_port(netloc: str, scheme: str) -> tuple[str, int] | None:
+    """'127.0.0.1:7860'·'[::1]:7860'·'LOCALHOST' → (호스트 소문자, 포트 — 없으면 scheme 기본값). 못 읽으면 None."""
+    try:
+        u = urlsplit(f"//{netloc}")
+        host, port = u.hostname, u.port
+    except ValueError:              # '[::1' 처럼 깨졌거나 포트가 숫자가 아니다
+        return None
+    if not host:
+        return None
+    return host, port or (443 if scheme in ("https", "wss") else 80)
+
+
+class _RequestGuard:
+    """다른 사이트에서 부르기(CSRF)·DNS rebinding 을 막는다 (2026-11-05). 바깥 앱에 한 번만 건다.
+
+    - 본문 없는 POST(학습·정리·휴지통 비우기·작업 중단 …)는 브라우저의 'simple request' 라, 아무 사이트의 페이지나
+      사전 확인 없이 보내 200 을 받았다. 그래서 GET·HEAD·OPTIONS 가 아닌 요청은 `Sec-Fetch-Site` 가 있으면
+      same-origin·none 만, `Origin` 이 있으면 그 host:port 가 요청의 Host 와 같아야 한다(아니면 403). 둘 다 없는 요청
+      (urllib 의 tools/scheduled_stop.py, curl)은 브라우저가 아니라 그대로 받는다.
+    - DNS rebinding: 남의 도메인을 127.0.0.1 로 돌려 '같은 출처' 로 들어오면 Host 가 그 도메인이다. Host 가 루프백·
+      bind 주소가 아니면 400. 0.0.0.0·:: 로 열었으면(다른 PC 에서 접속) Host 는 보지 않는다.
+    Starlette 의 TrustedHostMiddleware 는 Host 를 ':' 로 잘라 '[::1]:7860' 을 '[' 로 읽는다(IPv6 루프백이 400) —
+    그래서 같은 일(허용 목록 밖이면 400 'Invalid host header')을 여기서 직접 한다.
+    """
+
+    def __init__(self, app, bind_host: str | None = None) -> None:
+        self.app = app
+        bind = (bind_host or "").strip().strip("[]").lower()
+        self.allowed = None if bind in ("0.0.0.0", "::") else {*_LOOPBACK, *([bind] if bind else [])}
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        headers = Headers(scope=scope)
+        scheme = scope.get("scheme", "http")
+        host = _host_port(headers.get("host", ""), scheme)
+        if self.allowed is not None and (host is None or host[0] not in self.allowed):
+            await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
+            return
+        if scope["type"] == "http" and scope["method"] not in _SAFE_METHODS:
+            why = None
+            site = headers.get("sec-fetch-site")
+            if site is not None and site not in ("same-origin", "none"):
+                why = f"다른 사이트에서 온 요청입니다 (Sec-Fetch-Site: {site})"
+            origin = headers.get("origin")
+            if why is None and origin is not None:
+                o = urlsplit(origin)
+                o_hp = _host_port(o.netloc, o.scheme) if o.scheme in ("http", "https") else None
+                if o_hp is None or o_hp != host:
+                    why = f"다른 출처에서 온 요청입니다 (Origin: {origin[:80]})"
+            if why:      # HTTPException 과 같은 꼴({"detail": …}) — 검수 UI 의 토스트가 그대로 읽는다
+                await JSONResponse({"detail": f"{why} — 검수 UI 에서만 바꿀 수 있습니다."}, status_code=403)(
+                    scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
+def _json_finite(v):
+    """JSON 에 넣을 수 없는 수(NaN·±Infinity)를 글자로 바꾼다 — 422 응답의 detail.input 용."""
+    if isinstance(v, float) and not math.isfinite(v):
+        return str(v)
+    if isinstance(v, dict):
+        return {k: _json_finite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_json_finite(x) for x in v]
+    return v
+
+
+async def _validation_error(request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI 기본 422 와 같고, 받은 값(input)의 NaN·Infinity 만 글자로 바꾼다 (2026-11-05). 본문의 NaN 을 BoxIn 이
+    거르면 그 값이 detail.input 에 그대로 실려 Starlette JSONResponse(allow_nan=False)가 422 대신 500 을 냈다."""
+    return JSONResponse(status_code=422, content={"detail": _json_finite(jsonable_encoder(exc.errors()))})
 
 
 def _tag_filter(tag: str | None, xtag: str | None, tagmode: str) -> TagFilter | None:
@@ -187,12 +303,16 @@ def _tag_filter(tag: str | None, xtag: str | None, tagmode: str) -> TagFilter | 
     return TagFilter(tuple(inc), tuple(exc), tagmode == "any") if inc or exc else None
 
 
-def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
+def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str | None = None,
+               guard: bool = True) -> FastAPI:
+    """프로젝트 하나의 앱. guard 는 바깥 앱일 때만 켠다 — 탭 서버(create_multi_app)는 바깥 앱이 한 번 건다.
+    bind_host 는 서버가 연 주소(labeler.py review 의 --host, 없으면 config 의 server.host) — _RequestGuard 참고."""
     store = Store(cfg.db)
     jobs = JobManager(label)          # label 은 'GPU 를 누가 쓰는 중' 안내에 쓰인다
     sam = Segmenter(cfg)
     live = LiveDetector(cfg)          # '예측 비교'(P). 처음 쓸 때 올린다
     app = FastAPI(title="Local Auto Labeling", docs_url="/api/docs")
+    app.add_exception_handler(RequestValidationError, _validation_error)
 
     def free_gpu() -> None:
         """학습·자동 라벨링을 시작하기 전에 검수용 모델(SAM·예측 비교)을 내린다.
@@ -213,15 +333,18 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
     except Exception as exc:  # noqa: BLE001
         print(f"[{label}] DB 백업 실패 (검수는 계속됩니다): {exc}")
 
-    def save_boxes(image_id: int, boxes: list[Box], *, source: str, batch: str | None = None):
-        """박스를 저장하고 검수 우선순위를 다시 매긴다. (바뀌기 전 개수, 뒤 개수)"""
-        score = image_uncertainty(
+    def score_of(boxes: list[Box]) -> float:
+        """박스 목록의 검수 우선순위(uncertainty). 같은 자리 일괄 수정·되돌리기도 이것으로 다시 매긴다 (2026-11-05)."""
+        return image_uncertainty(
             [b.conf for b in boxes],
             low=float(cfg.get("review.low_band", 0.30)),
             high=float(cfg.get("review.high_band", 0.80)),
             empty=float(cfg.get("review.empty_score", 0.60)),
         )
-        return store.set_boxes(image_id, boxes, uncertainty=score, source=source, batch=batch)
+
+    def save_boxes(image_id: int, boxes: list[Box], *, source: str, batch: str | None = None):
+        """박스를 저장하고 검수 우선순위를 다시 매긴다. (바뀌기 전 개수, 뒤 개수)"""
+        return store.set_boxes(image_id, boxes, uncertainty=score_of(boxes), source=source, batch=batch)
 
     # ------------------------------------------------------------- 상태 / 목록
 
@@ -240,6 +363,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         "export": _rel(default_export_dir(cfg)),
     }
 
+    # 엔드포인트의 `-> dict` 반환 주석은 지우지 말 것 (2026-11-05) — FastAPI 가 이 주석으로 Pydantic 직렬화를 거쳐
+    # NaN(작업 결과의 지표 등)을 null 로 바꿔 준다. 빼면 Starlette JSONResponse(allow_nan=False)가 500 을 낸다.
     @app.get("/api/state")
     def get_state() -> dict:
         job = jobs.current()
@@ -520,9 +645,9 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
                     im = ImageOps.exif_transpose(im).convert("RGB")      # 화면처럼 회전(CLAUDE.md 'EXIF 회전')
                     im.thumbnail((s, s))
                     im.save(tmp, "JPEG", quality=82)
-            except OSError as exc:
+            except _UNREADABLE as exc:
                 tmp.unlink(missing_ok=True)
-                raise HTTPException(415, f"썸네일을 만들지 못했습니다: {exc}") from exc
+                raise HTTPException(415, f"썸네일을 만들지 못했습니다: {type(exc).__name__}: {exc}") from exc
             try:
                 os.replace(tmp, out)            # 반쯤 쓴 파일이 보이지 않게
             except PermissionError:
@@ -624,14 +749,14 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         by_image: dict[int, list[int]] = {}
         for m in change:
             by_image.setdefault(m["image_id"], []).append(m["id"])
-        n = store.set_class_bulk(by_image, payload.to_cls, batch=batch)
+        n = store.set_class_bulk(by_image, payload.to_cls, batch=batch, score=score_of)
         return {"changed": n, "batch": batch}
 
     @app.post("/api/history/batch/revert")
     def revert_batch(payload: BatchIn) -> dict:
         """일괄 수정 한 묶음을 되돌린다. 그 뒤 또 고친 이미지는 건너뛴다."""
         try:
-            reverted, skipped = store.revert_batch(payload.batch)
+            reverted, skipped = store.revert_batch(payload.batch, score=score_of)
         except ValueError as exc:   # 되돌리면 목록에 없는 클래스가 생긴다 (클래스를 합쳐 뺀 묶음)
             raise HTTPException(409, str(exc)) from exc
         if not reverted and not skipped:
@@ -669,7 +794,10 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         # 정규화 좌표 -> 픽셀. SAM 은 픽셀 좌표를 받는다.
         # DB 크기가 아니라 **EXIF 회전을 적용한 크기**로 바꾼다. SAM(Ultralytics)은 회전된
         # 이미지를 읽는데, DB 에는 회전 전 크기가 있어서 회전 사진에서는 엉뚱한 곳을 찍었다.
-        w, h = (float(v) for v in display_size(path))
+        try:
+            w, h = (float(v) for v in display_size(path))
+        except _UNREADABLE as exc:      # 썸네일과 같다 — 손상 EXIF·너무 큰 이미지는 500 이 아니라 415
+            raise HTTPException(415, f"이미지를 읽지 못했습니다: {type(exc).__name__}: {exc}") from exc
         point = (payload.point[0] * w, payload.point[1] * h) if payload.point else None
         box = None
         if payload.box:
@@ -778,7 +906,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
 
             report = labeler.run(ids, progress=progress)
             print(report.summary())
-            return {"processed": report.processed, "boxes": report.boxes}
+            return {"processed": report.processed, "boxes": report.boxes,
+                    "skipped_changed": report.skipped_changed}
 
         return _start(jobs, "predict", work)
 
@@ -945,18 +1074,22 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트") -> FastAPI:
         return response
 
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+    if guard:
+        app.add_middleware(_RequestGuard, bind_host=bind_host or str(cfg.get("server.host", "127.0.0.1")))
     return app
 
 
-def create_multi_app(projects: list) -> FastAPI:
+def create_multi_app(projects: list, *, bind_host: str | None = None) -> FastAPI:
     """프로젝트마다 앱을 만들어 `/p/<name>` 에 붙인다 (검수 UI 상단 탭, 2026-09-21).
 
     앱이 통째로 따로라 Store·작업큐·SAM 이 섞이지 않는다. GPU 는 하나뿐이므로 학습·추론만
-    `jobs._claim_gpu` 로 프로젝트를 가로질러 막는다.
+    `jobs._claim_gpu` 로 프로젝트를 가로질러 막는다. 다른 사이트에서 부르기 막기(_RequestGuard)는 바깥 앱에 한 번 건다.
     """
     from fastapi.responses import RedirectResponse
 
     root = FastAPI(title="Local Auto Labeling", docs_url=None)
+    root.add_middleware(_RequestGuard,
+                        bind_host=bind_host or str(projects[0].cfg.get("server.host", "127.0.0.1")))
 
     @root.get("/api/projects")
     def list_projects() -> dict:
@@ -971,7 +1104,7 @@ def create_multi_app(projects: list) -> FastAPI:
         return RedirectResponse(f"/p/{projects[0].name}/")
 
     for p in projects:
-        root.mount(f"/p/{p.name}", create_app(p.cfg, label=p.title))
+        root.mount(f"/p/{p.name}", create_app(p.cfg, label=p.title, guard=False))
     return root
 
 

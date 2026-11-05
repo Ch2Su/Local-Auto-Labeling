@@ -15,7 +15,8 @@ Ultralytics 8.4.142·같은 인자): epoch 258초 → 62초 (중앙값). 288 epo
 
 **중단.** 웹 UI 의 [중단] 은 `job.cancel_requested` 만 세운다. 여기서 그걸 보고 WSL
 쪽 STOP 파일을 만들면, train_wsl.py 가 다음 배치에서 멈추고 resume.pt 를 남긴다.
-학습 전 단계(데이터셋 빌드·복사)에서 누르면 그냥 거기서 그만둔다.
+학습 전 단계(데이터셋 빌드·복사)에서 누르면 그냥 거기서 그만둔다. 막 띄운 train_wsl.py 는 시작할 때 STOP 을
+지우므로, 중단을 요청한 뒤에는 프로세스가 끝날 때까지 STOP 이 없으면 다시 만든다 (2026-11-05, `train` 의 keep_stop).
 
 **서버를 죽이면 WSL 학습은 계속 돈다.** 별개 프로세스라서다. 그때는 STOP 파일을
 직접 만들어 멈출 것 (`\\\\wsl.localhost\\Ubuntu\\...\\runs_wsl\\STOP`).
@@ -26,6 +27,7 @@ from __future__ import annotations
 import codecs
 import csv
 import json
+import math
 import os
 import queue
 import re
@@ -156,6 +158,7 @@ def _check_uncached(cfg: Config) -> tuple[bool, str]:
 # ---------------------------------------------------------------- 이어하기
 
 _resume_cache: dict[str, tuple[tuple, ResumePoint | None]] = {}
+_WSL_RESUMABLE = ("resume.pt", "last.pt")      # train_wsl.py --resume 이 받는 체크포인트
 
 
 def find_resume(cfg: Config) -> ResumePoint | None:
@@ -194,7 +197,9 @@ def find_resume(cfg: Config) -> ResumePoint | None:
     point = None
     for d in dirs:
         p = resume_point_in(d)
-        if p is not None and uses_dataset(p, want):
+        # train_wsl.py --resume 은 resume.pt·last.pt 만 쓴다(그 스크립트의 find_resume). resume_point_in 의 마지막
+        # 폴백(epochN.pt)을 받으면 UI 가 'epoch20.pt 에서 이어하기' 를 띄우고 눌러 보면 종료 코드 1 로 끝났다 (2026-11-05).
+        if p is not None and p.kind in _WSL_RESUMABLE and uses_dataset(p, want):
             point = p
             break
     _resume_cache[key] = (sig_t, point)
@@ -207,12 +212,14 @@ _RESULT = re.compile(r"^RESULT_DIR=(.+?)\s*$", re.M)
 _STOPPED = re.compile(r"^STOPPED=(\d)\s*$", re.M)
 
 
-def _stream(cmd: list[str], job, on_cancel=None) -> tuple[int, str, bool]:
+def _stream(cmd: list[str], job, on_cancel=None, keep_cancel=None) -> tuple[int, str, bool]:
     """명령을 띄워 출력을 그대로 흘려보내고 (종료 코드, 끝부분 출력, 중단 여부) 를 돌려준다.
 
     이 함수는 작업 스레드에서 돈다. 여기서 sys.stdout 에 쓰면 jobs.py 의 tee 가
     작업 로그로 옮겨 준다 — 진행 표시줄의 '\\r' 갱신 처리도 거기서 한다.
     읽기는 별도 스레드로 해서, 출력이 뜸한 동안에도 중단 요청을 0.5초 안에 본다.
+    keep_cancel 을 주면 중단을 요청한 뒤 출력이 끝날 때까지(= 프로세스가 끝날 때까지) 약 0.5초마다 부른다
+    (2026-11-05) — 막 시작한 쪽이 요청(WSL 의 STOP 파일)을 지워 버릴 수 있어서 다시 세우는 데 쓴다.
     """
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             env=_ENV, creationflags=_NO_WINDOW)
@@ -231,6 +238,7 @@ def _stream(cmd: list[str], job, on_cancel=None) -> tuple[int, str, bool]:
     dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
     tail = ""
     cancelled = False
+    kept = 0.0
     while True:
         try:
             chunk = q.get(timeout=0.5)
@@ -245,10 +253,14 @@ def _stream(cmd: list[str], job, on_cancel=None) -> tuple[int, str, bool]:
             tail = (tail + text)[-20000:]
         if job is not None and job.cancel_requested and not cancelled:
             cancelled = True
+            kept = time.monotonic()
             if on_cancel is not None:
                 on_cancel()
             else:
                 proc.terminate()
+        elif cancelled and keep_cancel is not None and time.monotonic() - kept >= 0.5:
+            kept = time.monotonic()
+            keep_cancel()
     rest = dec.decode(b"", final=True)
     if rest:
         sys.stdout.write(rest)
@@ -315,14 +327,23 @@ def _read_metrics(run_dir: Path) -> dict:
     """
     f = run_dir / "results.csv"
     try:
-        rows = list(csv.DictReader(open(f, encoding="utf-8")))
+        with open(f, encoding="utf-8", newline="") as fh:
+            rows = list(csv.DictReader(fh))
     except OSError:
         return {}
     if not rows:
         return {}
-    num = lambda r, k: float(r.get(k, "nan") or "nan")
+
+    def num(r: dict, k: str) -> float:
+        try:
+            return float(r.get(k) or "nan")
+        except ValueError:
+            return math.nan
+
     fit = [num(r, "metrics/mAP50-95(B)") for r in rows]
-    b = max(range(len(rows)), key=lambda i: fit[i])
+    # nan(값이 없는 epoch)은 가장 낮게 본다 (2026-11-05) — nan 과의 비교는 늘 거짓이라, 첫 행이 nan 이면 max 가
+    # 그 행을 그대로 골랐다.
+    b = max(range(len(rows)), key=lambda i: -math.inf if math.isnan(fit[i]) else fit[i])
     best, last = rows[b], rows[-1]
     return {
         "best_epoch": int(float(best["epoch"])),
@@ -372,8 +393,26 @@ def train(cfg: Config, store: Store, job, *, resume: bool = False) -> dict:
         s.stop_file.parent.mkdir(parents=True, exist_ok=True)
         s.stop_file.write_text("stop", encoding="utf-8")
 
+    def keep_stop() -> None:
+        # train_wsl.py 는 시작할 때 STOP 을 '지난 학습의 잔재' 로 지운다 — 막 띄운 직후 [중단] 을 누르면 그 초기화가
+        # 방금 만든 STOP 을 지워 중단이 씹혔다 (2026-11-05). 그 동작은 다른 곳(DetectView)도 기대고 있어 train_wsl.py
+        # 는 그대로 두고, 여기서 프로세스가 끝날 때까지 없으면 다시 만든다.
+        try:
+            if not s.stop_file.exists():
+                s.stop_file.write_text("stop", encoding="utf-8")
+        except OSError:
+            pass          # \\wsl.localhost 가 잠깐 안 보일 때 — 0.5초 뒤 다시 본다
+
+    if job is not None and job.cancel_requested:    # 복사가 끝난 직후에 눌렀으면 띄우지 않는다
+        return {"stopped_early": True, "note": "학습 시작 전에 중단했습니다.", "where": "wsl"}
     print(f"\n3/3 WSL 에서 학습 ({s.distro}) ...", flush=True)
-    rc, tail, _ = _stream(s.cmd(*args), job, on_cancel=request_stop)
+    rc, tail, cancelled = _stream(s.cmd(*args), job, on_cancel=request_stop, keep_cancel=keep_stop)
+    if cancelled:
+        # 끝날 무렵 다시 만든 STOP 이 남지 않게 — train_wsl.py 도 끝날 때 지운다('멈추는 데 쓴 STOP 은 지운다').
+        try:
+            s.stop_file.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     m = _RESULT.findall(tail)
     if rc != 0 or not m:

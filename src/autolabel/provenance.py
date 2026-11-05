@@ -64,10 +64,19 @@ def parse_tz(text: str) -> tzinfo:
 
 
 def load_cameras(path: Path) -> dict[str, Camera]:
-    """cameras.yaml 을 읽어 {키: Camera}. 잘못된 항목이 있으면 전부 모아 ValueError."""
+    """cameras.yaml 을 읽어 {키: Camera}. 잘못된 항목이 있으면 전부 모아 ValueError.
+
+    파일이 YAML 이 아니거나 모양이 틀린 것(맨 위·항목이 사전이 아님)도 ValueError 다 (2026-11-05) — 예전에는
+    yaml.YAMLError·AttributeError 가 그대로 나가, ValueError 만 받는 쪽(검수 서버의 카메라 목록, 분할)을 뚫고 500 이 됐다.
+    """
     if not path.exists():
         return {}
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path}: YAML 로 읽지 못했습니다 — {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: 맨 위는 'cameras:' 로 시작하는 사전이어야 합니다")
     items = raw.get("cameras") or {}
     if not isinstance(items, dict):
         raise ValueError(f"{path}: 'cameras:' 아래는 키: 속성 사전이어야 합니다")
@@ -78,6 +87,9 @@ def load_cameras(path: Path) -> dict[str, Camera]:
         attrs = attrs or {}
         if not _KEY.match(key):
             errors.append(f"{key}: 키는 영문 소문자·숫자·'-' 만 (폴더 이름이 된다)")
+            continue
+        if not isinstance(attrs, dict):
+            errors.append(f"{key}: 속성은 'kind: cctv' 처럼 키: 값 사전으로 적을 것 (지금 {type(attrs).__name__})")
             continue
         kind = attrs.get("kind")
         if kind not in KINDS:

@@ -187,8 +187,10 @@ class Segmenter:
 
         from .jobs import gpu_busy
 
-        device = "cpu" if gpu_busy() else self.cfg.device
         with self._lock:
+            # 장치는 잠금을 쥔 뒤에 정한다 (2026-11-05, predictor.LiveDetector 와 같다) — 앞 요청을 기다리는 사이
+            # 학습이 시작되면 예전 판단대로 GPU 에 다시 올렸다.
+            device = "cpu" if gpu_busy() else self.cfg.device
             self._load(device)
             self._ensure_image(path)
             kw: dict = {}

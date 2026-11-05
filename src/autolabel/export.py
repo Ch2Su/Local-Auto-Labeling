@@ -9,17 +9,27 @@
 **저장소 안에 내보내면 그 폴더에 `.gitignore`(`*`)를 둔다** (2026-11-01). 자동 커밋 훅이 턴마다
 `git add -A` 를 하므로, 기본값(`export/`, 무시됨)이 아닌 폴더로 내보낸 라벨·이미지 수천 개가 커밋되려
 했다 — 그만큼이면 훅이 60초 제한에도 걸린다.
+
+**data.yaml 은 DB 의 분할을 따른다** (2026-11-05). 예전에는 늘 `train: images / val: images` 라 test 이미지까지
+학습에 섞였다. 폴더(images/·labels/)는 그대로 두고 분할별 목록(train.txt·val.txt·test.txt — 줄마다 `./images/…`,
+Ultralytics 가 목록 파일 기준으로 푼다)을 써서 data.yaml 이 그것을 가리킨다. 분할이 아직 없는 이미지는 목록에 넣지 않고
+수만 알린다. `path:` 는 적지 않는다 — 없으면 Ultralytics 가 data.yaml 이 있는 폴더를 기준으로 삼는다(`path: .` 는 실행한
+폴더 기준이었다). 표식이 **다른 DB 의 것이면** 비우지 않고 멈춘다(다른 프로젝트의 내보내기를 지우지 않게).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 from .config import ROOT, Config, resolve
+from .split import SPLITS
 from .store import Store
 from .yolo_io import write_yolo_txt
 
@@ -38,6 +48,9 @@ class ExportReport:
     boxes: int = 0
     copied_images: int = 0
     cleared: bool = False       # 지난번 내보내기를 비우고 다시 썼나
+    missing: list[str] = field(default_factory=list)       # 이미지를 함께 내보내는데 원본이 없어 뺀 것(라벨도 안 씀)
+    splits: dict[str, int] = field(default_factory=dict)    # 분할 목록(train.txt …)에 넣은 장수. 비면 분할 없음
+    unassigned: int = 0         # DB 에 분할이 아직 없어 목록에서 뺀 장수 (다음 학습·split 때 배정된다)
 
     def summary(self) -> str:
         lines = [
@@ -46,7 +59,20 @@ class ExportReport:
         ]
         if self.copied_images:
             lines.append(f"복사한 이미지: {self.copied_images}장")
+        if self.missing:
+            lines.append(f"  원본이 없어 뺀 이미지 {len(self.missing)}장 — 라벨도 쓰지 않았습니다 (예: {self.missing[:2]})")
+        if self.splits:
+            lines.append("분할 목록   : " + ", ".join(f"{s}.txt {n}장" for s, n in self.splits.items()))
+            if self.unassigned:
+                lines.append(f"  분할이 아직 없는 {self.unassigned}장은 목록에 넣지 않았습니다 "
+                             "(라벨은 labels/ 에 있다 — 다음 학습이나 labeler.py split 때 배정된다)")
+        elif self.images:
+            lines.append("  DB 에 분할(train·val·test)이 없어 data.yaml 의 train·val 이 모두 images/ 입니다")
         return "\n".join(lines)
+
+
+def _same_file(a: str | Path, b: str | Path) -> bool:
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
 def _prepare(out_dir: Path, cfg: Config) -> bool:
@@ -58,15 +84,31 @@ def _prepare(out_dir: Path, cfg: Config) -> bool:
     """
     cleared = False
     if out_dir.exists() and any(out_dir.iterdir()):
-        if not (out_dir / MARKER).exists():
+        marker = out_dir / MARKER
+        if not marker.exists():
             raise RuntimeError(
                 f"{out_dir} 에 이미 다른 파일이 있습니다. 내보내기는 빈 폴더나 예전 내보내기 폴더에만 "
                 "씁니다 — 다른 폴더를 고르거나 그 폴더를 비우세요."
+            )
+        # 표식이 있어도 **다른 DB(프로젝트)의 내보내기면** 비우지 않는다 (2026-11-05) — 예전에는 표식만 보고 지웠다.
+        try:
+            prev_db = json.loads(marker.read_text(encoding="utf-8")).get("db")
+        except (OSError, ValueError, AttributeError):
+            prev_db = None
+        if not prev_db or not _same_file(prev_db, cfg.db):
+            raise RuntimeError(
+                f"{out_dir} 는 다른 DB 의 내보내기입니다 (표식의 DB: {prev_db or '읽지 못함'}, 지금 DB: {cfg.db}). "
+                "다른 프로젝트의 결과를 지우지 않게 멈췄습니다 — 다른 폴더를 고르거나, 필요 없는 폴더면 직접 비우세요."
             )
         for sub in ("labels", "images"):
             if (out_dir / sub).exists():
                 # 못 지우면 멈춘다 — 지난번 라벨이 섞여 남으면 지금 승인되지 않은 이미지가 따라간다.
                 shutil.rmtree(out_dir / sub)
+        for s in SPLITS:                 # 지난번 분할 목록 — 이번에 그 분할이 없으면 남아서 헷갈린다
+            (out_dir / f"{s}.txt").unlink(missing_ok=True)
+        # 이 폴더로 학습하면 Ultralytics 가 labels.cache 를 남긴다. 캐시 열쇠가 파일 경로·크기 합이라, 클래스 번호만
+        # 바뀐 라벨(크기가 같다)로 다시 내보내면 옛 라벨을 그대로 읽는다 — 같이 지운다.
+        (out_dir / "labels.cache").unlink(missing_ok=True)
         cleared = True
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_marker(out_dir, {"db": str(cfg.db), "finished": False})
@@ -92,7 +134,8 @@ def export_yolo(
 
     out_dir 를 주지 않으면 `export/<프로젝트>`. 같은 이름의 이미지가 여러 폴더에 있을 수
     있으므로 경로 해시를 붙여 구분한다. with_images=True 면 out_dir/images 에 이미지도 함께
-    복사해 그대로 학습에 쓸 수 있다.
+    복사해 그대로 학습에 쓸 수 있다 — 원본이 없는 이미지는 라벨도 쓰지 않는다(이미지 없는 라벨만
+    남으면 그 폴더로 학습할 때 어긋난다). 분할은 DB 의 images.split 을 그대로 목록 파일로 쓴다(머리말).
     """
     import hashlib
 
@@ -106,34 +149,60 @@ def export_yolo(
 
     report = ExportReport(out_dir=out_dir, cleared=cleared)
     classes = store.get_classes()
+    lists: dict[str, list[str]] = {s: [] for s in SPLITS}
 
     seen: set[str] = set()
-    for status in statuses:
-        for row in store.list_images(status=status, limit=10**9):
-            src = Path(row["path"])
-            stem = src.stem
-            # Windows 는 파일 이름의 대소문자를 가리지 않는다 — IMG_1 과 img_1 은 같은 .txt 다.
-            if stem.lower() in seen:
-                stem = f"{stem}__{hashlib.sha1(str(src).encode()).hexdigest()[:8]}"
-            seen.add(stem.lower())
+    # 박스는 연결 하나로 한꺼번에 읽는다 — 예전에는 이미지마다 get_boxes() 가 연결을 새로 열었다(2026-11-05).
+    for row, boxes in store.approved_with_boxes(tuple(statuses)):
+        src = Path(row["path"])
+        if with_images and not src.exists():
+            report.missing.append(str(src))
+            continue
+        stem = src.stem
+        # Windows 는 파일 이름의 대소문자를 가리지 않는다 — IMG_1 과 img_1 은 같은 .txt 다.
+        if stem.lower() in seen:
+            stem = f"{stem}__{hashlib.sha1(str(src).encode()).hexdigest()[:8]}"
 
-            boxes = store.get_boxes(int(row["id"]))
-            write_yolo_txt(labels_dir / f"{stem}.txt", boxes)
-            report.images += 1
-            report.boxes += len(boxes)
-
-            if with_images and src.exists():
+        if with_images:                  # 이미지를 먼저 — 복사가 안 되면 라벨도 쓰지 않는다
+            try:
                 shutil.copy2(src, images_dir / f"{stem}{src.suffix}")
-                report.copied_images += 1
+            except FileNotFoundError:
+                report.missing.append(str(src))
+                continue
+            report.copied_images += 1
+        seen.add(stem.lower())
+        write_yolo_txt(labels_dir / f"{stem}.txt", boxes)
+        report.images += 1
+        report.boxes += len(boxes)
+        if row.get("split") in lists:
+            lists[row["split"]].append(f"./images/{stem}{src.suffix}")
+        else:
+            report.unassigned += 1
 
     (out_dir / "classes.txt").write_text("\n".join(classes) + "\n", encoding="utf-8")
+    head = ["# labeler.py export 가 만든 파일 — path 는 일부러 적지 않는다(없으면 이 파일이 있는 폴더가 기준이다)."]
+    if any(lists.values()):
+        for s in SPLITS:
+            if s != "test" or lists[s]:
+                (out_dir / f"{s}.txt").write_text("".join(f"{p}\n" for p in lists[s]), encoding="utf-8")
+                report.splits[s] = len(lists[s])
+        spec: dict = {s: f"{s}.txt" for s in report.splits}
+        head.append("# train·val·test 는 DB 의 분할(images.split) 그대로다. test 는 학습·best.pt 고르기에 쓰지 말 것.")
+        if report.unassigned:
+            head.append(f"# 분할이 아직 없는 {report.unassigned}장은 목록에 없다(라벨은 labels/ 에 있다).")
+    else:
+        spec = {"train": "images", "val": "images"}
+        head.append("# DB 에 분할(train·val·test)이 없어 train·val 이 모두 images/ 다 — val 점수는 학습한 이미지로 잰 값이 된다.")
+    if not with_images:
+        head.append("# 이미지를 함께 내보내지 않았다(images/ 가 비어 있다) — 그대로는 학습할 수 없다.")
     (out_dir / "data.yaml").write_text(
-        "path: .\ntrain: images\nval: images\nnames:\n"
-        + "".join(f"  {i}: {n}\n" for i, n in enumerate(classes)),
+        "\n".join(head) + "\n"
+        + yaml.safe_dump({**spec, "names": dict(enumerate(classes))}, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
     _write_marker(out_dir, {
         "db": str(cfg.db), "finished": True, "statuses": list(statuses),
         "images": report.images, "boxes": report.boxes, "with_images": with_images,
+        "splits": report.splits, "unassigned": report.unassigned, "missing": len(report.missing),
     })
     return report

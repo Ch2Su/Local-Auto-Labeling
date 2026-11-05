@@ -27,6 +27,8 @@
 완전히 못 막는다는 뜻이고, 남은 정도는 `split.leak_report()` 로 재서 본다.
 **출처를 기록한 이미지(2026-11-03 부터의 수집분)는 이 한계가 없다** — `images.camera` 가 같으면 통째로
 한 묶음이다(docs/provenance.md). legacy 이미지는 출처가 없어 위 세 규칙만 탄다.
+이름 규칙(1·2)은 카메라가 같은 이미지끼리만 잇는다(2026-11-05) — 폰·화면 캡처는 카메라가 달라도 같은 꼴의
+이름(`IMG_0001`, 같은 날 스크린샷)을 만든다. 카메라가 다른 이미지를 잇는 것은 dHash(3) 뿐이다.
 """
 
 from __future__ import annotations
@@ -39,12 +41,16 @@ import numpy as np
 BURST_SEC = 30      # 시각 기반 이름이 이 이내면 같은 연사로 본다
 DHASH_MAX = 2        # 8x8 dHash(64비트) 해밍 거리
 
-# 로보플로가 붙이는 꼬리표: `_jpg.rf.<해시>` / `.rf.<해시>`
-_RF = re.compile(r"[._](?:jpg|jpeg|png)?\.rf\.[0-9a-z]+", re.I)
+# 로보플로가 붙이는 꼬리표: `_jpg.rf.<해시>` / `.rf.<해시>`. 두 번 내보낸 사진은 확장자 꼬리가 겹친다
+# (`duque_de_caxias-1000_png_png.rf.<해시>`, 2026-11-05 승인분 703장). 하나만 떼면 `…-1000_png` 가 남아 그중
+# 452장이 연번·스크린샷 규칙을 놓쳤다(duque 110장이 109묶음으로 train·val·test 에 흩어졌다). 그래서 꼬리를 전부 뗀다.
+_RF = re.compile(r"(?:[._](?:jpe?g|png|webp|bmp))*\.rf\.[0-9a-z]+", re.I)
 # tidy 가 이름이 겹칠 때 붙이는 꼬리표: `__<원래 경로 sha1 앞 8자>` (+ `_2`, `_3` …), `tidy._free_name`.
 # 떼지 않으면 `maxresdefault__7bfb8759` 가 해시 끝 숫자 '59' 때문에 연번으로 잡혔다 (2026-10-25).
 _TIDY = re.compile(r"__[0-9a-f]{8}(?:_\d+)?$")
-_SHOT = re.compile(r"^스크린샷 (\d{4}-\d{2}-\d{2}) (\d{6})$")
+# 화면 캡처: `스크린샷 2026-06-08 165037` 과 영문 Windows 의 `Screenshot 2021-08-27 134525`·
+# `Screenshot-2021-08-27-134525` (2026-11-05 — 영문 29장이 규칙을 비껴갔다).
+_SHOT = re.compile(r"^(?:스크린샷|(?i:screenshot))[ -](\d{4}-\d{2}-\d{2})[ -](\d{6})$")
 _PHONE = re.compile(r"^(\d{8})_(\d{6})$")
 # 끝이 번호로 끝나는 이름은 한 출처의 연번으로 본다: `000123`, `cctv01_000098`,
 # `ala_2_016`, `T100`. 번호는 2자리 이상만 (한 자리는 우연이 잦다).
@@ -176,13 +182,16 @@ def group_images(items: list[dict], *, max_dist: int = DHASH_MAX) -> dict[int, s
     #    열어 보니 같은 카메라의 같은 장면이었다 (2026-09-16).
     # 2) 시각 기반 이름은 30초 이내 연사만 묶는다. 하루치를 통째로 묶으면 다른 카메라
     #    화면을 찍은 사진까지 한 덩어리가 된다(134장짜리 묶음에서 확인).
-    series: dict[str, list[tuple[int, int]]] = {}
+    # 이름 계열은 **카메라 안에서만** 잇는다 (2026-11-05). 폰·캡처·extract_frames 는 카메라가 달라도 같은
+    # 꼴의 이름(`IMG_0001`·같은 날 스크린샷·`frame_0001`)을 만들어, 다른 카메라가 이름으로 한 묶음이 됐다.
+    # 같은 카메라는 위 0) 에서 이미 한 묶음이다. legacy 는 camera 가 NULL 이라 예전과 같다.
+    series: dict[tuple[str | None, str], list[tuple[int, int]]] = {}
     for it in items:
         size = (it["width"], it["height"]) if it.get("width") and it.get("height") else None
         s = name_series(it["path"], size)
         if s:
-            series.setdefault(s[0], []).append((s[1], it["id"]))
-    for key, vals in series.items():
+            series.setdefault((it.get("camera") or None, s[0]), []).append((s[1], it["id"]))
+    for (_, key), vals in series.items():
         vals.sort()
         if not key.startswith(("shot ", "phone ")):
             for (_, i0), (_, i1) in zip(vals, vals[1:]):

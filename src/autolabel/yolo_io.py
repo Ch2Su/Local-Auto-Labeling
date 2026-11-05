@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Iterator
@@ -28,7 +29,13 @@ class Box:
     origin: str = "auto"  # auto | human | seed
 
     def clamped(self) -> "Box":
-        """이미지 밖으로 나간 박스를 [0,1] 안으로 잘라 넣는다."""
+        """이미지 밖으로 나간 박스를 [0,1] 안으로 잘라 넣는다.
+
+        좌표에 NaN·무한대가 있으면 자르지 않고 그대로 돌려준다 (2026-11-05) — max/min 이 NaN 을 0·1 로, 무한한 폭을
+        이미지 너비로 바꿔 '이미지 전체' 박스가 is_valid() 를 통과했다. 그대로 두면 is_valid() 가 거른다.
+        """
+        if not all(math.isfinite(v) for v in (self.cx, self.cy, self.w, self.h)):
+            return self
         x1 = max(0.0, self.cx - self.w / 2)
         y1 = max(0.0, self.cy - self.h / 2)
         x2 = min(1.0, self.cx + self.w / 2)
@@ -44,7 +51,10 @@ class Box:
         )
 
     def is_valid(self, min_side: float = 1e-4) -> bool:
-        return self.w > min_side and self.h > min_side and self.cls >= 0
+        # NaN·무한대는 받지 않는다 (2026-11-05, clamped 참고). conf 도 있으면 본다 — NaN 이면 DB 에 NULL(사람 박스)로 들어간다.
+        vals = (self.cx, self.cy, self.w, self.h) if self.conf is None else (self.cx, self.cy, self.w, self.h, self.conf)
+        return (all(math.isfinite(v) for v in vals)
+                and self.w > min_side and self.h > min_side and self.cls >= 0)
 
     def to_dict(self) -> dict:
         return asdict(self)
