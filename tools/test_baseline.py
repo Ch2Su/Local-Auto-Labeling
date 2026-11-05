@@ -196,6 +196,23 @@ def class_names(cfg: Config) -> list[str]:
         con.close()
 
 
+def check_class_order(model_names, names: list[str], weights: str) -> None:
+    """모델의 클래스가 DB 클래스 목록의 **앞부분과 번호까지 같은지** 본다. 다르면 멈춘다 (2026-11-05).
+
+    평가는 클래스를 번호로만 견준다 — 순서가 다르면 엉뚱한 클래스끼리 맞춰 점수가 조용히 틀리고, 모델에 DB 에
+    없는 클래스가 있으면(예: van 을 합치기 전 9클래스 모델) 그 예측은 맞을 GT 가 없다(test_tiles 는 끝에서
+    IndexError). 모델이 뒤쪽 클래스를 모르는 것은 괜찮다 — visible-3 은 pickup 을 모른다.
+    """
+    model_list = [model_names.get(i) for i in range(len(model_names))] \
+        if isinstance(model_names, dict) else list(model_names)
+    if len(model_list) <= len(names) and model_list == names[:len(model_list)]:
+        return
+    why = (f"모델 클래스가 DB 보다 많습니다 ({len(model_list)}개 > {len(names)}개)"
+           if len(model_list) > len(names) else "클래스 번호가 DB 와 다릅니다")
+    raise SystemExit(f"가중치 {weights}: {why} — 평가는 번호로 견주므로 그대로 재면 점수가 틀립니다.\n"
+                     f"  모델: {model_list}\n  DB  : {names}")
+
+
 def write_yaml(path: Path, root: Path, val: str, names: list[str]) -> Path:
     """학습은 하지 않으므로 train 도 val 과 같게 둔다. val 은 폴더나 이미지 목록 txt."""
     listing = "\n".join(f"  {i}: {n}" for i, n in enumerate(names))
@@ -346,6 +363,7 @@ def main():
     from ultralytics import YOLO
 
     model = YOLO(weights)
+    check_class_order(model.names, names, weights)
     digest = sha256(Path(weights))
     print(f"가중치 {weights} (sha256 {digest[:12]}…) / imgsz {imgsz} / split {args.split}", flush=True)
     history = load_history(hist_path)

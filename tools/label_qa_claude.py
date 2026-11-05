@@ -183,6 +183,9 @@ def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
 
     cands = [r for r in csv.DictReader(open(qa_dir / "candidates.csv", encoding="utf-8-sig"))
              if r["kind"] == "missing"]
+    if not cands and n_controls:    # 대조군 크기·신뢰도를 후보에서 빌리므로 만들 수 없다 (11-05 — rng.choice 가 IndexError)
+        print(f"  [알림] {qa_dir / 'candidates.csv'} 에 missing 후보가 없습니다(--dup-only 결과?) — 대조군도 만들지 않습니다.")
+        n_controls = 0
     items = []
     for n, r in enumerate(cands):
         items.append({"key": f"cand{n:04d}", "group": "candidate", "image_id": int(r["image_id"]),
@@ -198,18 +201,26 @@ def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
     all_gt = [(iid, j, c, b, min(b[2] - b[0], b[3] - b[1]))
               for iid in pool for j, (c, b) in enumerate(gt[iid])]
     used = set()
-    for n in range(n_controls):
+    made = tries = 0
+    while made < n_controls and tries < 50 * n_controls:
+        tries += 1
         target = rng.choice(sides)
         near = [g for g in all_gt if abs(g[4] - target) <= max(4, 0.2 * target) and g[0] not in used]
+        if not near:    # 그 크기의 라벨이 없거나 다 썼다 — 다른 후보 크기로 다시 뽑는다 (11-05, 전에는 IndexError)
+            continue
         iid, j, c, b, _ = rng.choice(near)
         used.add(iid)
         donor = rng.choice(cands)
-        items.append({"key": f"pos{n:03d}", "group": "control_pos", "image_id": iid, "box": b, "cls": c,
+        items.append({"key": f"pos{made:03d}", "group": "control_pos", "image_id": iid, "box": b, "cls": c,
                       "conf": float(donor["conf"]), "hide_gt": j, "split": images[iid]["split"] or "미배정"})
+        made += 1
+    if made < n_controls:
+        print(f"  [알림] 양성 대조를 {n_controls}개 중 {made}개만 만들었습니다 — 후보와 크기가 비슷한 라벨이 모자랍니다.")
 
     # 음성: 후보 하나의 박스 크기를 빌려 라벨과 안 겹치는 곳에 놓는다
-    n = 0
-    while n < n_controls:
+    n = tries = 0
+    while n < n_controls and pool and tries < 200 * n_controls:     # 놓을 곳이 없으면 끝없이 돌지 않게
+        tries += 1
         donor = rng.choice(cands)
         bx = [float(v) for v in donor["pred_box"].split()]
         bw, bh = bx[2] - bx[0], bx[3] - bx[1]
@@ -227,6 +238,8 @@ def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
                               "split": im["split"] or "미배정"})
                 n += 1
                 break
+    if n < n_controls:
+        print(f"  [알림] 음성 대조를 {n_controls}개 중 {n}개만 만들었습니다 — 라벨과 안 겹치게 놓을 곳이 모자랍니다.")
 
     rng.shuffle(items)
     for it in items:
@@ -381,7 +394,20 @@ def main():
         _, images, gt = build_items(cfg, qa_dir, 0, args.seed)
     else:
         items, images, gt = build_items(cfg, qa_dir, args.controls, args.seed)
-        items_file.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+        if items:               # 빈 목록을 남기면 다음 실행도 그것을 읽는다
+            items_file.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    # 지금 DB 에 승인 이미지가 없거나 파일이 없는 항목은 그릴 수 없다 — 그 뒤 지우거나 내린 이미지다 (11-05: 09-18 items.json
+    # 446건 중 123건이 그래서 render 가 KeyError 로 죽었다). items.json 은 그대로 두고 이번 실행에서만 뺀다.
+    def drawable(it) -> bool:
+        im = images.get(it["image_id"])
+        return im is not None and Path(im["path"]).exists()
+
+    gone = Counter(it["group"] for it in items if not drawable(it))
+    if gone:
+        items = [it for it in items if drawable(it)]
+        print(f"[알림] 지금 DB 에 승인 이미지(또는 그 파일)가 없는 항목 {sum(gone.values())}건을 뺍니다: {dict(gone)}")
+    if not items:
+        sys.exit(f"거를 항목이 없습니다 ({qa_dir}) — missing 후보가 없거나(--dup-only 결과?) 모두 지금 DB 에 없는 이미지입니다.")
     print(f"결과 폴더 {out}")
     print(f"항목 {len(items)}: " + ", ".join(f"{k} {v}" for k, v in Counter(it['group'] for it in items).items()))
 

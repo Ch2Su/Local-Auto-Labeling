@@ -235,7 +235,11 @@ def ckpt_meta(path: Path) -> tuple[int, int] | None:
 
 
 def find_resume(run_dir: Path) -> tuple[Path, int, int] | None:
-    """resume.pt(정지 파일로 멈춘 것) > last.pt(강제 종료로 살아남은 것) 순."""
+    """resume.pt(정지 파일로 멈춘 것)와 last.pt(강제 종료로 살아남은 것) 중 **epoch 이 큰 것** (같으면 resume.pt).
+
+    Windows `trainer.resume_point_in` 과 같은 규칙이다. 정지 → 이어하기 → 강제 종료 순이면 옛 정지 때의
+    resume.pt 가 남아 있지만, 그 뒤 epoch 마다 쓴 last.pt 가 더 크므로 그쪽을 고른다(2026-11-05 확인).
+    """
     best = None
     for name in ("resume.pt", "last.pt"):
         p = run_dir / "weights" / name
@@ -245,6 +249,28 @@ def find_resume(run_dir: Path) -> tuple[Path, int, int] | None:
         if m and (best is None or m[0] > best[1]):
             best = (p, m[0], m[1])
     return best
+
+
+def trim_results_csv(run_dir: Path, keep_through: int) -> int:
+    """results.csv 를 keep_through epoch 까지로 자른다. 자른 줄 수를 돌려준다 (2026-11-05).
+
+    Windows `trainer.trim_results_csv` 를 그대로 옮겼다(이 파일은 Windows 코드를 import 하지 않는다). 체크포인트보다
+    뒤의 행이 남아 있으면(last.pt 가 깨져 resume.pt 로 되돌아갈 때, 저장 직전에 죽었을 때) 이어 학습이 같은 번호를
+    다시 써서 행이 겹친다(그래프도 망가진다). 원본은 .bak 으로 남긴다.
+    """
+    csv = run_dir / "results.csv"
+    if not csv.exists():
+        return 0
+    lines = csv.read_text(encoding="utf-8").splitlines()
+    if len(lines) < 2:
+        return 0
+    head, rows = lines[0], lines[1:]
+    kept = [r for r in rows if r.strip() and float(r.split(",")[0]) <= keep_through]
+    if len(kept) == len(rows):
+        return 0
+    shutil.copy2(csv, csv.with_suffix(".csv.bak"))
+    csv.write_text("\n".join([head, *kept]) + "\n", encoding="utf-8")
+    return len(rows) - len(kept)
 
 
 # ---------------------------------------------------------------------- 메인
@@ -291,6 +317,10 @@ def main() -> int:
             return 1
         ckpt, epoch, total = found
         print(f"이어 학습: {ckpt}\n  {epoch+1}/{total} epoch 완료 → {epoch+2} 부터")
+        trimmed = trim_results_csv(run_dir, epoch + 1)
+        if trimmed:
+            print(f"results.csv 에서 {epoch + 1} epoch 이후의 {trimmed}행을 잘라냈습니다 "
+                  "(원본은 results.csv.bak). 이어 학습이 같은 번호를 다시 쓰기 때문입니다.", flush=True)
         model = YOLO(str(ckpt))
         attach(model, stop_file, state, args.stop_at)
         # 이어 학습에서 바꿀 수 있는 것은 check_resume() 허용 목록뿐이다

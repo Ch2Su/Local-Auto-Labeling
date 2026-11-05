@@ -128,9 +128,16 @@ gi commit -q -m "자동 커밋: $names" \
 
 # 임시 색인으로 커밋했으니 실제 색인을 새 HEAD 에 맞춘다. log -1 대신 rev-parse — log.showSignature 가 켜진
 # PC 에서는 log 가 서명 확인 줄까지 내보낸다.
+# 실제 .git/index.lock 을 잡는 것은 이 reset 하나뿐이다. 그 순간 다른 git 이 잠금을 쥐고 있으면 HEAD 만 나가고 색인이
+# 뒤처지므로, 0.2초 간격으로 다섯 번 다시 해 본 뒤에만 알린다 (2026-11-05).
 head=$(git rev-parse --short HEAD)
-git reset -q 2>"$tmp.err" ||
-    skip "커밋 $head 은 됐지만 색인을 새 HEAD 에 맞추지 못했습니다 — git reset 을 한 번 돌리세요 ($(why))"
+tries=0
+until git reset -q 2>"$tmp.err"; do
+    tries=$((tries + 1))
+    [ "$tries" -le 5 ] ||
+        skip "커밋 $head 은 됐지만 색인을 새 HEAD 에 맞추지 못했습니다 — git reset 을 한 번 돌리세요 ($(why))"
+    sleep 0.2
+done
 
 msg="자동 커밋 $head (파일 ${n}개)"
 [ "$skipped" -gt 0 ] && msg="$msg — 5MB 넘는 파일 ${skipped}개는 뺐습니다"

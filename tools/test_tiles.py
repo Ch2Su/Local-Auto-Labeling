@@ -41,20 +41,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ 
 sys.path.insert(0, str(Path(__file__).resolve().parent))               # test_baseline 을 같은 폴더에서
 
 from autolabel.config import Config, resolve
-from test_baseline import build_split, class_names, sha256, write_yaml
+from test_baseline import DOMAINS as BASELINE_DOMAINS
+from test_baseline import (DOMAIN_RULE, build_split, check_class_order, class_names, fill_domains, registry,
+                           sha256, write_yaml)
 
 IOUV = np.linspace(0.5, 0.95, 10)
 MAP_CONF, MAP_IOU, MAP_MAXDET = 0.001, 0.7, 300
 SIZE_BINS = [(0, 16, "<16"), (16, 32, "16-32"), (32, 64, "32-64"), (64, 1e9, "64+")]
 BIG_SIDE = 800          # `big` 옵션: 긴 변이 이 값 이하인 이미지는 타일을 쓰지 않는다
 
-# 이름: (보여 줄 이름, 이미지를 받을지). test_baseline.DOMAINS 와 같은 기준에 CCTV 를 더했다.
-DOMAINS = {
-    "cctv": ("CCTV", lambda it: it["source"] not in ("unlabeled", "o365") and "stabilized_" not in it["path"].lower()),
-    "noncctv": ("비CCTV", lambda it: it["source"] == "unlabeled"),
-    "drone": ("드론", lambda it: "stabilized_" in it["path"].lower()),
-    "all": ("전체", lambda it: it["source"] != "o365"),
-}
+# 이름: (보여 줄 이름, 이미지를 받을지) — test_baseline.DOMAINS 의 넷을 그대로 쓴다 (2026-11-05). CCTV·비CCTV·드론은
+# 사람이 정한 images.domain(손 분류)이고 비어 있으면 cameras.yaml 로 짐작한다(main 이 fill_domains 로 it['dom'] 을
+# 채운다). 그 전에는 여기만 옛 규칙(source 'unlabeled'·경로 stabilized_)으로 갈라, 11-05 test 802장이 CCTV 628·
+# 비CCTV 138·드론 36 으로 test_baseline(505·202·95)과 달랐다.
+DOMAINS = {k: BASELINE_DOMAINS[k] for k in ("cctv", "noncctv", "drone", "all")}
 
 
 def parse_args():
@@ -305,6 +305,7 @@ def main():
     names = class_names(cfg)
 
     items = build_split(cfg, args.split, out)
+    fill_domains(items, registry(cfg, items))       # it['dom'] — test_baseline 과 같은 도메인 기준
     if args.limit:
         items = items[:args.limit]
     print(f"{args.split} {len(items)}장 -> {out}")
@@ -313,6 +314,7 @@ def main():
     from ultralytics.utils.patches import imread
 
     model = YOLO(weights)
+    check_class_order(model.names, names, weights)  # 번호로 견주므로 DB 와 순서가 다르면 멈춘다
     known = len(model.names)
     print(f"가중치 {weights} (sha256 {sha256(Path(weights))[:12]}…) / imgsz {imgsz} / 모델 클래스 {known}개"
           f" / end2end {getattr(model.model, 'end2end', '?')} / 겹침 {args.overlap} / 잘림 판정 {args.edge_px}px", flush=True)
@@ -350,7 +352,8 @@ def main():
             print(f"  {n}/{len(items)}장 ({time.perf_counter() - t_start:.0f}초)", flush=True)
 
     result = {"at": datetime.now().isoformat(timespec="seconds"), "weights": weights, "imgsz": imgsz,
-              "split": args.split, "overlap": args.overlap, "edge_px": args.edge_px, "images": len(items), "domains": {}}
+              "split": args.split, "overlap": args.overlap, "edge_px": args.edge_px, "images": len(items),
+              "domain_rule": DOMAIN_RULE, "domains": {}}     # 11-05 전 결과에는 없다 = 옛 규칙으로 가른 것
     for key, (label, _) in DOMAINS.items():
         rows = []
         for v in variants:

@@ -117,7 +117,8 @@ def compare(run_dir: Path, baseline: Path, epoch: int, scale: str) -> None:
     print("\n" + "=" * 58)
     print(f"epoch {epoch} 시점 비교")
     print("=" * 58)
-    print(f"{'':<12}{'yolo26n(기준)':>15}{'yolo26' + scale:>13}{'차이':>12}")
+    # 머리글은 --baseline 폴더 이름으로 (2026-11-05 — 'yolo26n(기준)' 이 박혀 있어 기준선을 바꿔도 그대로였다)
+    print(f"{'':<12}{baseline.name + '(기준)':>15}{'yolo26' + scale:>13}{'차이':>12}")
     print("-" * 58)
     for key, label in keys:
         if key not in a or key not in b:
@@ -196,7 +197,7 @@ def main() -> int:
     ov = cfg.get("train.overrides") or {}
 
     print(f"""
-모델        : yolo26{args.scale}.pt  (본 학습은 yolo26n)
+모델        : yolo26{args.scale}.pt  (기준선 {args.baseline})
 데이터      : {data_yaml}  (train {n_train} / val {n_val}, 다시 만들지 않음)
 해상도      : {imgsz}
 배치        : {args.batch}

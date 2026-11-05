@@ -9,7 +9,7 @@
    mAP50-95 가 0.7050 -> 0.7193 으로 오른다. 960 으로 학습까지 하면 더 오를 여지가
    있다. 640 입력에서 박스의 23.3% 가 32px 미만이라 근거도 맞는다.
 
-    python tools/finetune.py                 # 960 / batch 16 / 30 epoch
+    python tools/finetune.py                 # 960 / batch 8(yolo26s 기준, 아래 MAX_BATCH_8GB) / 30 epoch
     python tools/finetune.py --imgsz 640     # 해상도는 그대로 두고 mosaic 만 끄고 싶을 때
     python tools/finetune.py --resume        # 중단된 미세조정을 이어한다
     python tools/finetune.py --promote       # 끝나면 models/best.pt 까지 교체 (이전 것은 best.prev.pt)
@@ -31,6 +31,8 @@
   성립한다. 검수가 늘어 새 데이터로 돌리려면 `--rebuild` 를 준다.
 - 중간에 Ctrl+C 로 끊으면 `final_eval()` 이 돌지 않아 `last.pt` 가 온전하게 남는다.
   거기서 이어 붙일 수 있다.
+- **정상 중단은 `runs/STOP` 파일로** (2026-11-05) — 본 학습(`labeler.py train`)과 같은 `StopSignal` 이다. 다음 배치에서
+  멈추고 검증·저장한 뒤 resume.pt 를 남긴다(CLAUDE.md 함정 8). 그렇게 멈춘 학습에는 `--promote` 를 하지 않는다.
 """
 
 from __future__ import annotations
@@ -43,10 +45,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
 from autolabel.config import Config, resolve
+from autolabel.stopper import StopSignal
 from autolabel.store import Store
 from autolabel.trainer import (
     ResumePoint,
+    attach_callbacks,
     build_dataset,
+    clear_stale_snapshot,
     ensure_resume_dataset,
     promote_weights,
     resume_point_in,
@@ -56,15 +61,46 @@ from autolabel.trainer import (
 # 본 학습의 기준값. lr 은 여기서 --lr-scale 을 곱해 쓴다.
 BASE_LR = 0.01          # optimizer=auto 가 MuSGD 에 준 값
 BASE_MOMENTUM = 0.9     # 같은 이유로 config 의 0.937 이 아니다
-REF_BATCH, REF_IMGSZ, REF_VRAM_GB = 40, 640, 6.3   # 실측 기준점
+REF_BATCH, REF_IMGSZ, REF_VRAM_GB = 40, 640, 6.3   # 실측 기준점 — **yolo26n** 이다
 FIXED_VRAM_GB = 1.2     # 배치와 무관한 몫 (컨텍스트 + 가중치 + 옵티마이저)
-DEFAULT_BATCH = 16      # 960 에서 640/40 과 비슷한 메모리
+# 8GB 에서 실측으로 들어간 가장 큰 batch (모델 크기, imgsz) — docs/experiments.md 'VRAM' 표(WSL, wsl/probe_vram.py,
+# 2026-09-18). 위 n 기준점으로는 s 이상을 잴 수 없다(2026-11-05): s 960 b16 을 약 5.8GB 로 보지만 실측은 넘쳐
+# 25배 느려졌다. 예전 기본 batch 16 이 그 추정에서 나와, 운영 가중치가 s 로 바뀐 뒤로는 기본값이 한도(b8)를 넘었다.
+MAX_BATCH_8GB = {("s", 640): 20, ("s", 960): 8, ("s", 1280): 4, ("m", 640): 10, ("m", 960): 4,
+                 ("l", 640): 8, ("x", 640): 5,
+                 ("n", 960): 16}     # n 은 VRAM 표에 없다 — 09-08 미세조정(runs/finetune960)이 n 960 b16 으로 돌았다(예전 기본값)
+DEFAULT_BATCH = 8       # 표에 없을 때 — s 960 의 한도. 표에 있으면 그 값을 쓴다 (default_batch)
 
 
 def estimate_vram(batch: int, imgsz: int) -> float:
-    """VRAM 대략치. 활성값은 batch x imgsz^2 에 비례한다고 본다."""
+    """VRAM 대략치 — **yolo26n 기준**이라 다른 크기에는 쓰지 않는다. 활성값은 batch x imgsz^2 에 비례한다고 본다."""
     act = (REF_VRAM_GB - FIXED_VRAM_GB) * (batch / REF_BATCH) * (imgsz / REF_IMGSZ) ** 2
     return FIXED_VRAM_GB + act
+
+
+def model_scale(model) -> str | None:
+    """YOLO 모델의 크기(n/s/m/l/x). 체크포인트에 든 모델 yaml 의 scale 이다 — 없으면 None."""
+    return (getattr(model.model, "yaml", None) or {}).get("scale")
+
+
+def default_batch(scale: str | None, imgsz: int) -> int:
+    return MAX_BATCH_8GB.get((scale, imgsz), DEFAULT_BATCH)
+
+
+def vram_note(scale: str | None, batch: int, imgsz: int) -> tuple[str, str | None]:
+    """(배너에 쓸 VRAM 줄, 경고 또는 None). n 은 기준점으로 추정하고, 그 밖은 실측 한도 표로 본다."""
+    if scale == "n":
+        return f"약 {estimate_vram(batch, imgsz):.1f} GB (yolo26n 실측점으로 추정)", None
+    limit = MAX_BATCH_8GB.get((scale, imgsz))
+    if limit is None:
+        return (f"모름 — yolo26{scale or '?'} {imgsz} 은 재 보지 않았다(n 기준 추정은 맞지 않는다)",
+                "VRAM 을 모르는 조합입니다. 첫 epoch 시간을 보고(results.csv) 느리면 --batch 를 줄이세요 "
+                "(CLAUDE.md 함정 9).")
+    line = f"yolo26{scale} {imgsz} 은 8GB 에서 batch {limit} 까지 들어갔다 (WSL 실측, docs/experiments.md)"
+    if batch > limit:
+        return line, (f"batch {batch} 는 실측 한도 {limit} 보다 큽니다 — VRAM 이 넘치면 에러 없이 몇 배 느려집니다 "
+                      "(CLAUDE.md 함정 9).")
+    return line, None
 
 
 def parse_args():
@@ -75,8 +111,8 @@ def parse_args():
                    help="출발 가중치 (기본: config 의 model.weights)")
     p.add_argument("--imgsz", type=int, default=960)
     p.add_argument("--batch", type=int, default=None,
-                   help="메모리는 batch x imgsz^2 에 비례한다. 960 이면 16 이 640/40 과 비슷하다"
-                        f" (기본 {DEFAULT_BATCH})")
+                   help="기본: 출발 가중치의 크기·imgsz 별 8GB 실측 한도(yolo26s 960 은 8). "
+                        f"표에 없는 조합은 {DEFAULT_BATCH}")
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--resume", nargs="?", const="auto", default=None, metavar="CKPT",
                    help="중단된 미세조정을 이어한다. 경로를 주면 그 체크포인트, "
@@ -212,18 +248,35 @@ def do_resume(args, cfg: Config, store: Store) -> int:
 
     # resume 에는 파일 경로를 넘겨야 한다. True 로 두면 Ultralytics 가
     # get_latest_run() 으로 아무 last.pt 나 집는다.
-    results = YOLO(str(point.ckpt)).train(**kw)
-    return finish(args, cfg, results, data_yaml)
+    model = YOLO(str(point.ckpt))
+    return train_and_finish(args, cfg, model, kw, data_yaml)
 
 
-def finish(args, cfg: Config, results, data_yaml: Path) -> int:
+def train_and_finish(args, cfg: Config, model, kw: dict, data_yaml: Path) -> int:
+    """runs/STOP 으로 정상 중단되게 붙여 학습하고 finish 로 넘긴다 (2026-11-05, 본 학습 `cli.cmd_train` 과 같은 방식)."""
+    stop = StopSignal().install()       # 남아 있던 runs/STOP 은 여기서 지운다
+    print(stop.banner() + "\n", flush=True)
+    state = attach_callbacks(model, stop)
+    try:
+        results = model.train(**kw)
+    finally:
+        stop.clear()
+    return finish(args, cfg, results, data_yaml, state)
+
+
+def finish(args, cfg: Config, results, data_yaml: Path, state: dict) -> int:
     """새 가중치를 models/ 로 내보내고 옛 가중치와 비교해 보여준다."""
     run_dir = Path(results.save_dir)
+    # 끝까지 갔으면 지난 중단 때의 resume.pt 를 치운다 — 남으면 끝난 학습이 '이어하기' 대상으로 뜬다
+    clear_stale_snapshot(run_dir, state["stopped"])
     best = run_dir / "weights" / "best.pt"
     src = Path(args.weights) if args.weights else cfg.weights
     out = cfg.weights.with_name(f"best_ft{args.imgsz}.pt")
     if best.exists():
         shutil.copy2(best, out)
+    if state["stopped"]:
+        again = "python tools/finetune.py --resume" + ("" if args.imgsz == 960 else f" --imgsz {args.imgsz}")
+        print(f"\n중단됨 — 이어하려면 {again}" + (f"  (스냅샷 {state['snapshot']})" if state["snapshot"] else ""))
     print(f"\n결과 폴더 : {run_dir}")
     print(f"새 가중치 : {out}")
 
@@ -231,12 +284,14 @@ def finish(args, cfg: Config, results, data_yaml: Path) -> int:
         sizes = (cfg.imgsz,) if args.imgsz == cfg.imgsz else (cfg.imgsz, args.imgsz)
         compare({"기존": src, "미세조정": out}, data_yaml, cfg, sizes)
 
-    if args.promote:
+    if args.promote and not state["stopped"]:
         # 학습 버튼과 같은 규칙: 기존 운영 가중치를 best.prev.pt 로 남기고 교체한다.
         prev = promote_weights(out, cfg)
         print(f"\n{cfg.weights} 를 교체했습니다."
               + (f" 이전 것은 {prev}" if prev else ""))
     else:
+        if args.promote:    # --promote 는 '끝나면' 이다 — 중간에 멈춘 결과로 운영 가중치를 바꾸지 않는다
+            print(f"\n중단한 학습이라 --promote 는 하지 않았습니다 ({cfg.weights} 그대로).")
         print("\n마음에 들면 아래로 교체하세요 (자동 라벨링이 쓰는 가중치입니다):")
         print(f"  copy \"{out}\" \"{cfg.weights}\"")
     return 0
@@ -256,26 +311,31 @@ def main() -> int:
         return 1
 
     data_yaml = prepare_dataset(cfg, store, args.rebuild)
-    batch = args.batch if args.batch is not None else DEFAULT_BATCH
+
+    from ultralytics import YOLO
+
+    model = YOLO(str(src))          # 크기(n/s/…)를 보려고 먼저 읽는다 — 기본 batch·VRAM 안내가 크기에 달렸다
+    scale = model_scale(model)
+    batch = args.batch if args.batch is not None else default_batch(scale, args.imgsz)
+    vram, vram_warn = vram_note(scale, batch, args.imgsz)
     lr0 = BASE_LR * args.lr_scale
     patience = args.patience if args.patience is not None else args.epochs
     ov = cfg.get("train.overrides") or {}
 
     print(f"""
-출발 가중치 : {src}
+출발 가중치 : {src}  (yolo26{scale or '?'})
 데이터      : {data_yaml}
 해상도      : {args.imgsz}   (본 학습 {cfg.imgsz})
 배치        : {batch}   (본 학습 {cfg.get('train.batch')})
 epoch       : {args.epochs}  (patience {patience})
 옵티마이저  : MuSGD  lr0={lr0}  momentum={BASE_MOMENTUM}
 증강        : mosaic 0.0 (끔), close_mosaic 0
-VRAM 예상   : 약 {estimate_vram(batch, args.imgsz):.1f} GB
+VRAM        : {vram}
 """, flush=True)
+    if vram_warn:
+        print(f"[경고] {vram_warn}\n", flush=True)
 
-    from ultralytics import YOLO
-
-    model = YOLO(str(src))
-    results = model.train(
+    kw = dict(
         data=str(data_yaml),
         epochs=args.epochs,
         imgsz=args.imgsz,
@@ -311,8 +371,7 @@ VRAM 예상   : 약 {estimate_vram(batch, args.imgsz):.1f} GB
         cache=ov.get("cache", "disk"),   # Windows 에서 ram 금지
         save_period=10,
     )
-
-    return finish(args, cfg, results, data_yaml)
+    return train_and_finish(args, cfg, model, kw, data_yaml)
 
 
 if __name__ == "__main__":
