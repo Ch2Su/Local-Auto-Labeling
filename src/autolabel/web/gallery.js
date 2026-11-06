@@ -34,8 +34,9 @@ function thumbSize() {
   return px <= 170 ? 160 : px <= 270 ? 256 : 384;
 }
 
+/** 이미지의 태그 이름 — 좁은 것부터(app.js tagsNarrowFirst, 라벨링 목록 줄·정보 줄과 같은 순서). */
 function tagNames(im) {
-  return (im.tags || []).map((t) => S.tagName[t]).filter(Boolean);
+  return tagsNarrowFirst(im.tags).map((t) => S.tagName[t]).filter(Boolean);
 }
 
 /* ───────────────────────── 칸 ───────────────────────── */
@@ -396,7 +397,7 @@ function renderGallerySide() {
       pv.innerHTML = '<img alt=""><div class="nm"></div><div class="meta"></div><div class="tags"></div>';
       pv.querySelector("img").src = url(`/api/images/${im.id}/thumb?s=384`);
     }
-    pv.querySelector(".nm").textContent = im.name;
+    pv.querySelector(".nm").textContent = shortName(im.name);   // 꼬리를 뗀 이름 — 원래 이름은 마우스를 올리면
     pv.querySelector(".nm").title = im.name;
     pv.querySelector(".meta").textContent = `${im.id} · ${im.width}×${im.height} · ${im.status} · `
       + `${im.split || "미배정"} · ${DOMAIN_NAME[im.domain] || "미분류"} · 박스 ${im.n_boxes}`;

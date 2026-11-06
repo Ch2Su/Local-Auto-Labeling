@@ -46,6 +46,8 @@ const S = {
   domainBusy: false,          // 도메인 지정이 도는 중 — 그동안의 Q·W·E(꾹 눌렀을 때 반복 입력)는 버린다
   tags: [],                   // [{id, name, n}] 이름순 (/api/tags)
   tagName: {},                // id -> 이름
+  tagN: {},                   // id -> 붙은 이미지 수 (좁은 태그를 앞에 — tagsNarrowFirst)
+  tagsLoaded: false,          // 태그를 한 번이라도 받았나 — 목록이 먼저 그려졌으면 받은 뒤 다시 그린다
   curTag: null,               // T 로 붙일 태그 id (오른쪽 태그 목록에서 줄을 눌러 고른다)
   // 태그 필터(2026-11-04 여러 개·제외): 넣을 태그 id·뺄 태그 id·넣을 것이 '하나라도' 면 any·'태그 없음' 이면 none
   tagF: { inc: [], exc: [], any: false, none: false },
@@ -116,6 +118,32 @@ function errorText(detail) {
     const loc = Array.isArray(d.loc) ? d.loc.filter((x) => x !== "body").join(".") : "";
     return (loc ? `${loc}: ` : "") + (d.msg ?? JSON.stringify(d));
   }).join("; ");
+}
+
+
+/* 화면에 보이는 이름 (2026-11-06). 로보플로 꼬리(`_jpg.rf.<해시>`, 두 번 내보낸 `_png_png.rf.<해시>` — 6,115장 중
+ * 5,607장)·tidy 꼬리(`__<sha1 8자>`·`_2`)와 확장자를 뗀다. 묶음 규칙 grouping.base_name 과 같은 꼴이다(그쪽 _RF·_TIDY
+ * 를 고치면 여기도). 파일·DB 의 이름은 그대로 두고 원래 이름은 마우스를 올리면 보인다 — 파일 이름을 태그로 다시 짓는
+ * 대신이다(이름 계열·스크린샷 시각을 묶음 규칙이 읽고, seed 의 COCO json·백업이 원래 이름을 가리킨다). */
+const RF_TAIL = /(?:[._](?:jpe?g|png|webp|bmp))*\.rf\.[0-9a-z]+/gi;
+const TIDY_TAIL = /__[0-9a-f]{8}(?:_\d+)?$/;
+function shortName(name) {
+  if (!name) return name ?? "";
+  const s = name.replace(RF_TAIL, "");
+  const dot = s.lastIndexOf(".");
+  return (dot > 0 ? s.slice(0, dot) : s).replace(TIDY_TAIL, "") || name;
+}
+
+function tagLabel(t) {
+  return S.tagName[t] ?? String(t);
+}
+
+/** 이미지의 태그 id 를 좁은 것부터 — 붙은 이미지가 적은 태그가 앞, 같으면 이름순(2026-11-06). 태그는 나라·도시·장소,
+ *  영상 종류·작품처럼 넓은 것과 좁은 것이 섞여 붙어(2,551장이 2~4개) 좁은 것이 출처를 가장 잘 말한다 — 예전 목록
+ *  줄은 번호가 앞선 나라 태그를 보였다. 모르는 id(다른 창에서 막 만든 것)는 맨 뒤. */
+function tagsNarrowFirst(ids) {
+  const n = (t) => S.tagN[t] ?? Infinity;
+  return [...(ids || [])].sort((a, b) => (n(a) - n(b)) || tagLabel(a).localeCompare(tagLabel(b)));
 }
 
 
@@ -872,23 +900,23 @@ function itemRow(im, pos) {
   li.className = "item" + (S.cur && im.id === S.cur.id ? " active" : "");
   li.dataset.id = im.id;
   const hue = 120 - Math.round(im.uncertainty * 120); // 초록(확실) -> 빨강(애매)
+  const tags = tagsNarrowFirst(im.tags);
   li.innerHTML =
     `<span class="unc" style="background:hsl(${hue} 70% 50%)" ` +
     `title="불확실도 ${im.uncertainty}"></span>` +
     `<span class="pos" title="지금 필터·정렬에서 ${pos}번째">${pos}</span>` +
-    `<span class="nm"></span>`
+    `<span class="nm">${tags.length ? '<span class="tg"></span>' : ""}<span class="bn"><span></span></span></span>`
     + (im.rare_cls != null ? '<span class="rare"></span>' : "")
     + (im.domain ? `<span class="dom dom-${im.domain}">${DOMAIN_NAME[im.domain] || im.domain}</span>` : "")
     + (im.split === "test" || im.split === "val" ? `<span class="spl spl-${im.split}">${im.split}</span>` : "")
-    + ((im.tags || []).length ? '<span class="tg"></span>' : "")
     + `<span class="nb">${im.n_boxes}</span>`;
-  li.querySelector(".nm").textContent = im.name;
-  if ((im.tags || []).length) {   // 첫 태그 이름 + 나머지 개수. 전부는 마우스를 올리면
-    const names = im.tags.map((t) => S.tagName[t] || `#${t}`);
-    const tg = li.querySelector(".tg");
-    tg.textContent = `#${names[0]}${names.length > 1 ? ` +${names.length - 1}` : ""}`;
-    tg.title = names.map((n) => `#${n}`).join(" ");
-  }
+  // 가장 좁은 태그를 윗줄에, 꼬리를 뗀 이름을 아랫줄에(2026-11-06). 예전에는 한 줄에 첫 태그 꼬리표와 이름이 붙어
+  // 이름 칸이 0~54px 만 남았다. 태그가 있으면 이름은 끝부분이 보인다(style.css .tg + .bn). 원래 이름과 태그 전부는
+  // 마우스를 올리면.
+  const nm = li.querySelector(".nm");
+  nm.querySelector(".bn > span").textContent = shortName(im.name);
+  if (tags.length) nm.querySelector(".tg").textContent = `#${tagLabel(tags[0])}`;
+  nm.title = im.name + (tags.length ? `\n${tags.map((t) => `#${tagLabel(t)}`).join(" ")}` : "");
   // '드문 클래스 먼저' 정렬: 이 이미지를 앞으로 끌어온 클래스를 붙인다
   if (im.rare_cls != null) {
     const tag = li.querySelector(".rare");
@@ -1372,6 +1400,12 @@ async function loadTags() {
   try { data = await api("/api/tags"); } catch { return; }      // 실패해도 검수는 되어야 한다
   S.tags = data.tags;
   S.tagName = Object.fromEntries(data.tags.map((t) => [t.id, t.name]));
+  S.tagN = Object.fromEntries(data.tags.map((t) => [t.id, t.n]));
+  // 처음 열 때 태그(loadState 가 기다리지 않는다)보다 목록이 먼저 그려졌으면 태그 없이 그려졌다 — 한 번만 다시 그린다
+  if (!S.tagsLoaded) {
+    S.tagsLoaded = true;
+    if (S.images.length) refreshRows(S.images.map((im) => im.id));
+  }
   if (S.curTag != null && !(S.curTag in S.tagName)) S.curTag = null;   // 다른 창에서 지웠다
   S.tagNoneCount = data.none;
   S.tagNoneKey = data.none_key;
@@ -1396,7 +1430,7 @@ function renderTagList() {
   $("#tag-cur").textContent = S.curTag != null && S.tagName[S.curTag] ? `→ #${S.tagName[S.curTag]}` : "";
   const mine = new Set(S.cur ? S.cur.tags || [] : []);
   $("#img-tags").textContent = S.cur && mine.size
-    ? [...mine].map((t) => `#${S.tagName[t] || t}`).join(" ") : "";
+    ? tagsNarrowFirst([...mine]).map((t) => `#${tagLabel(t)}`).join(" ") : "";
   if (!S.tags.length) {
     const li = document.createElement("li");
     li.className = "empty";
@@ -1953,7 +1987,7 @@ async function openAudit(mode = "shrunk") {
     </tr></thead><tbody>${rows.map((r) => `
       <tr class="link" data-id="${r.image_id}" title="이 이미지 열기">
         <td>${esc(fmtTime(r.at))}</td><td class="num">${r.image_id}</td>
-        <td class="name">${esc(r.name)}</td><td>${esc(r.split || "-")}</td><td>${esc(r.status)}</td>
+        <td class="name" title="${esc(r.name)}">${esc(shortName(r.name))}</td><td>${esc(r.split || "-")}</td><td>${esc(r.status)}</td>
         <td class="num${r.n_after < r.n_before ? " shrunk" : ""}">${r.n_before}→${r.n_after}</td>
         <td>${esc(SRC_KO[r.source] || r.source)}</td>
       </tr>`).join("")}</tbody></table>`;
@@ -2542,7 +2576,8 @@ async function loadImage(id) {
 
   renderStatusButtons();
 
-  $("#img-name").textContent = meta.name;
+  $("#img-name").textContent = shortName(meta.name);
+  $("#img-name").title = meta.name;          // 원래 파일 이름 (shortName)
   $("#img-meta").textContent =
     `${meta.width}×${meta.height} · ${meta.status} · ${meta.split || "미배정"} · 불확실도 ${meta.uncertainty}` +
     (meta.model_version ? ` · ${meta.model_version}` : "") +
@@ -2749,6 +2784,7 @@ function clearCurrent() {
     ghost: null, history: [], pred: null, predLoading: false, findings: [], findHot: -1,
   });
   $("#img-name").textContent = "";
+  $("#img-name").title = "";
   $("#img-meta").textContent = "";
   $("#save-state").textContent = "";
   $("#save-state").className = "save-state";
