@@ -16,11 +16,16 @@ status='pending' 로 넣은 뒤 domain 을 'cctv' 로 정한다. 촬영 시각�
 **자르기(11-07).** `cameras.yaml` 의 그 카메라에 `crop: [x1, y1, x2, y2]`(원본 픽셀)가 있으면 그 장면은 그 영역만 쓴다.
 0503 은 위쪽 먼 큰길(그 장면 박스 1,905개 중 1,146개, 높이 32px 미만 457개 중 456개)을 빼고 아래 띠 `[0, 430, 1920, 1080]`
 만 쓴다(사용자 결정 — 그 장면은 `split: train`, 자른 화면은 평가에 쓰지 않는다). 0500 도 같은 날 위쪽 인도에 3~5대가
-겹쳐 선 오토바이 뭉치(눈으로 가를 수 없다)를 빼려고 `[0, 270, 1920, 1080]` 만 쓴다(`split: train`). 폭이 그대로라 640 입력에서 물체 크기는
+겹쳐 선 오토바이 뭉치(눈으로 가를 수 없다)와 왼쪽 나무 그늘·막은 공사 차선을 빼려고 `[700, 270, 1920, 1080]` 만 쓴다
+(`split: train` — 이 장면만 폭이 1220 이라 640 입력에서 물체가 통째 화면보다 약 1.6배 크다). 0503 은 폭이 그대로라 640 입력에서 물체 크기는
 통째 화면과 같다. 파일 이름 끝에 영역을 붙이고(`_c0-430-1920-1080`), VIRAT 박스는 영역에 맞춰 자르되 원래 넓이의 30%
 미만만 남으면 버리며, 모델은 자른 화면에 돌린다. 후보 프레임은 영역 안에 GT 가 있는 것만. 이미 통째로 넣은 그 장면
 이미지는 `--recrop` 이 같은 프레임을 영상에서 다시 읽어 잘라 바꾼다(id·태그·도메인 그대로, `store.replace_file`).
 사람이 고친 이미지는 건너뛰고, `--keep-edits` 를 주면 다시 라벨링하지 않고 지금 박스를 자른 영역 좌표로 옮긴다.
+이미 잘린 이미지도 `crop:` 을 바꾸고 다시 `--recrop` 하면 새 영역으로 바뀐다 — 박스는 지금 영역만큼 옮겨 원본 좌표로 본
+뒤 자르고, 새 영역이 지금 영역 밖으로 나가는 이미지는 박스째 옮기지 않는다(새로 드러난 곳에 라벨이 없다).
+`--keep-boxes` 면 사람이 고쳤든 아니든 모든 이미지를 다시 라벨링하지 않고 박스만 옮긴다 — 화면 폭이 바뀌면 모델이 다른
+크기로 보고 예측이 달라져서다(0500 을 x 700 으로 좁힐 때 다시 라벨링하면 평판 트레일러를 truck 으로 잡았다).
 
 **고르는 법.** 객체 주석이 있는 클립만 본다(영상 14개는 주석 파일이 없어 뺀다). 사람·차·자전거 GT 가 하나라도 있는
 프레임을 `--gap` 초(기본 5) 이상 떨어지게 추리고, 장면의 몫을 클립마다 후보 수에 비례해 나눈 뒤 클립 안에서는 고르게
@@ -422,14 +427,17 @@ def backup(cfg: Config, tag: str, stamp: str) -> None:
     print(f"DB 를 떠 두었다: {bak}")
 
 
-def crop_boxes(rows: list, crop: Crop, full_w: int, full_h: int) -> list[Box]:
-    """DB 박스(통째 화면 정규화 좌표, (cls, cx, cy, w, h, conf, origin))를 자른 영역 기준으로 — 사람이 고친 이미지를 다시
-    라벨링하지 않고 그대로 옮길 때(`--recrop --keep-edits`). 영역에 원래 넓이의 30% 미만만 남는 박스는 버린다."""
+def crop_boxes(rows: list, crop: Crop, img_w: int, img_h: int, at: tuple[int, int] = (0, 0)) -> list[Box]:
+    """DB 박스((cls, cx, cy, w, h, conf, origin) — 지금 이미지(img_w×img_h) 기준 정규화 좌표)를 새 영역 기준으로 — 사람이
+    고친 이미지를 다시 라벨링하지 않고 그대로 옮길 때(`--recrop --keep-edits`). 영역에 원래 넓이의 30% 미만만 남는 박스는
+    버린다. 지금 이미지가 이미 잘린 것이면 at 에 그 영역의 왼쪽 위(원본 픽셀)를 준다 — 박스를 원본 좌표로 옮긴 뒤 자른다
+    (2026-11-07, 0500 을 y 270 으로 자른 뒤 x 700 으로 다시 자를 때 — 안 주면 박스가 그만큼 어긋난다)."""
     cw, ch = crop[2] - crop[0], crop[3] - crop[1]
+    ox, oy = at
     out = []
     for cls, cx, cy, w, h, conf, origin in rows:
-        kept = crop_gt([("_", (cx - w / 2) * full_w, (cy - h / 2) * full_h,
-                         (cx + w / 2) * full_w, (cy + h / 2) * full_h)], crop)
+        kept = crop_gt([("_", ox + (cx - w / 2) * img_w, oy + (cy - h / 2) * img_h,
+                         ox + (cx + w / 2) * img_w, oy + (cy + h / 2) * img_h)], crop)
         if not kept:
             continue
         _, a, b, c, d = kept[0]
@@ -524,16 +532,21 @@ def recrop(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | Non
         crop = crops.get(scene_of(clip))
         if not crop or now == crop or (scenes and scene_of(clip) not in scenes):
             continue
+        move = args.keep_boxes or (r["id"] in human and args.keep_edits)   # 다시 라벨링하지 않고 지금 박스를 옮긴다
         if r["status"] != "pending":
             skipped[f"상태가 {r['status']}"] += 1
-        elif r["id"] in human and not args.keep_edits:
+        elif r["id"] in human and not move:
             skipped["사람이 고친 이력이 있음(--keep-edits 면 박스째 자른다)"] += 1
+        elif move and now and not (now[0] <= crop[0] and now[1] <= crop[1]
+                                   and crop[2] <= now[2] and crop[3] <= now[3]):
+            # 새 영역이 지금 잘린 영역 밖으로 나가면 새로 드러난 곳에는 라벨이 없다 — 박스째 옮길 수 없다
+            skipped["새 영역이 지금 잘린 영역 밖으로 나감(박스째 옮길 수 없음)"] += 1
         elif not (vdir / f"{clip}.mp4").exists():
             skipped["영상 없음"] += 1
         else:
-            targets.append((clip, frame, crop, r))
-    kept_ids = {r["id"] for *_, r in targets if r["id"] in human}
-    print(f"잘라 바꿀 것 {len(targets)}장" + (f" — 그중 사람이 고친 {len(kept_ids)}장은 박스째" if kept_ids else "")
+            targets.append((clip, frame, crop, r, now))
+    kept_ids = {t[3]["id"] for t in targets if args.keep_boxes or t[3]["id"] in human}
+    print(f"잘라 바꿀 것 {len(targets)}장" + (f" — 그중 {len(kept_ids)}장은 다시 라벨링하지 않고 박스째" if kept_ids else "")
           + (f" (건너뜀 {dict(skipped)})" if skipped else ""))
     if args.apply and targets:
         backup(cfg, "viratrecrop", stamp)
@@ -542,7 +555,7 @@ def recrop(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | Non
     done = changed = 0
     fails: list[str] = []
     cap, cap_clip = None, None
-    for clip, frame, crop, r in sorted(targets, key=lambda t: (t[0], t[1])):
+    for clip, frame, crop, r, now in sorted(targets, key=lambda t: (t[0], t[1])):
         if clip != cap_clip:
             if cap is not None:
                 cap.release()
@@ -553,14 +566,15 @@ def recrop(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | Non
             fails.append(f"{clip} f{frame}")
             continue
         img = img[crop[1]:crop[3], crop[0]:crop[2]].copy()
-        if r["id"] in kept_ids:          # 사람이 고친 박스를 그대로 옮긴다 — 다시 라벨링하지 않는다
+        if r["id"] in kept_ids:          # 지금 박스를 그대로 옮긴다 — 다시 라벨링하지 않는다
             with store.connect() as con:
                 cur_boxes = con.execute("SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id",
                                         (r["id"],)).fetchall()
-            boxes = crop_boxes([tuple(b) for b in cur_boxes], crop, r["width"], r["height"])
+            boxes = crop_boxes([tuple(b) for b in cur_boxes], crop, r["width"], r["height"],
+                               (now[0], now[1]) if now else (0, 0))
             score, version = r["uncertainty"] or 0.0, r["model_version"] or lab.version
             h, w = img.shape[:2]
-            print(f"  id {r['id']}: 사람이 고친 박스 {len(cur_boxes)}개 → 자른 영역에 {len(boxes)}개")
+            print(f"  id {r['id']}: 지금 박스 {len(cur_boxes)}개 → 자른 영역에 {len(boxes)}개")
         else:
             boxes, score, w, h = lab.boxes(img, crop_gt(gts.get(clip, frame), crop))
             version = lab.version
@@ -617,6 +631,8 @@ def main() -> int:
     ap.add_argument("--recrop", action="store_true", help="crop 을 적은 장면의 통째 이미지를 잘라 바꾼다")
     ap.add_argument("--keep-edits", action="store_true",
                     help="--recrop 때 사람이 고친 이미지도 자르되, 다시 라벨링하지 않고 지금 박스를 옮긴다")
+    ap.add_argument("--keep-boxes", action="store_true",
+                    help="--recrop 때 모든 이미지를 다시 라벨링하지 않고 지금 박스를 옮기기만 한다(이미 자른 장면을 더 좁힐 때)")
     ap.add_argument("--quality", type=int, default=95, help="JPEG 품질 (tools/extract_frames.py 와 같다)")
     ap.add_argument("--apply", action="store_true", help="실제로 쓴다 (기본은 보기만)")
     args = ap.parse_args()
