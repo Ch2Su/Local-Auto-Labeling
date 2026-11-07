@@ -150,9 +150,13 @@ kbd {
 /* ── 레이아웃 ─────────────────────────────────────── */
 .layout {
   display: grid;
-  grid-template-columns: 250px 1fr 270px;
+  /* 왼쪽 폭(목록 폭 손잡이, 2026-11-07): app.js 가 정한 --left-w 를 창 폭에 맞춰 줄인다 — 가운데 420px·오른쪽 270px 은
+     남긴다. 창 크기 이벤트를 기다리지 않게 CSS 로 한다 */
+  --left-eff: clamp(250px, var(--left-w, 250px), max(250px, min(900px, calc(100vw - 690px))));
+  grid-template-columns: var(--left-eff) 1fr 270px;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 .panel {
@@ -162,6 +166,20 @@ kbd {
 }
 .panel-left  { border-right: 1px solid var(--line); }
 .panel-right { border-left: 1px solid var(--line); }
+
+/* 목록 폭 손잡이 (2026-11-07) — 왼쪽 목록과 가운데의 경계. 목록 스크롤바를 덜 가리게 가운데 쪽으로 더 걸친다.
+   메뉴·찾기 칸(z 20 이상)보다 아래에 둔다 */
+.list-resizer {
+  position: absolute; top: 0; bottom: 0; z-index: 10;
+  left: calc(var(--left-eff) - 2px); width: 7px;
+  cursor: col-resize; touch-action: none;
+}
+.list-resizer:hover, body.list-resizing .list-resizer { background: rgba(76, 141, 255, 0.45); }
+/* 이미지 보기에서는 왼쪽에 목록이 없고 필터만 남아, 넓히면 그리드만 좁아진다 — 늘 기본 폭으로 둔다 */
+body.view-gallery .layout { --left-eff: 250px; }
+body.view-gallery .list-resizer, body.view-gallery #list-width-reset { display: none; }
+body.list-resizing, body.list-resizing * { cursor: col-resize !important; user-select: none; }
+.list-width-reset { margin-left: auto; font-weight: 400; white-space: nowrap; }
 
 .panel-head {
   display: flex; gap: 6px; align-items: center;

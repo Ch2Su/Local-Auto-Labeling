@@ -79,6 +79,9 @@
         <option value="uncertainty">불확실한 순</option>
         <option value="rare" title="드문 클래스(나온 장면 묶음이 적은 클래스)를 확신하는 이미지부터. 자동 라벨링 뒤 검수 대기에서 쓴다">드문 클래스 먼저</option>
       </select>
+      <!-- 목록 폭 (2026-11-07): 오른쪽 경계를 끌어 넓힌 뒤에만 보인다 -->
+      <button id="list-width-reset" class="linkbtn list-width-reset hidden"
+              title="왼쪽 목록 폭을 처음(250px)으로 되돌립니다. 목록 오른쪽 경계를 두 번 눌러도 됩니다.">기본 폭</button>
     </div>
 
     <!-- 필터 (2026-11-04): 접히는 한 칸. 접혀 있으면 고른 필터만 한 줄로 보인다. 이미지 보기에서는 늘 펼친다 -->
@@ -140,6 +143,8 @@
     </div>
     <ul id="image-list" class="image-list"></ul>
   </aside>
+  <!-- 목록 폭 손잡이 (2026-11-07): 목록과 가운데 경계를 끌어 넓힌다. 그리드 칸을 차지하지 않는다(절대 위치) -->
+  <div id="list-resizer" class="list-resizer" title="끌어서 왼쪽 목록 폭을 바꿉니다 · 두 번 누르면 처음 폭"></div>
 
   <!-- ── 중앙: 캔버스 ─────────────────────────────────── -->
   <section class="stage">

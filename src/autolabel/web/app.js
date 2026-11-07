@@ -3121,6 +3121,65 @@ document.querySelectorAll(".sec").forEach((sec) => {
   });
 });
 
+/* 왼쪽 목록 폭 (2026-11-07) — 목록과 가운데 경계(#list-resizer)를 끌어 넓힌다. 기본보다 좁히지는 않는다(머리의 두 select 가
+ * 눌린다). 가운데는 남은 폭을 쓰고 캔버스는 #canvas-wrap 의 ResizeObserver 가 다시 맞춘다. 정한 폭은 이 브라우저에만
+ * 남는다(모든 프로젝트 같음). 창 폭에 맞춰 줄이는 것은 CSS(.layout 의 --left-eff)가 한다 — 창이 좁아 잘려도 정한 폭은
+ * 그대로 두고, 창이 넓어지면 다시 그 폭이 된다. */
+const LIST_W_KEY = "listWidth", LIST_W_DEF = 250, LIST_W_MAX = 900;
+let listWidth = LIST_W_DEF;
+function clampListWidth(w, max = LIST_W_MAX) {
+  return Math.round(Math.max(LIST_W_DEF, Math.min(max, Number(w) || LIST_W_DEF)));
+}
+function applyListWidth() {
+  $(".layout").style.setProperty("--left-w", `${listWidth}px`);
+  $("#list-width-reset").classList.toggle("hidden", listWidth === LIST_W_DEF);
+}
+function saveListWidth() {
+  try {
+    if (listWidth === LIST_W_DEF) localStorage.removeItem(LIST_W_KEY);
+    else localStorage.setItem(LIST_W_KEY, String(listWidth));
+  } catch { /* 저장 못 해도 그만 */ }
+}
+function resetListWidth() {
+  listWidth = LIST_W_DEF;
+  applyListWidth();
+  saveListWidth();
+}
+try {
+  const saved = Number(localStorage.getItem(LIST_W_KEY));
+  if (saved > LIST_W_DEF) listWidth = clampListWidth(saved);
+} catch { /* 없으면 기본 폭 */ }
+applyListWidth();
+$("#list-width-reset").onclick = resetListWidth;
+{
+  const bar = $("#list-resizer");
+  let drag = null;   // {x, w, max} — 누른 곳, 그때 보이는 폭, 지금 창에서 넓힐 수 있는 끝
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    document.body.classList.remove("list-resizing");
+    saveListWidth();
+  };
+  bar.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();   // 글자 선택·포커스 이동 없이
+    // 창이 좁아 CSS 가 줄여 보이고 있으면 그 보이는 폭에서 시작한다(정한 폭에서 시작하면 끌어도 한동안 안 움직인다)
+    const max = Math.max(LIST_W_DEF, Math.min(LIST_W_MAX, window.innerWidth - 270 - 420));
+    drag = { x: e.clientX, w: $(".panel-left").getBoundingClientRect().width, max };
+    bar.setPointerCapture(e.pointerId);
+    document.body.classList.add("list-resizing");
+  });
+  bar.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    listWidth = clampListWidth(drag.w + e.clientX - drag.x, drag.max);
+    applyListWidth();
+  });
+  bar.addEventListener("pointerup", end);
+  bar.addEventListener("pointercancel", end);
+  bar.addEventListener("lostpointercapture", end);
+  bar.addEventListener("dblclick", resetListWidth);
+}
+
 /* 보기 전환 (2026-11-04) — 라벨링 ↔ 이미지 보기(gallery.js). 한 페이지 안이라 필터·지금 이미지·되돌리기가
  * 그대로 남는다. 마지막 보기는 다시 열어도 남긴다(프로젝트마다). */
 const VIEW_KEY = `view:${BASE}`;
