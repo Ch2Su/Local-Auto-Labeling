@@ -222,7 +222,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 bicycle 1,518  bus 988  car 10,344  motorcycle 1,505  person 12,860
 scooter 1,031  truck 1,050  pickup 770
 검수 대기 478(전부 VIRAT), 미라벨 0, 건너뜀 0, 휴지통 0, 박스 없는 승인 이미지 60 · DB 행 5,681
-분할: train 3,684 / val 657 / test 693(박스 4,061) / 미배정 169 — DB 의 images.split 에 고정, 미배정은 다음 학습 때 배정된다
+분할: train 3,725 / val 729 / test 749(박스 4,192) / 미배정 0 — DB 의 images.split 에 고정(미배정 169장은 11-08 학습 때 배정됐다)
 도메인(승인): CCTV 3,847 / 비CCTV 1,098 / 드론 258 / 미분류 0 · 휴지통이 아닌 이미지에 붙은 태그 84개·3,753장
 ```
 
@@ -287,13 +287,14 @@ scooter 1,031  truck 1,050  pickup 770
   붙이는 새 이미지가 나오면 옮기지 않고 `[알림] … 두 분할에 걸칩니다` 만 띄운다(`moved` 는 reset 이 아니면 0 이어야 한다).
 - **손으로 옮길 때는 val·test → train 방향만** — 반대면 학습한 이미지가 평가셋에 들어간다. test 의 드론 묶음 `g003254`·
   `g003305` 는 사실상 같은 장면이라 반드시 같은 쪽에 둘 것.
-- 09-24 에 이름 계열 규칙을 고쳐(자릿수·이미지 크기가 같아야 한 계열) **다음 학습(또는 `split`) 때 `g000001`(1,433장)이
-  360묶음으로 나뉜다** — 옮겨지는 이미지는 0장이다.
+- 09-24 에 이름 계열 규칙을 고쳐(자릿수·이미지 크기가 같아야 한 계열) `g000001`(그때 1,433장)이 나뉘게 됐고, **11-08 학습 때 실제로
+  다시 묶였다**(묶음 2,885개, 가장 큰 묶음 180장 — 기존 배정은 그대로).
 - 묶을 때 로보플로(`_jpg.rf.<해시>`, 두 번 내보낸 `_png_png.rf.<해시>` 까지 전부)·tidy(`__<sha1 8자>`·`_2`) 꼬리표는 떼고 보고,
   dHash 는 EXIF 회전을 적용해 잰다. 영문 `Screenshot …` 도 30초 스크린샷 규칙을 탄다. **이름 계열은 카메라 안에서만 잇는다**
   (다른 카메라끼리는 dHash 로만). 누수는 `labeler.py split --leak` 으로 다시 잰다.
-- **11-05 에 꼬리표 규칙을 고쳐, 다음 학습(또는 `split`) 때 두 분할에 걸친 묶음 29개(366장)가 알림으로 뜬다** — 예:
-  `duque_de_caxias` 110장(한 카메라)이 train 98·val 9·test 3. 기존 배정은 고정이라 옮기지 않는다(DB 사본 시뮬레이션 moved 0).
+- **11-05 에 꼬리표 규칙을 고쳐, 두 분할에 걸친 묶음이 알림으로 뜬다** — 11-08 학습 때 27개였다(11-05 시뮬레이션은 29개·366장, 그
+  사이 휴지통으로 뺀 이미지가 있다). 예: `duque_de_caxias` 110장(한 카메라, g002471)이 train 98·val 9·test 3. 기존 배정은 고정이라
+  옮기지 않는다.
   계층화는 섞인 묶음을 다수결 분할로 센다(비중이 조금 어긋남 — 고치지 않았다). 누수를 없애려면 분할 재배정(사용자 결정).
 - `train.test_ratio`(또는 val_ratio)를 0 으로 바꿔 이미 배정된 분할이 비율에서 빠지면, reset 이 아닌 한 **아무것도 쓰기 전에
   멈춘다**(11-05 — 전에는 test 가 경고 없이 train·val 로 흡수됐다).
@@ -336,7 +337,9 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
 
 **가중치.** `weights/` 에 사전학습 가중치(`yolo26n/s/m/l.pt`, `sam2.1_t.pt`)가 있다 — config 에 이름만 적으면
 `config.pretrained_path()` 가 여기서 찾는다(없으면 Ultralytics 가 실행한 폴더에 받아 버린다). `models/best.pt`(운영) =
-`best_visible3.pt`(visible-3 epoch 156, val 0.654, sha256 `ca1f9f5c…`). **`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라
+`best_visible3.pt`(visible-3 epoch 156, val 0.654, sha256 `ca1f9f5c…`). 같은 폴더의 `best_y26m_8cls.pt` 는 11-08 8클래스 첫 학습
+(yolo26m, 운영 아님, sha256 `f09f02f4…`), `best_detectview_y26m.pt` 는 DetectView 배포 모델 원본의 사본(7클래스, sha256
+`785b3542…`)이다 — 셋의 test 비교는 docs/experiments.md '8클래스 첫 학습'. **`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라
 중단할 때마다 그 시점 best 로 밀려난다** — 운영할 가중치는 늘 `best_<이름>.pt` 로 따로 둔다.
 
 **다른 디스크 백업: `C:\local_auto_labeling_backup\20261031\`**(C: = 디스크 1, E: 와 다른 물리 디스크). `.venv`·`graft`·

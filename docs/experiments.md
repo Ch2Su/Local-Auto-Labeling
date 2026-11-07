@@ -495,3 +495,27 @@ CCTV test 에서 2×2+통째의 FP 1,028개(통째 580개, conf 0.25·IoU 0.5 �
   mAP 가 높고 통째도 안 다친다. 비CCTV(139장)도 같은 방향이다(0.3: mAP +0.049, R 0.630 대 0.604, F1 0.684 대 0.688).
 - **눈 판정은 내가 한 것이다.** 사용자가 라벨 누락이 더 있는 것 같다며 같은 표본 48개를 직접 보기로 했다(11-03) — 결과가 나오면
   위 'FP 증가분의 대부분은 오검출' 결론을 다시 볼 것(번호·이미지 id 표와 전체 그림은 그 세션의 scratchpad `fp_review/` 에 있었다).
+
+## 8클래스 첫 학습 — yolo26m, visible-3·DetectView y26m 과 test 비교 (2026-11-08)
+
+운영 모델 visible-3(yolo26s, 09-16)은 pickup 을 모르고, car 에는 옛 van 이 섞였다. 그날까지 승인한 데이터로 임시 학습해 예전
+모델과 견줬다(사용자 요청). DetectView 앱이 11-06 부터 YOLO26m 640×384 를 써서 모델 크기도 m 으로 맞췄다.
+
+**학습.** WSL `~/new_env/yolo/runs_cmp/y26m_8cls` 에서 `train_wsl.py` 를 직접 돌렸다(웹 UI 'WSL 이어하기' 가 집어 가지 않게
+runs_wsl 밖에 둠). `weights/yolo26m.pt` 에서 새로 시작했고 설정은 640 / batch 10 / 100 epoch / optimizer auto(AdamW lr
+0.000833) / cos_lr / close_mosaic 10 / seed 0 / cache ram / 워커 8 이다. 손실·증강은 config 그대로다(dfl 1.5).
+- 인자는 `runs/compare_1108/y26m_8cls_args.yaml`, 곡선은 `y26m_8cls_results.csv` 에 있다. 이어 학습한 판이라 args 의 `model`·`resume` 은
+  resume.pt 로 적혀 있다.
+- 데이터는 그날 DB 로 만든 8클래스 데이터셋이다 — 승인 5,203장, train 3,725 / val 729 / test 749.
+  - 미배정이던 169장이 이때 배정됐다.
+  - 묶음은 2,885개(가장 큰 묶음 180장)다.
+  - 두 분할에 걸친 묶음 27개는 알림만 떴다.
+- **DetectView y26m 과 학습 설정이 같다** — 모델·epoch·batch·optimizer·seed·cos_lr·close_mosaic·손실 게인이 모두 같다
+  (`~/rfdetr_work/runs/yolo/y26m/args.yaml`). 다른 것은 데이터다: 그쪽은 09-18 백업(7클래스, train 4,708)이고 best 는 epoch 75 다.
+- 사용자 요청으로 epoch 9 의 368/373 배치에서 정지 파일로 멈췄다(resume.pt). 다른 세션의 파일 복구가 끝난 뒤 이어서 100 까지
+  갔다. 멈춘 epoch 은 5배치(1.3%)를 건너뛰고 검증·저장됐다. 이어 학습의 results.csv `time` 은 0 부터 다시 센다.
+- epoch 중앙값은 99.6초다(시작·재시작 직후 epoch 은 약 120초). 합계 2.74시간, nvidia-smi 6.5\~6.6GB.
+- **best = epoch 84 (val mAP50-95 0.6934 / mAP50 0.8410).** 가중치는 `models/best_y26m_8cls.pt`(sha256 `f09f02f4…`)다. 운영
+  가중치(`best.pt` = visible-3)는 바꾸지 않았다.
+- **close_mosaic 은 세 번째도 이득이 없었고, 이번에는 떨어졌다.** 91\~100(mosaic 끔) 평균 0.6801 대 81\~90 평균 0.6901 이고,
+  epoch 91 에서 바로 0.692 → 0.678 이 됐다. 다만 끄지 않은 학습과 직접 비교한 적은 여전히 없다.
