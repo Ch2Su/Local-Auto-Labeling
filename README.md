@@ -789,7 +789,8 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
                        E:\datasets\objects365.tar 로 묶여 있어 먼저 풀어야 한다)
   import_virat.py      VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — 운영 모델 예측 + 모델이 못 찾은
                        VIRAT 박스 (기본은 보기만, --apply 로 넣음, --per-scene 을 올리면 모자란 만큼만 더,
-                       --relabel 은 이미 넣은 검수 대기를 지금 모델로 다시, cameras.yaml 에 crop 을 적은 장면은
+                       --relabel 은 이미 넣은 검수 대기를 지금 모델로 다시(--model-only 면 VIRAT 박스 없이),
+                       cameras.yaml 에 crop 을 적은 장면은
                        그 영역만 — 이미 넣은 것은 --recrop 뒤 검수 화면을 새로 고칠 것. docs/provenance.md)
   merge_class.py       맨 끝 클래스를 다른 클래스에 합친다 (기본은 보기만, --apply 로 DB 를 떠 두고 합침)
   finetune.py          해상도를 올려 짧게 미세조정

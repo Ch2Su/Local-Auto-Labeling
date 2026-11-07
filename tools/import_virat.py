@@ -35,7 +35,9 @@ status='pending' 로 넣은 뒤 domain 을 'cctv' 로 정한다. 촬영 시각�
 - 같은 무리(사람 / 차: car·bus·truck·pickup / 두 바퀴: bicycle·motorcycle·scooter)끼리 IoU 0.5 이상을 큰 것부터 하나씩
   짝지어 짝이 생긴 VIRAT 박스는 버린다(모델 박스로 갈음). 짝이 없는 VIRAT 박스도, 짝 없는 같은 무리 모델 박스와 IoU 0.1
   이상 겹치거나 그 중심을 품으면 버린다(같은 물체를 모양만 다르게 그린 것). 남은 VIRAT 박스만 출처 'virat'·신뢰도
-  없음(검수 화면에 '수동')으로 더한다. `--virat-only` 면 모델 없이 VIRAT 박스만 넣는다.
+  없음(검수 화면에 '수동')으로 더한다. `--virat-only` 면 모델 없이 VIRAT 박스만, `--model-only` 면 VIRAT 박스 없이 모델
+  예측만 넣는다(0503 의 자른 검수 대기 49장은 11-07 사용자 결정으로 `--relabel --model-only` — 먼 큰길을 잘라 내자 남은
+  VIRAT 박스 126개는 놓친 사람 몇과 어긋난·가려진 차·영역 끝 조각이 섞여 있었다).
 
 **다시 라벨링(`--relabel`).** 새 프레임을 넣지 않고, DB 의 VIRAT 이미지 가운데 검수 대기이고 사람이 손대지 않은 것
 (변경 이력이 자동 라벨링(predict) 것뿐인 것)을 위 규칙으로 다시 라벨링한다 — 주석은 파일에서 다시 읽고(이름의 영역대로
@@ -354,9 +356,11 @@ def to_box(cls: int, x1: float, y1: float, x2: float, y2: float, w: int, h: int,
 class Labeler:
     """모델 예측 + 모델이 못 찾은 VIRAT 박스로 한 장의 박스를 만든다(넣기·다시 라벨링·자르기가 같이 쓴다)."""
 
-    def __init__(self, cfg: Config, classes: list[str], weights: str | None, device: str, use_model: bool):
+    def __init__(self, cfg: Config, classes: list[str], weights: str | None, device: str, use_model: bool,
+                 use_virat: bool = True):
         self.class_idx = {n: i for i, n in enumerate(classes)}
         self.classes = classes
+        self.use_virat = use_virat       # False(--model-only) 면 VIRAT 박스를 보태지 않는다
         self.model = None
         self.weights = str(resolve(weights)) if weights else cfg.active_weights()   # 자동 라벨링과 같은 가중치
         if use_model:
@@ -370,13 +374,16 @@ class Labeler:
                        imgsz=int(cfg.get("predict.imgsz") or cfg.imgsz), device=device, verbose=False)
         self.bands = (float(cfg.get("review.low_band", 0.30)), float(cfg.get("review.high_band", 0.80)),
                       float(cfg.get("review.empty_score", 0.60)))
-        self.version = "virat" if self.model is None else f"{Path(self.weights).name}+virat"
+        self.version = ("virat" if self.model is None else
+                        f"{Path(self.weights).name}+virat" if use_virat else Path(self.weights).name)
         self.n_model: collections.Counter = collections.Counter()
         self.n_virat: collections.Counter = collections.Counter()
         self.dropped: collections.Counter = collections.Counter()
 
     def boxes(self, source, gt: list) -> tuple[list[Box], float, int, int]:
         """source 는 이미지 배열이나 경로, gt 는 그 이미지 좌표. → (박스, 불확실도, 너비, 높이)."""
+        if not self.use_virat:
+            gt = []
         preds, w, h = [], None, None
         if self.model is not None:
             r = self.model.predict(source, **self.kw)[0]
@@ -604,6 +611,7 @@ def main() -> int:
     ap.add_argument("--weights", default=None, help="모델 (기본: 자동 라벨링과 같은 운영 가중치)")
     ap.add_argument("--device", default="cpu", help="추론 장치 (기본 cpu, GPU 는 0)")
     ap.add_argument("--virat-only", action="store_true", help="모델 없이 VIRAT 박스만")
+    ap.add_argument("--model-only", action="store_true", help="VIRAT 박스 없이 모델 예측만 (자동 라벨링과 같다)")
     ap.add_argument("--relabel", action="store_true", help="새로 넣지 않고 이미 넣은 검수 대기를 다시 라벨링")
     ap.add_argument("--recrop", action="store_true", help="crop 을 적은 장면의 통째 이미지를 잘라 바꾼다")
     ap.add_argument("--keep-edits", action="store_true",
@@ -613,6 +621,8 @@ def main() -> int:
     args = ap.parse_args()
     if args.relabel and args.recrop:
         raise SystemExit("--relabel 과 --recrop 은 따로 돌릴 것")
+    if args.virat_only and args.model_only:
+        raise SystemExit("--virat-only 와 --model-only 는 함께 쓸 수 없다")
 
     import cv2
 
@@ -625,7 +635,8 @@ def main() -> int:
     scenes = {s.strip() for s in args.scenes.split(",") if s.strip()} or None
     crops = load_crops(cfg.cameras)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    lab = Labeler(cfg, classes, args.weights, args.device, use_model=not args.virat_only)
+    lab = Labeler(cfg, classes, args.weights, args.device, use_model=not args.virat_only,
+                  use_virat=not args.model_only)
     if args.relabel:
         return relabel(args, cfg, store, lab, scenes, crops, stamp)
     if args.recrop:

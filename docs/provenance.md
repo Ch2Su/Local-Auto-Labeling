@@ -222,7 +222,11 @@ cameras:
   1920×650 으로 바꿨다(id 그대로, 이름 끝 `_c0-430-1920-1080`, 백업 `labeling.db.bak_viratrecrop_20261107_181911`, 목록
   `runs/virat_import/20261107_181911_recrop.tsv`). 박스 1,905 → 786(모델 654·VIRAT 126·사람 6). 사용자가 검수하며 고친
   id 7778 은 다시 라벨링하지 않고 고친 박스 19개 중 띠 안의 8개를 좌표만 옮겼다.
-- 그 뒤 VIRAT 550장 박스: 모델 8,148(출처 auto) · VIRAT 1,853(출처 virat) · 사람 6(출처 human).
+- 이어서 사용자가 7778 을 승인하고, **0503 의 나머지 검수 대기 49장은 운영 모델 예측만으로** 다시 라벨링했다
+  (`--relabel --model-only --scenes 0503`, 백업 `labeling.db.bak_viratrelabel_20261107_182644`) — 먼 큰길을 잘라 내자 남은
+  VIRAT 박스 126개(car 76·사람 50)는 모델이 놓친 작은 사람 몇과 어긋나거나 가려진 차, 영역 끝 조각이 섞여 있었다. 모델 박스
+  651개, model_version `best.pt`. 이 장면을 `--relabel` 로 다시 돌릴 때는 `--model-only` 를 줄 것(안 주면 VIRAT 박스가 다시 붙는다).
+- 그 뒤 VIRAT 550장 박스: 모델 8,147(출처 auto) · VIRAT 1,727(출처 virat) · 사람 6(출처 human), 승인 1장(7778).
 - 카메라 등록은 `data/visible/cameras.yaml`(11-07 에 처음 만들었다 — VIRAT 11대, `split` 은 비움, mount 는 부감으로 본
   짐작). 평가에 쓸 장면을 고정하려면 다음 학습(또는 `split`) 전에 `split:` 을 적는다.
 - 검수 때 볼 것: 남은 VIRAT bicycle 은 오토바이일 수 있다(VIRAT bike 는 오토바이도 담는다). 운영 모델은 pickup 을 몰라
