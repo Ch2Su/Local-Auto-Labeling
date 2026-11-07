@@ -9,9 +9,17 @@
 VIRAT 차 2대·모델 20여 대), 운영 모델은 먼 사람을 놓친다(표본 66장에서 VIRAT 사람 박스의 36%) — 둘이 서로 메운다.
 
 **장면 = 카메라** `virat-XXYY`(`data/visible/cameras.yaml` 에 먼저 등록 — kind dataset, docs/provenance.md). 프레임은
-`<unlabeled>/virat-XXYY/<클립>_f<프레임 6자리>.jpg`(JPEG 95, 원본 해상도)로 쓰고 DB 에 source='virat'·camera·
+`<unlabeled>/virat-XXYY/<클립>_f<프레임 6자리>[_c<x1>-<y1>-<x2>-<y2>].jpg`(JPEG 95)로 쓰고 DB 에 source='virat'·camera·
 status='pending' 로 넣은 뒤 domain 을 'cctv' 로 정한다. 촬영 시각은 모른다(클립 이름의 초는 원 영상 안의 위치다).
 이 도구가 넣은 경로는 scan 이 이미 아는 경로라 건너뛴다(출처가 'collected' 로 바뀌지 않는다).
+
+**자르기(11-07).** `cameras.yaml` 의 그 카메라에 `crop: [x1, y1, x2, y2]`(원본 픽셀)가 있으면 그 장면은 그 영역만 쓴다.
+0503 은 위쪽 먼 큰길(그 장면 박스 1,905개 중 1,146개, 높이 32px 미만 457개 중 456개)을 빼고 아래 띠 `[0, 430, 1920, 1080]`
+만 쓴다(사용자 결정 — 그 장면은 `split: train`, 자른 화면은 평가에 쓰지 않는다). 폭이 그대로라 640 입력에서 물체 크기는
+통째 화면과 같다. 파일 이름 끝에 영역을 붙이고(`_c0-430-1920-1080`), VIRAT 박스는 영역에 맞춰 자르되 원래 넓이의 30%
+미만만 남으면 버리며, 모델은 자른 화면에 돌린다. 후보 프레임은 영역 안에 GT 가 있는 것만. 이미 통째로 넣은 그 장면
+이미지는 `--recrop` 이 같은 프레임을 영상에서 다시 읽어 잘라 바꾼다(id·태그·도메인 그대로, `store.replace_file`).
+사람이 고친 이미지는 건너뛰고, `--keep-edits` 를 주면 다시 라벨링하지 않고 지금 박스를 자른 영역 좌표로 옮긴다.
 
 **고르는 법.** 객체 주석이 있는 클립만 본다(영상 14개는 주석 파일이 없어 뺀다). 사람·차·자전거 GT 가 하나라도 있는
 프레임을 `--gap` 초(기본 5) 이상 떨어지게 추리고, 장면의 몫을 클립마다 후보 수에 비례해 나눈 뒤 클립 안에서는 고르게
@@ -30,14 +38,14 @@ status='pending' 로 넣은 뒤 domain 을 'cctv' 로 정한다. 촬영 시각�
   없음(검수 화면에 '수동')으로 더한다. `--virat-only` 면 모델 없이 VIRAT 박스만 넣는다.
 
 **다시 라벨링(`--relabel`).** 새 프레임을 넣지 않고, DB 의 VIRAT 이미지 가운데 검수 대기이고 사람이 손대지 않은 것
-(변경 이력이 자동 라벨링(predict) 것뿐인 것)을 위 규칙으로 다시 라벨링한다 — 주석은 파일에서 다시 읽고 모델은 저장된
-JPEG 에 돌린다. `store.apply_prediction` 으로 바꾸므로 이전 박스는 변경 이력에 남고, 도는 사이 사람이 바꾼 이미지는
-덮지 않는다. 모델을 새로 학습한 뒤 남은 검수 대기를 다시 라벨링할 때도 쓴다.
+(변경 이력이 자동 라벨링(predict) 것뿐인 것)을 위 규칙으로 다시 라벨링한다 — 주석은 파일에서 다시 읽고(이름의 영역대로
+자른다) 모델은 저장된 JPEG 에 돌린다. `store.apply_prediction` 으로 바꾸므로 이전 박스는 변경 이력에 남고, 도는 사이
+사람이 바꾼 이미지는 덮지 않는다. 모델을 새로 학습한 뒤 남은 검수 대기를 다시 라벨링할 때도 쓴다.
 
 **순서.** 기본은 보기만 한다(파일·DB 를 건드리지 않는다 — 고르고, 프레임을 읽고, 추론까지 해서 셈을 보인다).
-`--apply` 면 DB 를 `labeling.db.bak_virat_<시각>`(다시 라벨링은 `bak_viratrelabel_`)으로 떠 두고 쓴다. 넣을 때는 넣은
-목록을 `runs/virat_import/<시각>.tsv` 에 남긴다. 추론은 기본 CPU 다(`--device 0` 으로 GPU — 학습이 돌고 있으면 쓰지
-말 것).
+`--apply` 면 DB 를 `labeling.db.bak_virat_<시각>`(다시 라벨링 `bak_viratrelabel_`, 자르기 `bak_viratrecrop_`)으로 떠 두고
+쓴다. 넣기·자르기는 목록을 `runs/virat_import/<시각>[_recrop].tsv` 에 남긴다. 추론은 기본 CPU 다(`--device 0` 으로 GPU —
+학습이 돌고 있으면 쓰지 말 것).
 
 **주의.** `labeler.py label --all` 은 검수 대기 이미지를 모델 예측**만**으로 덮어써 VIRAT 박스를 지운다 — 쓰지 말 것
 (다시 라벨링은 `--relabel`). 웹 UI 의 자동 라벨링은 검수 대기를 건드리지 않는다. VIRAT Release 2.0 은 재배포 금지로
@@ -47,6 +55,7 @@ JPEG 에 돌린다. `store.apply_prediction` 으로 바꾸므로 이전 박스�
     python tools/import_virat.py --apply                  # 장면당 50장
     python tools/import_virat.py --per-scene 100 --apply  # 장면당 100장이 되게 더 넣기
     python tools/import_virat.py --relabel --device 0 --apply   # 이미 넣은 검수 대기를 지금 모델로 다시
+    python tools/import_virat.py --recrop --keep-edits --device 0 --apply   # crop 장면의 통째 이미지를 잘라 바꾸기
     python tools/import_virat.py --scenes 0000,0502       # 몇 장면만
 """
 
@@ -64,6 +73,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
+import yaml  # noqa: E402
+
 from autolabel.config import Config, resolve  # noqa: E402
 from autolabel.grouping import base_name  # noqa: E402
 from autolabel.provenance import load_cameras  # noqa: E402
@@ -77,10 +88,13 @@ GROUP = {"person": "person", "car": "vehicle", "bus": "vehicle", "truck": "vehic
          "bicycle": "bike", "motorcycle": "bike", "scooter": "bike"}
 MATCH_IOU = 0.5          # VIRAT 박스와 모델 박스를 같은 물체로 짝짓는 IoU
 NEAR_IOU = 0.1           # 짝 없는 VIRAT 박스를 '모양만 다른 같은 물체' 로 보는 IoU (또는 모델 박스 중심을 품음)
+CROP_KEEP = 0.3          # 자른 영역에 원래 넓이의 이만큼도 안 남는 VIRAT 박스는 버린다
 OBJ_SUFFIX = ".viratdata.objects.txt"
-NAME_RE = re.compile(r"^(VIRAT_S_\d{6}(?:_\d{2}_\d{6}_\d{6})?)_f(\d{6})$")
+NAME_RE = re.compile(r"^(VIRAT_S_\d{6}(?:_\d{2}_\d{6}_\d{6})?)_f(\d{6})(?:_c(\d+)-(\d+)-(\d+)-(\d+))?$")
 RIGHTS = "VIRAT Release 2.0 — 개인별 동의 약관, 재배포 금지로 볼 것"
 HUMAN_SOURCES = "('ui', 'bulk', 'restore', 'revert')"    # box_history.source 중 사람이 한 것
+
+Crop = tuple[int, int, int, int]
 
 
 def scene_of(clip: str) -> str:
@@ -91,8 +105,53 @@ def camera_of(scene: str) -> str:
     return f"virat-{scene}"
 
 
-def frame_file(clip: str, frame: int) -> str:
-    return f"{clip}_f{frame:06d}.jpg"
+def frame_file(clip: str, frame: int, crop: Crop | None = None) -> str:
+    tail = f"_c{crop[0]}-{crop[1]}-{crop[2]}-{crop[3]}" if crop else ""
+    return f"{clip}_f{frame:06d}{tail}.jpg"
+
+
+def parse_name(name: str) -> tuple[str, int, Crop | None] | None:
+    """파일 이름 → (클립, 프레임, 자른 영역 또는 None). 정리 꼬리표는 뗀다. 이 도구의 이름이 아니면 None."""
+    m = NAME_RE.match(base_name(name))
+    if not m:
+        return None
+    crop = tuple(int(v) for v in m.groups()[2:]) if m.group(3) is not None else None
+    return m.group(1), int(m.group(2)), crop
+
+
+def load_crops(path: Path) -> dict[str, Crop]:
+    """cameras.yaml 의 VIRAT 카메라 `crop: [x1, y1, x2, y2]` → {장면: 영역}. (provenance.Camera 는 이 칸을 읽지 않는다)"""
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    out: dict[str, Crop] = {}
+    for key, attrs in ((raw.get("cameras") or {}) if isinstance(raw, dict) else {}).items():
+        key = str(key)
+        if not key.startswith("virat-") or not isinstance(attrs, dict) or attrs.get("crop") in (None, ""):
+            continue
+        c = attrs["crop"]
+        try:
+            vals = [int(v) for v in (c.split(",") if isinstance(c, str) else c)]
+        except (TypeError, ValueError):
+            vals = []
+        if len(vals) != 4 or vals[0] >= vals[2] or vals[1] >= vals[3] or min(vals) < 0:
+            raise SystemExit(f"{path}: {key} 의 crop 은 [x1, y1, x2, y2] (원본 픽셀, x1<x2·y1<y2) — 지금 {c!r}")
+        out[key[len("virat-"):]] = (vals[0], vals[1], vals[2], vals[3])
+    return out
+
+
+def crop_gt(gt: list, crop: Crop | None) -> list:
+    """GT 를 자른 영역 좌표로. 영역에 원래 넓이의 CROP_KEEP 미만만 남거나 1px 이하면 버린다."""
+    if not crop:
+        return gt
+    x1, y1, x2, y2 = crop
+    out = []
+    for name, a, b, c, d in gt:
+        ca, cb, cc, cd = max(a, x1), max(b, y1), min(c, x2), min(d, y2)
+        if cc - ca <= 1 or cd - cb <= 1 or (cc - ca) * (cd - cb) < CROP_KEEP * (c - a) * (d - b):
+            continue
+        out.append((name, ca - x1, cb - y1, cc - x1, cd - y1))
+    return out
 
 
 @dataclass
@@ -100,7 +159,7 @@ class Pick:
     scene: str
     clip: str
     frame: int
-    gt: list                             # [(클래스 이름, x1, y1, x2, y2)] 원본 픽셀
+    gt: list                             # [(클래스 이름, x1, y1, x2, y2)] 원본(통째) 픽셀
 
 
 def load_objects(path: Path) -> tuple[dict[int, list], int]:
@@ -201,14 +260,14 @@ def existing_frames(store: Store) -> dict[str, list[int]]:
     out: dict[str, list[int]] = collections.defaultdict(list)
     with store.connect() as con:
         for (name,) in con.execute("SELECT name FROM images WHERE source='virat' OR camera LIKE 'virat-%'"):
-            m = NAME_RE.match(base_name(name))
-            if m:
-                out[m.group(1)].append(int(m.group(2)))
+            pn = parse_name(name)
+            if pn:
+                out[pn[0]].append(pn[1])
     return out
 
 
 def choose(root: Path, scenes: set[str] | None, per_scene: int, gap_sec: float,
-           have: dict[str, list[int]]) -> tuple[list[Pick], dict[str, dict]]:
+           have: dict[str, list[int]], crops: dict[str, Crop]) -> tuple[list[Pick], dict[str, dict]]:
     adir, vdir = root / "annotations", root / "videos_original"
     by_scene: dict[str, list[str]] = collections.defaultdict(list)
     for p in sorted(adir.glob(f"*{OBJ_SUFFIX}")):
@@ -218,13 +277,15 @@ def choose(root: Path, scenes: set[str] | None, per_scene: int, gap_sec: float,
     picks: list[Pick] = []
     info: dict[str, dict] = {}
     for sc, clips in sorted(by_scene.items()):
+        crop = crops.get(sc)
         cands: dict[str, list[int]] = {}
         bad = 0
         for c in clips:                  # 1차: 후보 프레임만 남긴다(주석 전체를 장면째 들고 있지 않게)
             frames, b = load_objects(adir / f"{c}{OBJ_SUFFIX}")
             bad += b
             fps, n = video_meta(vdir / f"{c}.mp4")
-            cands[c] = thin(sorted(f for f in frames if f < n), max(1, round(gap_sec * fps)), have.get(c, []))
+            ok = [f for f, v in frames.items() if f < n and (not crop or crop_gt(v, crop))]
+            cands[c] = thin(sorted(ok), max(1, round(gap_sec * fps)), have.get(c, []))
         n_have = sum(len(have.get(c, [])) for c in clips)
         alloc = allocate(max(0, per_scene - n_have), {c: len(v) for c, v in cands.items()})
         for c in clips:                  # 2차: 고른 프레임의 GT 만 다시 읽는다
@@ -234,7 +295,7 @@ def choose(root: Path, scenes: set[str] | None, per_scene: int, gap_sec: float,
             frames, _ = load_objects(adir / f"{c}{OBJ_SUFFIX}")
             picks += [Pick(sc, c, f, frames[f]) for f in want]
         info[sc] = {"clips": len(clips), "have": n_have, "new": sum(alloc.values()),
-                    "cands": sum(len(v) for v in cands.values()), "bad": bad}
+                    "cands": sum(len(v) for v in cands.values()), "bad": bad, "crop": crop}
     return picks, info
 
 
@@ -291,7 +352,7 @@ def to_box(cls: int, x1: float, y1: float, x2: float, y2: float, w: int, h: int,
 
 
 class Labeler:
-    """모델 예측 + 모델이 못 찾은 VIRAT 박스로 한 장의 박스를 만든다(넣기·다시 라벨링이 같이 쓴다)."""
+    """모델 예측 + 모델이 못 찾은 VIRAT 박스로 한 장의 박스를 만든다(넣기·다시 라벨링·자르기가 같이 쓴다)."""
 
     def __init__(self, cfg: Config, classes: list[str], weights: str | None, device: str, use_model: bool):
         self.class_idx = {n: i for i, n in enumerate(classes)}
@@ -315,20 +376,19 @@ class Labeler:
         self.dropped: collections.Counter = collections.Counter()
 
     def boxes(self, source, gt: list) -> tuple[list[Box], float, int, int]:
-        """source 는 이미지 배열이나 경로. → (박스, 불확실도, 너비, 높이)."""
+        """source 는 이미지 배열이나 경로, gt 는 그 이미지 좌표. → (박스, 불확실도, 너비, 높이)."""
         preds, w, h = [], None, None
         if self.model is not None:
             r = self.model.predict(source, **self.kw)[0]
             h, w = r.orig_shape
             for k, c, xyxy in zip(r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist()):
                 preds.append((self.model.names[int(k)], float(c), *map(float, xyxy)))
+        elif isinstance(source, (str, Path)):
+            from PIL import Image
+            with Image.open(source) as im:
+                w, h = im.size
         else:
-            if isinstance(source, (str, Path)):
-                from PIL import Image
-                with Image.open(source) as im:
-                    w, h = im.size
-            else:
-                h, w = source.shape[:2]
+            h, w = source.shape[:2]
         keep, why = merge(gt, preds) if preds else (list(range(len(gt))), collections.Counter())
         out = [to_box(self.class_idx[p[0]], *p[2:], w, h, round(p[1], 4), "auto") for p in preds
                if p[0] in self.class_idx]
@@ -354,38 +414,73 @@ def backup(cfg: Config, tag: str, stamp: str) -> None:
     print(f"DB 를 떠 두었다: {bak}")
 
 
-def relabel(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | None, stamp: str) -> int:
-    """DB 의 VIRAT 검수 대기(사람이 손대지 않은 것)를 지금 규칙·모델로 다시 라벨링한다."""
-    adir = args.root / "annotations"
+def crop_boxes(rows: list, crop: Crop, full_w: int, full_h: int) -> list[Box]:
+    """DB 박스(통째 화면 정규화 좌표, (cls, cx, cy, w, h, conf, origin))를 자른 영역 기준으로 — 사람이 고친 이미지를 다시
+    라벨링하지 않고 그대로 옮길 때(`--recrop --keep-edits`). 영역에 원래 넓이의 30% 미만만 남는 박스는 버린다."""
+    cw, ch = crop[2] - crop[0], crop[3] - crop[1]
+    out = []
+    for cls, cx, cy, w, h, conf, origin in rows:
+        kept = crop_gt([("_", (cx - w / 2) * full_w, (cy - h / 2) * full_h,
+                         (cx + w / 2) * full_w, (cy + h / 2) * full_h)], crop)
+        if not kept:
+            continue
+        _, a, b, c, d = kept[0]
+        box = Box(cls, (a + c) / 2 / cw, (b + d) / 2 / ch, (c - a) / cw, (d - b) / ch, conf, origin).clamped()
+        if box.is_valid():
+            out.append(box)
+    return out
+
+
+def virat_rows(store: Store) -> tuple[list, set[int]]:
+    """DB 의 VIRAT 이미지 행과, 사람이 박스를 고친 이력이 있는 이미지 id."""
     with store.connect() as con:
-        rows = con.execute("SELECT id, path, name, status, updated_at FROM images WHERE source='virat' ORDER BY id"
-                           ).fetchall()
+        rows = con.execute("SELECT id, path, name, status, updated_at, width, height, uncertainty, model_version"
+                           " FROM images WHERE source='virat' ORDER BY id").fetchall()
         human = {r[0] for r in con.execute(f"SELECT DISTINCT image_id FROM box_history WHERE source IN {HUMAN_SOURCES}")}
+    return rows, human
+
+
+class GtCache:
+    """클립 하나의 주석만 들고 있는다(같은 클립의 프레임을 이어서 볼 때)."""
+
+    def __init__(self, adir: Path):
+        self.adir, self.clip, self.frames = adir, None, {}
+
+    def get(self, clip: str, frame: int) -> list:
+        if clip != self.clip:
+            obj = self.adir / f"{clip}{OBJ_SUFFIX}"
+            self.clip, self.frames = clip, (load_objects(obj)[0] if obj.exists() else {})
+        return self.frames.get(frame, [])
+
+
+def relabel(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | None,
+            crops: dict[str, Crop], stamp: str) -> int:
+    """DB 의 VIRAT 검수 대기(사람이 손대지 않은 것)를 지금 규칙·모델로 다시 라벨링한다."""
+    rows, human = virat_rows(store)
     targets, skipped = [], collections.Counter()
     for r in rows:
-        m = NAME_RE.match(base_name(r["name"]))
-        if not m:
+        pn = parse_name(r["name"])
+        if not pn:
             skipped["이름으로 클립·프레임을 모름"] += 1
-        elif scenes and scene_of(m.group(1)) not in scenes:
+        elif scenes and scene_of(pn[0]) not in scenes:
             continue
         elif r["status"] != "pending":
             skipped[f"상태가 {r['status']}"] += 1
         elif r["id"] in human:
             skipped["사람이 고친 이력이 있음"] += 1
+        elif crops.get(scene_of(pn[0])) and pn[2] != crops[scene_of(pn[0])]:
+            skipped["자를 장면인데 아직 안 잘림(--recrop 먼저)"] += 1
         elif not Path(r["path"]).exists():
             skipped["파일 없음"] += 1
         else:
-            targets.append((m.group(1), int(m.group(2)), r))
+            targets.append((pn, r))
     print(f"다시 라벨링할 것 {len(targets)}장" + (f" (건너뜀 {dict(skipped)})" if skipped else ""))
     if args.apply and targets:
         backup(cfg, "viratrelabel", stamp)
     done = changed = 0
-    gt_cache: tuple[str, dict] | None = None
-    for i, (clip, frame, r) in enumerate(sorted(targets, key=lambda t: (t[0], t[1])), 1):
-        if gt_cache is None or gt_cache[0] != clip:
-            obj = adir / f"{clip}{OBJ_SUFFIX}"
-            gt_cache = (clip, load_objects(obj)[0] if obj.exists() else {})
-        boxes, score, _w, _h = lab.boxes(r["path"], gt_cache[1].get(frame, []))
+    gts = GtCache(args.root / "annotations")
+    for i, ((clip, frame, crop), r) in enumerate(sorted(targets, key=lambda t: t[0][:2]), 1):
+        boxes, score, _w, _h = lab.boxes(r["path"], crop_gt(gts.get(clip, frame), crop))
         if args.apply:
             if store.apply_prediction(r["id"], boxes, expect=(r["status"], r["updated_at"]), uncertainty=score,
                                       model_version=lab.version):
@@ -402,6 +497,103 @@ def relabel(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | No
     return 0
 
 
+def recrop(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | None,
+           crops: dict[str, Crop], stamp: str) -> int:
+    """crop 을 적은 장면의 VIRAT 이미지 가운데 그 영역으로 잘리지 않은 것을, 같은 프레임을 영상에서 다시 읽어 잘라
+    바꾼다(같은 행 — id·태그·도메인·카메라 그대로). 검수 대기만. 사람이 고친 이미지는 건너뛰고, `--keep-edits` 면
+    다시 라벨링하지 않고 지금 박스를 자른 영역 좌표로 옮겨 함께 자른다(2026-11-07 사용자 결정 — id 7778)."""
+    import cv2
+    if not crops:
+        raise SystemExit(f"{cfg.cameras} 에 crop 을 적은 VIRAT 카메라가 없습니다")
+    vdir = args.root / "videos_original"
+    rows, human = virat_rows(store)
+    targets, skipped = [], collections.Counter()
+    for r in rows:
+        pn = parse_name(r["name"])
+        if not pn:
+            continue
+        clip, frame, now = pn
+        crop = crops.get(scene_of(clip))
+        if not crop or now == crop or (scenes and scene_of(clip) not in scenes):
+            continue
+        if r["status"] != "pending":
+            skipped[f"상태가 {r['status']}"] += 1
+        elif r["id"] in human and not args.keep_edits:
+            skipped["사람이 고친 이력이 있음(--keep-edits 면 박스째 자른다)"] += 1
+        elif not (vdir / f"{clip}.mp4").exists():
+            skipped["영상 없음"] += 1
+        else:
+            targets.append((clip, frame, crop, r))
+    kept_ids = {r["id"] for *_, r in targets if r["id"] in human}
+    print(f"잘라 바꿀 것 {len(targets)}장" + (f" — 그중 사람이 고친 {len(kept_ids)}장은 박스째" if kept_ids else "")
+          + (f" (건너뜀 {dict(skipped)})" if skipped else ""))
+    if args.apply and targets:
+        backup(cfg, "viratrecrop", stamp)
+    gts = GtCache(args.root / "annotations")
+    out_rows: list[str] = []
+    done = changed = 0
+    fails: list[str] = []
+    cap, cap_clip = None, None
+    for clip, frame, crop, r in sorted(targets, key=lambda t: (t[0], t[1])):
+        if clip != cap_clip:
+            if cap is not None:
+                cap.release()
+            cap, cap_clip = cv2.VideoCapture(str(vdir / f"{clip}.mp4")), clip
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
+        ok, img = cap.read()
+        if not ok:
+            fails.append(f"{clip} f{frame}")
+            continue
+        img = img[crop[1]:crop[3], crop[0]:crop[2]].copy()
+        if r["id"] in kept_ids:          # 사람이 고친 박스를 그대로 옮긴다 — 다시 라벨링하지 않는다
+            with store.connect() as con:
+                cur_boxes = con.execute("SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id",
+                                        (r["id"],)).fetchall()
+            boxes = crop_boxes([tuple(b) for b in cur_boxes], crop, r["width"], r["height"])
+            score, version = r["uncertainty"] or 0.0, r["model_version"] or lab.version
+            h, w = img.shape[:2]
+            print(f"  id {r['id']}: 사람이 고친 박스 {len(cur_boxes)}개 → 자른 영역에 {len(boxes)}개")
+        else:
+            boxes, score, w, h = lab.boxes(img, crop_gt(gts.get(clip, frame), crop))
+            version = lab.version
+        old = Path(r["path"])
+        new = old.with_name(frame_file(clip, frame, crop))
+        if args.apply:
+            okj, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, args.quality])
+            if not okj:
+                fails.append(f"{clip} f{frame} (JPEG)")
+                continue
+            new.write_bytes(buf.tobytes())
+            if store.replace_file(r["id"], str(new.resolve()), w, h, boxes, expect=(r["status"], r["updated_at"]),
+                                  uncertainty=score, model_version=version):
+                if new.resolve() != old.resolve():
+                    old.unlink(missing_ok=True)
+                done += 1
+            else:
+                new.unlink(missing_ok=True)  # 도는 사이 사람이 바꿨다 — 옛 파일·행을 그대로 둔다
+                changed += 1
+                continue
+        out_rows.append(f"{r['id']}\t{r['name']}\t{new.name}\t{w}x{h}\t"
+                        f"{sum(1 for b in boxes if b.origin == 'auto')}\t{sum(1 for b in boxes if b.origin == 'virat')}")
+    if cap is not None:
+        cap.release()
+    lab.report()
+    if fails:
+        print(f"  [경고] 읽지 못한 프레임 {len(fails)}: {fails[:5]}")
+    if not args.apply:
+        print("\n(보기만 했다. 바꾸려면 --apply — DB 를 떠 두고, 잘린 파일을 쓴 뒤 옛 통째 파일을 지운다)")
+        return 0
+    if out_rows:
+        log_dir = resolve("runs") / "virat_import"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        manifest = log_dir / f"{stamp}_recrop.tsv"
+        manifest.write_text("id\told_name\tnew_name\tsize\tauto_boxes\tvirat_boxes\n" + "\n".join(out_rows) + "\n",
+                            encoding="utf-8")
+        print(f"목록: {manifest}")
+    print(f"\n잘라 바꿈 {done}장" + (f", 도는 사이 바뀌어 그대로 둔 것 {changed}장" if changed else ""))
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--config", default=None)
@@ -409,13 +601,18 @@ def main() -> int:
     ap.add_argument("--scenes", default="", help="쉼표로 장면만 (예: 0000,0502). 비우면 전부")
     ap.add_argument("--per-scene", type=int, default=50, help="장면마다 이 장수가 되게(이미 넣은 것 포함)")
     ap.add_argument("--gap", type=float, default=5.0, help="같은 클립 안 프레임 사이 최소 초")
-    ap.add_argument("--weights", default=None, help="모델 (기본: config 의 model.weights)")
+    ap.add_argument("--weights", default=None, help="모델 (기본: 자동 라벨링과 같은 운영 가중치)")
     ap.add_argument("--device", default="cpu", help="추론 장치 (기본 cpu, GPU 는 0)")
     ap.add_argument("--virat-only", action="store_true", help="모델 없이 VIRAT 박스만")
     ap.add_argument("--relabel", action="store_true", help="새로 넣지 않고 이미 넣은 검수 대기를 다시 라벨링")
+    ap.add_argument("--recrop", action="store_true", help="crop 을 적은 장면의 통째 이미지를 잘라 바꾼다")
+    ap.add_argument("--keep-edits", action="store_true",
+                    help="--recrop 때 사람이 고친 이미지도 자르되, 다시 라벨링하지 않고 지금 박스를 옮긴다")
     ap.add_argument("--quality", type=int, default=95, help="JPEG 품질 (tools/extract_frames.py 와 같다)")
     ap.add_argument("--apply", action="store_true", help="실제로 쓴다 (기본은 보기만)")
     args = ap.parse_args()
+    if args.relabel and args.recrop:
+        raise SystemExit("--relabel 과 --recrop 은 따로 돌릴 것")
 
     import cv2
 
@@ -426,13 +623,16 @@ def main() -> int:
     if missing:
         raise SystemExit(f"DB 에 없는 클래스: {missing} (지금 {classes})")
     scenes = {s.strip() for s in args.scenes.split(",") if s.strip()} or None
+    crops = load_crops(cfg.cameras)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     lab = Labeler(cfg, classes, args.weights, args.device, use_model=not args.virat_only)
     if args.relabel:
-        return relabel(args, cfg, store, lab, scenes, stamp)
+        return relabel(args, cfg, store, lab, scenes, crops, stamp)
+    if args.recrop:
+        return recrop(args, cfg, store, lab, scenes, crops, stamp)
 
     have = existing_frames(store)
-    picks, info = choose(args.root, scenes, args.per_scene, args.gap, have)
+    picks, info = choose(args.root, scenes, args.per_scene, args.gap, have, crops)
     if not info:
         raise SystemExit(f"{args.root} 에서 주석과 영상이 다 있는 클립을 찾지 못했습니다")
 
@@ -467,8 +667,11 @@ def main() -> int:
         if not ok:
             fails.append(f"{p.clip} f{p.frame}")
             continue
-        boxes, score, w, h = lab.boxes(img, p.gt)
-        dst = cfg.unlabeled / camera_of(p.scene) / frame_file(p.clip, p.frame)
+        crop = crops.get(p.scene)
+        if crop:
+            img = img[crop[1]:crop[3], crop[0]:crop[2]].copy()
+        boxes, score, w, h = lab.boxes(img, crop_gt(p.gt, crop))
+        dst = cfg.unlabeled / camera_of(p.scene) / frame_file(p.clip, p.frame, crop)
         if args.apply:
             okj, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, args.quality])
             if not okj:
@@ -487,9 +690,9 @@ def main() -> int:
     if cap is not None:
         cap.release()
 
-    print(f"\n장면 | 클립 | 이미 넣음 | 후보 | 새로 {'넣음' if args.apply else '넣을 것'} | 틀린 주석 줄")
+    print(f"\n장면 | 클립 | 이미 넣음 | 후보 | 새로 {'넣음' if args.apply else '넣을 것'} | 틀린 주석 줄 | 자르기")
     for sc, d in sorted(info.items()):
-        print(f"{sc} | {d['clips']} | {d['have']} | {d['cands']:,} | {per_scene_new[sc]} | {d['bad']}")
+        print(f"{sc} | {d['clips']} | {d['have']} | {d['cands']:,} | {per_scene_new[sc]} | {d['bad']} | {d['crop'] or '-'}")
     print(f"합계 새 프레임 {sum(per_scene_new.values())}장")
     lab.report()
     if fails:

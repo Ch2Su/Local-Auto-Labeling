@@ -709,6 +709,39 @@ class Store:
             )
         return True
 
+    def replace_file(
+        self,
+        image_id: int,
+        path: str,
+        width: int,
+        height: int,
+        boxes: list[Box],
+        *,
+        expect: tuple[str, str],
+        uncertainty: float,
+        model_version: str,
+    ) -> bool:
+        """같은 이미지 행이 다른 파일(새 경로·크기)을 가리키게 하고 박스를 그 파일 기준으로 바꾼다 — 검수 대기로 둔다
+        (2026-11-07, VIRAT 장면을 잘라 다시 쓸 때 `tools/import_virat.py --recrop`. id·태그·도메인·카메라는 그대로).
+
+        apply_prediction 처럼 expect(시작 때의 status, updated_at)가 지금과 다르면 아무것도 쓰지 않고 False. 박스는
+        `_replace_boxes` 로 바꿔 이전 박스가 이력에 남는다. 파일 쓰기·옛 파일 지우기는 부르는 쪽이 한다(이 함수는 DB 만).
+        dhash 는 지운다 — 다음 분할 때 새 파일로 다시 잰다.
+        """
+        new = [b for b in boxes if b.is_valid()]
+        with _write_lock, self.connect() as con:
+            row = con.execute("SELECT status, updated_at FROM images WHERE id=?", (image_id,)).fetchone()
+            if row is None or (row["status"], row["updated_at"]) != tuple(expect):
+                return False
+            self._replace_boxes(con, image_id, new, source="predict", batch=None)
+            con.execute(
+                "UPDATE images SET path=?, name=?, width=?, height=?, dhash=NULL, status='pending',"
+                " uncertainty=?, model_version=?, updated_at=? WHERE id=?",
+                (path, Path(path).name, int(width), int(height), float(uncertainty), model_version, _now(),
+                 image_id),
+            )
+        return True
+
     @staticmethod
     def _replace_boxes(con: sqlite3.Connection, image_id: int, new: list[Box], *,
                        source: str, batch: str | None) -> int:
