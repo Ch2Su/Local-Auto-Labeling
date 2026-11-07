@@ -1,10 +1,12 @@
-"""VIRAT Ground Release 2.0 영상에서 프레임을 뽑아 **검수 대기(pending)** 로 넣는다 — VIRAT 라벨 + 모델 보충.
+"""VIRAT Ground Release 2.0 영상에서 프레임을 뽑아 **검수 대기(pending)** 로 넣는다 — 운영 모델 예측 + 모델이 그 자리에서
+못 찾은 VIRAT 박스.
 
-**사용자 결정(2026-11-07).** 장면(카메라)마다 50장, VIRAT 라벨에 운영 모델이 더 찾은 박스를 보탠다. 표본 66프레임
-(장면마다 6장)에서 VIRAT 박스 1,096개 말고도 모델이 496개를 더 찾았다 — 0502 주차장은 VIRAT 차가 2대인 프레임에서
-모델이 진짜 주차 차량 20여 대를 찾았다(VIRAT 은 행동과 무관한 주차 차량·사람을 비워 둔다, 배포본 안내서 3.1). 거꾸로
-0100 광장의 먼 사람은 VIRAT 에만 있다(그 표본에서 모델이 VIRAT 사람 박스의 16% 만 찾았다). 그래서 둘을 합쳐 사람이
-한 장씩 본다.
+**사용자 결정(2026-11-07).** 장면(카메라)마다 50장. 박스는 처음에 'VIRAT 라벨 + 모델이 더 찾은 것' 으로 넣었다가, 같은
+날 사용자가 지금 모델로 새로 라벨링하기를 원해 **모델 예측을 먼저 쓰고, 모델이 그 자리에서 아무것도 못 찾은 VIRAT 박스만
+남기는** 쪽으로 바꿨다(`--relabel` 로 이미 넣은 550장도 바꿨다). 모델 예측만 쓰면 그 550장의 VIRAT 박스 8,360개 중
+2,326개(사람 1,113·차 845·두 바퀴 368 — 대부분 먼 사람·가려진 차)가 사라졌다 — 검수 때 다 그리지 않으면 학습에서
+배경으로 배운다. VIRAT 은 행동과 무관한 주차 차량·사람을 비워 두고(배포본 안내서 3.1, 0502 주차장은 표본 한 장에
+VIRAT 차 2대·모델 20여 대), 운영 모델은 먼 사람을 놓친다(표본 66장에서 VIRAT 사람 박스의 36%) — 둘이 서로 메운다.
 
 **장면 = 카메라** `virat-XXYY`(`data/visible/cameras.yaml` 에 먼저 등록 — kind dataset, docs/provenance.md). 프레임은
 `<unlabeled>/virat-XXYY/<클립>_f<프레임 6자리>.jpg`(JPEG 95, 원본 해상도)로 쓰고 DB 에 source='virat'·camera·
@@ -18,26 +20,33 @@ status='pending' 로 넣은 뒤 domain 을 'cctv' 로 정한다. 촬영 시각�
 만큼만, 기존 프레임과 떨어진 곳에서 더 넣는다.
 
 **박스.**
+- 모델(`--weights`, 기본 운영 가중치) 예측은 자동 라벨링과 같은 설정(predict.conf·iou·max_det·imgsz)으로 전부 넣는다
+  (출처 'auto', 신뢰도). 운영 모델(visible-3)은 pickup 을 모른다 — 픽업은 검수에서 고친다.
 - VIRAT 종류 1 person → person, 2 car·3 vehicle → car, 5 bike → bicycle(오토바이도 bike 다 — 검수에서 가른다).
-  0(구역 상자)·4 object 는 버리고, 열 수·형이 틀린 줄은 건너뛴다. 출처 'virat', 신뢰도 없음(검수 화면에 '수동').
-- 모델(`--weights`, 기본 운영 가중치) 예측과 같은 무리(사람 / 차: car·bus·truck·pickup / 두 바퀴: bicycle·
-  motorcycle·scooter)끼리 IoU 0.5 이상을 큰 것부터 하나씩 짝짓는다. 짝이 생긴 VIRAT 박스는 모델의 세부 클래스를
-  따른다(VIRAT car 가 모델 truck 이면 truck) — 자리는 VIRAT 그대로.
-- 짝이 없는 모델 박스는, 같은 무리의 VIRAT 박스와 IoU 0.3 이상이거나 70% 이상이 그 안에 들면 버린다(같은 물체를
-  VIRAT 이 크게 그린 것 — 0100·0500 표본에서 봤다). 나머지는 출처 'auto'·모델 신뢰도로 더한다. `--no-fill` 이면
-  VIRAT 박스만 넣는다. 운영 모델(visible-3)은 pickup 을 모른다 — 픽업은 검수에서 고친다.
+  0(구역 상자)·4 object 는 버리고, 열 수·형이 틀린 줄은 건너뛴다.
+- 같은 무리(사람 / 차: car·bus·truck·pickup / 두 바퀴: bicycle·motorcycle·scooter)끼리 IoU 0.5 이상을 큰 것부터 하나씩
+  짝지어 짝이 생긴 VIRAT 박스는 버린다(모델 박스로 갈음). 짝이 없는 VIRAT 박스도, 짝 없는 같은 무리 모델 박스와 IoU 0.1
+  이상 겹치거나 그 중심을 품으면 버린다(같은 물체를 모양만 다르게 그린 것). 남은 VIRAT 박스만 출처 'virat'·신뢰도
+  없음(검수 화면에 '수동')으로 더한다. `--virat-only` 면 모델 없이 VIRAT 박스만 넣는다.
 
-**넣는 순서.** 기본은 보기만 한다(파일·DB 를 건드리지 않는다 — 고르고, 프레임을 읽고, 추론까지 해서 셈을 보인다).
-`--apply` 면 DB 를 `labeling.db.bak_virat_<시각>` 으로 떠 두고, 프레임을 쓰고, 한 번에 넣은 뒤, 넣은 목록을
-`runs/virat_import/<시각>.tsv` 에 남긴다. 추론은 기본 CPU 다(`--device 0` 으로 GPU — 학습이 돌고 있으면 쓰지 말 것).
+**다시 라벨링(`--relabel`).** 새 프레임을 넣지 않고, DB 의 VIRAT 이미지 가운데 검수 대기이고 사람이 손대지 않은 것
+(변경 이력이 자동 라벨링(predict) 것뿐인 것)을 위 규칙으로 다시 라벨링한다 — 주석은 파일에서 다시 읽고 모델은 저장된
+JPEG 에 돌린다. `store.apply_prediction` 으로 바꾸므로 이전 박스는 변경 이력에 남고, 도는 사이 사람이 바꾼 이미지는
+덮지 않는다. 모델을 새로 학습한 뒤 남은 검수 대기를 다시 라벨링할 때도 쓴다.
 
-**주의.** `labeler.py label --all` 은 검수 대기 이미지도 모델 예측으로 덮어쓴다 — 넣은 뒤에는 쓰지 말 것(웹 UI 의 자동
-라벨링은 검수 대기를 건드리지 않는다). VIRAT Release 2.0 은 재배포 금지로 본다 — 프레임을 밖에 올리지(로보플로 등)
-말 것(`data/` 는 git 밖이다).
+**순서.** 기본은 보기만 한다(파일·DB 를 건드리지 않는다 — 고르고, 프레임을 읽고, 추론까지 해서 셈을 보인다).
+`--apply` 면 DB 를 `labeling.db.bak_virat_<시각>`(다시 라벨링은 `bak_viratrelabel_`)으로 떠 두고 쓴다. 넣을 때는 넣은
+목록을 `runs/virat_import/<시각>.tsv` 에 남긴다. 추론은 기본 CPU 다(`--device 0` 으로 GPU — 학습이 돌고 있으면 쓰지
+말 것).
+
+**주의.** `labeler.py label --all` 은 검수 대기 이미지를 모델 예측**만**으로 덮어써 VIRAT 박스를 지운다 — 쓰지 말 것
+(다시 라벨링은 `--relabel`). 웹 UI 의 자동 라벨링은 검수 대기를 건드리지 않는다. VIRAT Release 2.0 은 재배포 금지로
+본다 — 프레임을 밖에 올리지(로보플로 등) 말 것(`data/` 는 git 밖이다).
 
     python tools/import_virat.py                          # 무엇을 넣을지 보기만
     python tools/import_virat.py --apply                  # 장면당 50장
     python tools/import_virat.py --per-scene 100 --apply  # 장면당 100장이 되게 더 넣기
+    python tools/import_virat.py --relabel --device 0 --apply   # 이미 넣은 검수 대기를 지금 모델로 다시
     python tools/import_virat.py --scenes 0000,0502       # 몇 장면만
 """
 
@@ -58,6 +67,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ 
 from autolabel.config import Config, resolve  # noqa: E402
 from autolabel.grouping import base_name  # noqa: E402
 from autolabel.provenance import load_cameras  # noqa: E402
+from autolabel.scoring import image_uncertainty  # noqa: E402
 from autolabel.store import Store  # noqa: E402
 from autolabel.yolo_io import Box  # noqa: E402
 
@@ -66,11 +76,11 @@ GT_CLASS = {1: "person", 2: "car", 3: "car", 5: "bicycle"}       # 0 구역 상�
 GROUP = {"person": "person", "car": "vehicle", "bus": "vehicle", "truck": "vehicle", "pickup": "vehicle",
          "bicycle": "bike", "motorcycle": "bike", "scooter": "bike"}
 MATCH_IOU = 0.5          # VIRAT 박스와 모델 박스를 같은 물체로 짝짓는 IoU
-SAME_IOU = 0.3           # 짝이 없는 모델 박스를 같은 물체로 보고 버리는 IoU
-SAME_INSIDE = 0.7        # …또는 모델 박스가 VIRAT 박스 안에 든 비율
+NEAR_IOU = 0.1           # 짝 없는 VIRAT 박스를 '모양만 다른 같은 물체' 로 보는 IoU (또는 모델 박스 중심을 품음)
 OBJ_SUFFIX = ".viratdata.objects.txt"
 NAME_RE = re.compile(r"^(VIRAT_S_\d{6}(?:_\d{2}_\d{6}_\d{6})?)_f(\d{6})$")
 RIGHTS = "VIRAT Release 2.0 — 개인별 동의 약관, 재배포 금지로 볼 것"
+HUMAN_SOURCES = "('ui', 'bulk', 'restore', 'revert')"    # box_history.source 중 사람이 한 것
 
 
 def scene_of(clip: str) -> str:
@@ -162,8 +172,8 @@ def allocate(quota: int, sizes: dict[str, int]) -> dict[str, int]:
 
 
 def spread(cands: list[int], k: int, taken: list[int]) -> list[int]:
-    """후보에서 k 개를 고르게. 이미 넣은 프레임(taken)이 없으면 구간 가운데들을, 있으면 이미 고른 것에서 가장 먼
-    후보를 하나씩(같으면 앞의 것) — 늘 가운데를 고르면 더 넣을 때마다 기존 프레임의 `--gap` 바로 옆이 뽑혔다
+    """후보에서 k 개를 고르게. 이미 넣은 프레임(taken)이 없으면 구간 가운데들을, 있으면 기존·이번에 고른 프레임에서
+    가장 먼 후보를 하나씩(같으면 앞의 것) — 늘 가운데를 고르면 더 넣을 때마다 기존 프레임의 `--gap` 바로 옆이 뽑혔다
     (2026-11-07 시험: 5초 떨어진 거의 같은 프레임)."""
     n = len(cands)
     if k >= n:
@@ -236,19 +246,15 @@ def iou(a, b) -> float:
     return inter / u if u > 0 else 0.0
 
 
-def inside(p, g) -> float:
-    """p 의 넓이 중 g 안에 든 비율."""
-    ix = max(0.0, min(p[2], g[2]) - max(p[0], g[0]))
-    iy = max(0.0, min(p[3], g[3]) - max(p[1], g[1]))
-    area = (p[2] - p[0]) * (p[3] - p[1])
-    return ix * iy / area if area > 0 else 0.0
+def merge(gt: list, preds: list) -> tuple[list[int], collections.Counter]:
+    """gt [(이름, x1, y1, x2, y2)], preds [(이름, 신뢰도, x1, y1, x2, y2)] → (남길 VIRAT 박스 번호, 버린 이유별 수).
 
-
-def merge(gt: list, preds: list) -> tuple[list[str], list]:
-    """gt [(이름, x1, y1, x2, y2)], preds [(이름, 신뢰도, x1, y1, x2, y2)] → (gt 마다의 클래스, 더할 모델 박스)."""
+    모델 예측이 먼저다. 같은 무리끼리 IoU 0.5 이상을 큰 것부터 하나씩 짝지은 VIRAT 박스는 모델 박스로 갈음하고, 짝 없는
+    VIRAT 박스 중 짝 없는 같은 무리 모델 박스와 IoU 0.1 이상이거나 그 중심을 품은 것도 버린다(모양만 다른 같은 물체 —
+    짝 지어진 모델 박스는 보지 않는다: 겹쳐 선 두 사람 중 하나만 찾았으면 나머지 하나는 남긴다).
+    """
     pairs = sorted(((iou(g[1:], p[2:]), gi, pj) for gi, g in enumerate(gt) for pj, p in enumerate(preds)
                     if GROUP[g[0]] == GROUP.get(p[0])), reverse=True)
-    names = [g[0] for g in gt]
     used_g: set[int] = set()
     used_p: set[int] = set()
     for v, gi, pj in pairs:
@@ -258,16 +264,25 @@ def merge(gt: list, preds: list) -> tuple[list[str], list]:
             continue
         used_g.add(gi)
         used_p.add(pj)
-        names[gi] = preds[pj][0]         # 같은 무리 안의 세부 클래스(truck·bus·motorcycle…)
-    extra = []
-    for pj, p in enumerate(preds):
-        if pj in used_p:
+    why: collections.Counter = collections.Counter()
+    keep: list[int] = []
+    for gi, g in enumerate(gt):
+        if gi in used_g:
+            why["모델과 짝"] += 1
             continue
-        same = [g[1:] for g in gt if GROUP[g[0]] == GROUP.get(p[0])]
-        if any(iou(g, p[2:]) >= SAME_IOU or inside(p[2:], g) >= SAME_INSIDE for g in same):
-            continue
-        extra.append(p)
-    return names, extra
+        near = False
+        for pj, p in enumerate(preds):
+            if pj in used_p or GROUP.get(p[0]) != GROUP[g[0]]:
+                continue
+            cx, cy = (p[2] + p[4]) / 2, (p[3] + p[5]) / 2
+            if iou(g[1:], p[2:]) >= NEAR_IOU or (g[1] <= cx <= g[3] and g[2] <= cy <= g[4]):
+                near = True
+                break
+        if near:
+            why["모양만 다름"] += 1
+        else:
+            keep.append(gi)
+    return keep, why
 
 
 def to_box(cls: int, x1: float, y1: float, x2: float, y2: float, w: int, h: int,
@@ -275,10 +290,116 @@ def to_box(cls: int, x1: float, y1: float, x2: float, y2: float, w: int, h: int,
     return Box(cls, (x1 + x2) / 2 / w, (y1 + y2) / 2 / h, (x2 - x1) / w, (y2 - y1) / h, conf, origin).clamped()
 
 
-def camera_yaml(scenes: list[str]) -> str:
-    return "cameras:\n" + "".join(
-        f"  {camera_of(s)}:\n    kind: dataset\n    place: VIRAT scene {s}\n    mount: rooftop\n"
-        f"    rights: {RIGHTS}\n    split:\n" for s in scenes)
+class Labeler:
+    """모델 예측 + 모델이 못 찾은 VIRAT 박스로 한 장의 박스를 만든다(넣기·다시 라벨링이 같이 쓴다)."""
+
+    def __init__(self, cfg: Config, classes: list[str], weights: str | None, device: str, use_model: bool):
+        self.class_idx = {n: i for i, n in enumerate(classes)}
+        self.classes = classes
+        self.model = None
+        self.weights = str(resolve(weights)) if weights else cfg.active_weights()   # 자동 라벨링과 같은 가중치
+        if use_model:
+            from ultralytics import YOLO
+            self.model = YOLO(self.weights)
+            unknown = sorted(set(self.model.names.values()) - set(GROUP))
+            if unknown:
+                raise SystemExit(f"모델 클래스 {unknown} 를 어느 무리로 볼지 모릅니다 (GROUP)")
+        self.kw = dict(conf=float(cfg.get("predict.conf", 0.25)), iou=float(cfg.get("predict.iou", 0.6)),
+                       max_det=int(cfg.get("predict.max_det", 100)),
+                       imgsz=int(cfg.get("predict.imgsz") or cfg.imgsz), device=device, verbose=False)
+        self.bands = (float(cfg.get("review.low_band", 0.30)), float(cfg.get("review.high_band", 0.80)),
+                      float(cfg.get("review.empty_score", 0.60)))
+        self.version = "virat" if self.model is None else f"{Path(self.weights).name}+virat"
+        self.n_model: collections.Counter = collections.Counter()
+        self.n_virat: collections.Counter = collections.Counter()
+        self.dropped: collections.Counter = collections.Counter()
+
+    def boxes(self, source, gt: list) -> tuple[list[Box], float, int, int]:
+        """source 는 이미지 배열이나 경로. → (박스, 불확실도, 너비, 높이)."""
+        preds, w, h = [], None, None
+        if self.model is not None:
+            r = self.model.predict(source, **self.kw)[0]
+            h, w = r.orig_shape
+            for k, c, xyxy in zip(r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist()):
+                preds.append((self.model.names[int(k)], float(c), *map(float, xyxy)))
+        else:
+            if isinstance(source, (str, Path)):
+                from PIL import Image
+                with Image.open(source) as im:
+                    w, h = im.size
+            else:
+                h, w = source.shape[:2]
+        keep, why = merge(gt, preds) if preds else (list(range(len(gt))), collections.Counter())
+        out = [to_box(self.class_idx[p[0]], *p[2:], w, h, round(p[1], 4), "auto") for p in preds
+               if p[0] in self.class_idx]
+        out += [to_box(self.class_idx[gt[i][0]], *gt[i][1:], w, h, None, "virat") for i in keep]
+        out = [b for b in out if b.is_valid()]
+        self.n_model.update(self.classes[b.cls] for b in out if b.origin == "auto")
+        self.n_virat.update(self.classes[b.cls] for b in out if b.origin == "virat")
+        self.dropped.update(why)
+        score = image_uncertainty([p[1] for p in preds], low=self.bands[0], high=self.bands[1], empty=self.bands[2])
+        return out, score, w, h
+
+    def report(self) -> None:
+        print(f"  모델 박스 {sum(self.n_model.values()):,}:", dict(sorted(self.n_model.items())))
+        print(f"  모델이 못 찾아 남긴 VIRAT 박스 {sum(self.n_virat.values()):,}:", dict(sorted(self.n_virat.items())))
+        if self.dropped:
+            print("  버린 VIRAT 박스:", dict(self.dropped.most_common()))
+
+
+def backup(cfg: Config, tag: str, stamp: str) -> None:
+    bak = cfg.db.with_name(f"{cfg.db.name}.bak_{tag}_{stamp}")
+    with sqlite3.connect(cfg.db) as src, sqlite3.connect(bak) as dst:
+        src.backup(dst)
+    print(f"DB 를 떠 두었다: {bak}")
+
+
+def relabel(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | None, stamp: str) -> int:
+    """DB 의 VIRAT 검수 대기(사람이 손대지 않은 것)를 지금 규칙·모델로 다시 라벨링한다."""
+    adir = args.root / "annotations"
+    with store.connect() as con:
+        rows = con.execute("SELECT id, path, name, status, updated_at FROM images WHERE source='virat' ORDER BY id"
+                           ).fetchall()
+        human = {r[0] for r in con.execute(f"SELECT DISTINCT image_id FROM box_history WHERE source IN {HUMAN_SOURCES}")}
+    targets, skipped = [], collections.Counter()
+    for r in rows:
+        m = NAME_RE.match(base_name(r["name"]))
+        if not m:
+            skipped["이름으로 클립·프레임을 모름"] += 1
+        elif scenes and scene_of(m.group(1)) not in scenes:
+            continue
+        elif r["status"] != "pending":
+            skipped[f"상태가 {r['status']}"] += 1
+        elif r["id"] in human:
+            skipped["사람이 고친 이력이 있음"] += 1
+        elif not Path(r["path"]).exists():
+            skipped["파일 없음"] += 1
+        else:
+            targets.append((m.group(1), int(m.group(2)), r))
+    print(f"다시 라벨링할 것 {len(targets)}장" + (f" (건너뜀 {dict(skipped)})" if skipped else ""))
+    if args.apply and targets:
+        backup(cfg, "viratrelabel", stamp)
+    done = changed = 0
+    gt_cache: tuple[str, dict] | None = None
+    for i, (clip, frame, r) in enumerate(sorted(targets, key=lambda t: (t[0], t[1])), 1):
+        if gt_cache is None or gt_cache[0] != clip:
+            obj = adir / f"{clip}{OBJ_SUFFIX}"
+            gt_cache = (clip, load_objects(obj)[0] if obj.exists() else {})
+        boxes, score, _w, _h = lab.boxes(r["path"], gt_cache[1].get(frame, []))
+        if args.apply:
+            if store.apply_prediction(r["id"], boxes, expect=(r["status"], r["updated_at"]), uncertainty=score,
+                                      model_version=lab.version):
+                done += 1
+            else:
+                changed += 1             # 도는 사이 사람이 승인·수정했다 — 덮지 않는다
+        if i % 100 == 0:
+            print(f"  {i}/{len(targets)}", flush=True)
+    lab.report()
+    if args.apply:
+        print(f"\n다시 라벨링 {done}장" + (f", 도는 사이 바뀌어 그대로 둔 것 {changed}장" if changed else ""))
+    else:
+        print("\n(보기만 했다. 바꾸려면 --apply — DB 를 떠 두고 이전 박스는 변경 이력에 남긴다)")
+    return 0
 
 
 def main() -> int:
@@ -288,11 +409,12 @@ def main() -> int:
     ap.add_argument("--scenes", default="", help="쉼표로 장면만 (예: 0000,0502). 비우면 전부")
     ap.add_argument("--per-scene", type=int, default=50, help="장면마다 이 장수가 되게(이미 넣은 것 포함)")
     ap.add_argument("--gap", type=float, default=5.0, help="같은 클립 안 프레임 사이 최소 초")
-    ap.add_argument("--weights", default=None, help="보충할 모델 (기본: config 의 model.weights)")
+    ap.add_argument("--weights", default=None, help="모델 (기본: config 의 model.weights)")
     ap.add_argument("--device", default="cpu", help="추론 장치 (기본 cpu, GPU 는 0)")
-    ap.add_argument("--no-fill", action="store_true", help="VIRAT 박스만 넣는다(모델 보충 없음)")
+    ap.add_argument("--virat-only", action="store_true", help="모델 없이 VIRAT 박스만")
+    ap.add_argument("--relabel", action="store_true", help="새로 넣지 않고 이미 넣은 검수 대기를 다시 라벨링")
     ap.add_argument("--quality", type=int, default=95, help="JPEG 품질 (tools/extract_frames.py 와 같다)")
-    ap.add_argument("--apply", action="store_true", help="실제로 프레임을 쓰고 DB 에 넣는다")
+    ap.add_argument("--apply", action="store_true", help="실제로 쓴다 (기본은 보기만)")
     args = ap.parse_args()
 
     import cv2
@@ -300,11 +422,14 @@ def main() -> int:
     cfg = Config.load(args.config)
     store = Store(cfg.db)
     classes = store.get_classes()
-    class_idx = {n: i for i, n in enumerate(classes)}
-    missing = sorted(set(GROUP) - set(class_idx))
+    missing = sorted(set(GROUP) - set(classes))
     if missing:
         raise SystemExit(f"DB 에 없는 클래스: {missing} (지금 {classes})")
     scenes = {s.strip() for s in args.scenes.split(",") if s.strip()} or None
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    lab = Labeler(cfg, classes, args.weights, args.device, use_model=not args.virat_only)
+    if args.relabel:
+        return relabel(args, cfg, store, lab, scenes, stamp)
 
     have = existing_frames(store)
     picks, info = choose(args.root, scenes, args.per_scene, args.gap, have)
@@ -315,36 +440,20 @@ def main() -> int:
     unregistered = [s for s in sorted(info) if camera_of(s) not in cams]
     if unregistered:
         msg = (f"{cfg.cameras} 에 등록 안 된 카메라: {', '.join(camera_of(s) for s in unregistered)} — "
-               f"아래를 cameras: 밑에 더할 것(docs/provenance.md):\n{camera_yaml(unregistered)}")
+               "아래를 cameras: 밑에 더할 것(docs/provenance.md):\ncameras:\n" + "".join(
+                   f"  {camera_of(s)}:\n    kind: dataset\n    place: VIRAT scene {s}\n    mount: rooftop\n"
+                   f"    rights: {RIGHTS}\n    split:\n" for s in unregistered))
         if args.apply:
             raise SystemExit(msg)
         print("[경고] " + msg)
 
-    model = None
-    weights = args.weights or cfg.get("model.weights")
-    if not args.no_fill:
-        from ultralytics import YOLO
-        model = YOLO(str(resolve(weights)))
-        unknown = sorted(set(model.names.values()) - set(GROUP))
-        if unknown:
-            raise SystemExit(f"모델 클래스 {unknown} 를 어느 무리로 볼지 모릅니다 (GROUP)")
-    imgsz, conf, iou_nms = cfg.get("predict.imgsz", 640), cfg.get("predict.conf", 0.25), cfg.get("predict.iou", 0.7)
-    version = "virat" if model is None else f"virat+{Path(weights).stem}"
-
     vdir = args.root / "videos_original"
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     items: list[dict] = []
     rows: list[str] = []
-    n_virat: collections.Counter = collections.Counter()
-    n_auto: collections.Counter = collections.Counter()
-    refined: collections.Counter = collections.Counter()
     fails: list[str] = []
     per_scene_new: collections.Counter = collections.Counter()
     if args.apply and picks:
-        bak = cfg.db.with_name(f"{cfg.db.name}.bak_virat_{stamp}")
-        with sqlite3.connect(cfg.db) as src, sqlite3.connect(bak) as dst:
-            src.backup(dst)
-        print(f"DB 를 떠 두었다: {bak}")
+        backup(cfg, "virat", stamp)
 
     picks.sort(key=lambda p: (p.clip, p.frame))
     cap, cap_clip = None, None
@@ -358,16 +467,7 @@ def main() -> int:
         if not ok:
             fails.append(f"{p.clip} f{p.frame}")
             continue
-        h, w = img.shape[:2]
-        preds = []
-        if model is not None:
-            r = model.predict(img, imgsz=imgsz, conf=conf, iou=iou_nms, device=args.device, verbose=False)[0]
-            for k, c, xyxy in zip(r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist()):
-                preds.append((model.names[int(k)], float(c), *map(float, xyxy)))
-        names, extra = merge(p.gt, preds)
-        boxes = [to_box(class_idx[name], *g[1:], w, h, None, "virat") for g, name in zip(p.gt, names)]
-        boxes += [to_box(class_idx[e[0]], *e[2:], w, h, round(e[1], 4), "auto") for e in extra]
-        boxes = [b for b in boxes if b.is_valid()]
+        boxes, score, w, h = lab.boxes(img, p.gt)
         dst = cfg.unlabeled / camera_of(p.scene) / frame_file(p.clip, p.frame)
         if args.apply:
             okj, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, args.quality])
@@ -377,14 +477,11 @@ def main() -> int:
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(buf.tobytes())          # 앞서 넣다 끊긴 파일이 있으면 덮는다(DB 에 없는 것만 골랐다)
             items.append({"path": str(dst.resolve()), "source": "virat", "width": w, "height": h,
-                          "status": "pending", "boxes": boxes, "uncertainty": 0.0, "model_version": version,
+                          "status": "pending", "boxes": boxes, "uncertainty": score, "model_version": lab.version,
                           "camera": camera_of(p.scene), "captured_at": None})
         per_scene_new[p.scene] += 1
-        n_virat.update(classes[b.cls] for b in boxes if b.origin == "virat")
-        n_auto.update(classes[b.cls] for b in boxes if b.origin == "auto")
-        refined.update(f"{g[0]}→{name}" for g, name in zip(p.gt, names) if name != g[0])
         rows.append(f"{p.scene}\t{p.clip}\t{p.frame}\t{dst}\t"
-                    f"{sum(1 for b in boxes if b.origin == 'virat')}\t{sum(1 for b in boxes if b.origin == 'auto')}")
+                    f"{sum(1 for b in boxes if b.origin == 'auto')}\t{sum(1 for b in boxes if b.origin == 'virat')}")
         if i % 50 == 0:
             print(f"  {i}/{len(picks)} 프레임", flush=True)
     if cap is not None:
@@ -393,12 +490,8 @@ def main() -> int:
     print(f"\n장면 | 클립 | 이미 넣음 | 후보 | 새로 {'넣음' if args.apply else '넣을 것'} | 틀린 주석 줄")
     for sc, d in sorted(info.items()):
         print(f"{sc} | {d['clips']} | {d['have']} | {d['cands']:,} | {per_scene_new[sc]} | {d['bad']}")
-    print(f"합계 새 프레임 {sum(per_scene_new.values())}장 · 박스 VIRAT {sum(n_virat.values()):,} + 모델 보충 "
-          f"{sum(n_auto.values()):,}")
-    print("  VIRAT 박스:", dict(sorted(n_virat.items())))
-    print("  모델 보충:", dict(sorted(n_auto.items())))
-    if refined:
-        print("  VIRAT 클래스를 모델 세부 클래스로:", dict(refined.most_common()))
+    print(f"합계 새 프레임 {sum(per_scene_new.values())}장")
+    lab.report()
     if fails:
         print(f"  [경고] 읽지 못한 프레임 {len(fails)}: {fails[:5]}")
 
@@ -418,7 +511,7 @@ def main() -> int:
     log_dir = resolve("runs") / "virat_import"
     log_dir.mkdir(parents=True, exist_ok=True)
     manifest = log_dir / f"{stamp}.tsv"
-    manifest.write_text("scene\tclip\tframe\tpath\tvirat_boxes\tauto_boxes\n" + "\n".join(rows) + "\n",
+    manifest.write_text("scene\tclip\tframe\tpath\tauto_boxes\tvirat_boxes\n" + "\n".join(rows) + "\n",
                         encoding="utf-8")
     print(f"\n검수 대기로 {len(items)}장을 넣었다(도메인 CCTV {len(ids)}장). 목록: {manifest}")
     return 0

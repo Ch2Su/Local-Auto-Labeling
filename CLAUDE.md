@@ -169,7 +169,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/label_qa_claude.py` | missing 후보를 Claude API 로 거르는 파일럿 — API 키 필요, 아직 한 번도 호출 안 함 |
 | `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
 | `tools/import_o365.py` | Objects365 사진을 검수 대기로 넣는다(위 'Objects365') |
-| `tools/import_virat.py` | VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — VIRAT 라벨 + 운영 모델 보충, 장면 = 카메라 `virat-XXYY`(docs/provenance.md 'VIRAT 가져오기'). 기본은 보기만·`--apply`, `--per-scene` 을 올려 다시 돌리면 모자란 만큼만 기존 프레임과 떨어진 곳에서 더 넣는다. **넣은 뒤 `labeler.py label --all` 금지**(검수 대기 라벨을 예측으로 덮는다) |
+| `tools/import_virat.py` | VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — 운영 모델 예측 + 모델이 그 자리에서 못 찾은 VIRAT 박스, 장면 = 카메라 `virat-XXYY`(docs/provenance.md 'VIRAT 가져오기'). 기본은 보기만·`--apply`, `--per-scene` 을 올려 다시 돌리면 모자란 만큼만 기존 프레임과 떨어진 곳에서 더 넣는다. 이미 넣은 검수 대기를 지금 모델로 다시 라벨링하는 것은 `--relabel`(사람이 고친 이미지는 건너뛴다). **`labeler.py label --all` 금지**(VIRAT 박스까지 예측으로 덮는다) |
 | `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
@@ -226,7 +226,8 @@ scooter 1,026  truck 1,046  pickup 713
 ```
 
 - **11-07 에 VIRAT 프레임 550장을 검수 대기로 넣었다**(id 7229–7778, source `virat`, 카메라 `virat-XXYY` 11대 × 50,
-  도메인 CCTV, 분할 미배정 — docs/provenance.md 'VIRAT 가져오기'). 박스는 VIRAT 8,360 + 모델 보충 2,790(출처 auto). 승인
+  도메인 CCTV, 분할 미배정 — docs/provenance.md 'VIRAT 가져오기'). 박스는 같은 날 사용자 결정으로 다시 라벨링해 운영 모델
+  8,801(출처 auto) + 모델이 못 찾은 VIRAT 2,326(출처 virat — 사람 1,113·car 845·bicycle 368)이다. 승인
   전에는 학습에 안 들어간다. 그날 DB: 승인 6,115 / 검수 대기 550.
 - **클래스는 8개다**(pickup 은 09-20 에 사용자가 검수 UI 에서 추가했고, 같은 날 추가한 van 은 11-02 에 car 로 합쳤다).
   **클래스 번호는 순서가 전부다** — config.yaml 의 `classes` 에 **뒤에만 붙이고** 중간에 끼우거나 빼지 말 것(박스가 번호로
@@ -528,8 +529,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
      `img-bicycles-…`(217장)·폰 사진. 초안은 `tools/legacy_groups.py`(장면 종류 116개 중 2번 728장이 대부분 지상·근접 사진).
      새 기준선의 CCTV 도메인은 분류가 끝난 뒤 그 결과로 다시 정할 것.
    - **'이미지 추가' 후보 — 공개 데이터셋 (11-04 조사, docs/provenance.md '공개 데이터셋')** — VIRAT 은 영상 329클립·
-     11장면을 11-07 에 다 받아 장면당 50장(550장)을 검수 대기로 넣었다(`tools/import_virat.py` — VIRAT 라벨 + 운영 모델
-     보충, 장면 = 카메라, 주석 파일이 없는 영상 14개는 뺐다). 검수는 사용자가 하고, 평가에 쓸 장면은 다음 학습 전에
+     11장면을 11-07 에 다 받아 장면당 50장(550장)을 검수 대기로 넣었다(`tools/import_virat.py` — 운영 모델 예측 + 모델이
+     못 찾은 VIRAT 박스, 장면 = 카메라, 주석 파일이 없는 영상 14개는 뺐다). 검수는 사용자가 하고, 평가에 쓸 장면은 다음 학습 전에
      `cameras.yaml` 의 `split:` 으로 정한다. MOT17 은 보류(사람을 가려진 부분까지 몸 전체로 그린 라벨이다).
    - **분류는 `images.domain`(cctv·noncctv·drone, NULL=미분류)에 담는다** — 검수 UI 의 Q·W·E 버튼과 도메인 필터(같은 장면
      묶음째 정하던 `묶음째` 는 11-04 사용자 결정으로 뺐다). 라벨이 아니라 `updated_at`·변경 이력에 남기지 않는다.
