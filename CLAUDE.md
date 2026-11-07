@@ -272,10 +272,12 @@ scooter 1,031  truck 1,050  pickup 770
   가리킨다). 맨 끝 클래스를 없앨 때는 `tools/merge_class.py` — van 합침 묶음은 van 을 되살리기 전에는 되돌리기가 409 로
   막힌다. 합치자 같은 자리에 car 가 둘이 된 5185(test)는 칠판 묶음 1 의 DB 6건에 들어 있다.
 - **점수는 클래스별로 비교할 것.** 7클래스 시절 점수(visible-3 0.6868, A40 비교)도, 9클래스 라벨로 잰 09-27 기준선(전체 0.5174)도
-  지금 라벨과 바로 견줄 수 없다 — 다음 모델과 견주려면 visible-3 을 **지금 라벨로 다시 잴 것**(표는 docs/experiments.md
-  '9클래스 기준선', 기록은 `--history`). **비CCTV 가
-  가장 약했다**(09-27 0.378 — 그때는 비CCTV 를 `source='unlabeled'` 로 갈랐다). **11-04 부터 test_baseline 의 CCTV·드론·
-  비CCTV 는 사람이 정한 `images.domain`** 이다 — 이름표에 '(손 분류)' 가 붙고 기록에 `domain_rule` 이 남아 옛 기록과 견주지 않는다.
+  지금 라벨과 바로 견줄 수 없다. **11-08 에 visible-3 을 지금 라벨(test 749장)로 다시 쟀다** — 전체 0.5762(pickup 의 0 이 든
+  8클래스 평균, pickup 뺀 7 은 0.6585). 같은 test 로 잰 새 m·DetectView y26m 과의 표는 docs/experiments.md '8클래스 첫 학습',
+  기록은 `--history`. 7클래스 모델은 pickup 을 truck·car 로 잡아 그 둘이 깎이니, 8클래스 모델과는 pickup 영향이 없는 클래스로도
+  견줄 것. **비CCTV 가 가장 약하다**(11-08 새 m 도 0.58 — 09-27 의 0.378 은 비CCTV 를 `source='unlabeled'` 로 가른 값). **11-04
+  부터 test_baseline 의 CCTV·드론·비CCTV 는 사람이 정한 `images.domain`** 이다 — 이름표에 '(손 분류)' 가 붙고 기록에 `domain_rule`
+  이 남아 옛 기록과 견주지 않는다.
 - car 의 약 13% 는 **고정 CCTV 한 대(PETS 2009 View_001)의 754프레임에 세워진 두 대**였다(옛 van 쏠림 — 그 카메라는 통째로
   train). 11-07 에 96프레임만 남겨 car 192개(2%)로 줄였다.
 - `labeler.py split` 은 읽기 전용이 아니다(미배정을 배정해 DB 에 쓴다) — DB 만 보려면 `sqlite3` 를 `mode=ro` 로 열 것.
@@ -563,10 +565,15 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 
 3. **미검토 제안.** 640 입력에서 박스의 23.3% 가 32px 미만이다. 학습 자체를 960 으로 올리는 것은 s 로는 해 보지 않았다 —
    해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). SAHI 식 타일 추론은 `tools/test_tiles.py` 로 재 봤다(11-03, visible-3·CCTV test) — mAP50-95 는 +0.035\~0.038 이지만 같은 conf 에서 FP 가 늘고(대부분 라벨 누락이 아니라 진짜 오검출), FP 를 맞추면 이득이 16px 미만 객체(+4.5pt)로 좁혀져 `AutoLabeler` 에는 아직 넣지 않았다 — 타일↔통째 사이에만 NMS IoU 0.3 을 걸면 F1 이 통째와 같고(0.890) 재현율 +1.8pt·mAP +0.035(CCTV)라 넣을 만하지만, 사용자가 FP 표본 48개를 직접 확인한 뒤 정한다(표·한계는 docs/experiments.md '타일 추론' — 그 CCTV 는 11-04 전 규칙으로 가른 것이라, 다시 잴 때는 손 분류 도메인으로 바뀐다).
-4. **8클래스로 다시 학습하기 — 운영 모델(visible-3)은 pickup 을 모르고, car 에 옛 van 이 섞였다.** 학습하면
-   `tools/test_baseline.py --weights <새 가중치> --domains` 로 visible-3(지금 라벨로 다시 잰 값)과 **클래스별로** 비교하고, 그
-   모델로 `tools/label_qa.py` 를 돌려 176px 아래의 truck·pickup·car 판정을 거른다(눈으로는 176px 위만 봤다 — 그 아래는 사람도
-   1톤급과 2.5톤급을 못 가른다). 예측 비교(P)도 그때부터 pickup 을 본다. 학습이 묶음을 다시 계산한다(`g000001` → 360묶음).
+4. **8클래스 학습 — 11-08 에 임시로 한 번 했다(yolo26m, `models/best_y26m_8cls.pt`, 운영 아님).** 운영 모델(visible-3)은
+   pickup 을 모르고 car 에 옛 van 이 섞였다. test 749장에서 새 m 은 visible-3 보다 모든 클래스가 높고(pickup 뺀 7: 0.6585 →
+   0.7398), 같은 설정의 DetectView y26m 과는 pickup 과 상관없는 클래스에서 거의 같다(+0.013). 표는 docs/experiments.md
+   '8클래스 첫 학습'. 남은 것:
+   - 운영 가중치로 쓸지는 사용자가 정한다. 바꾸면 예측 비교(P)·자동 라벨링이 그때부터 pickup 을 본다.
+   - 8클래스 모델로 `tools/label_qa.py` 를 돌려 176px 아래의 truck·pickup·car 판정을 거른다(눈으로는 176px 위만 봤다 — 그 아래는
+     사람도 1톤급과 2.5톤급을 못 가른다).
+   - 그날 멈춘 s 학습 `~/new_env/yolo/runs_wsl/visible`(resume.pt)이 웹 UI 'WSL 이어하기' 후보로 남아 있다. 이어 가면 끝날 때
+     `models/best.pt` 를 그 s 모델로 바꾸니, 지울지 사용자에게 물었다(11-08).
    - **사용자 결정 거리:** `g000001` 에 섞여 train 에 갇혔던 CCTV 가 아닌 사진(약 640장)을 val·test 로도 보내려면
      `labeler.py split --reset --yes` 가 필요하다 — 그러면 지금까지의 점수 비교가 끊긴다.
 5. **기준선을 처음부터 새로 잰다 (11-03 사용자 결정).** 순서: test 점검 → 압축 백업 뒤 구내식당 CCTV 338장(seed1
