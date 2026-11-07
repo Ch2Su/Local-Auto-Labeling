@@ -216,9 +216,9 @@ truck, pickup)가 적혀 있습니다 — 밴은 car 입니다(2026-11-02 에 va
 미라벨 이미지에 자동 라벨을 붙입니다 (`검수 대기` 상태로).
 
 **`label --all` 은 조심하세요.** 이미 검수 대기인 이미지까지 다시 추론해 **그 라벨을 모델 예측으로
-덮어씁니다.** 검수 대기 중인 Objects365 사진(`tools/import_o365.py` 가 원본 라벨째 넣은 것, 2026-10-31
-기준 429장)이 그렇게 됩니다. 옛 라벨은 변경 내역에 남지만 되돌리려면 이미지마다 해야 합니다. 검수 UI 의
-자동 라벨링 버튼은 미라벨 이미지만 추론합니다.
+덮어씁니다.** 검수 대기 중인 VIRAT 프레임(`tools/import_virat.py` 가 VIRAT 라벨째 넣은 것, 2026-11-07)이
+그렇게 됩니다. 옛 라벨은 변경 내역에 남지만 되돌리려면 이미지마다 해야 합니다. 검수 UI 의 자동 라벨링 버튼은
+미라벨 이미지만 추론합니다.
 
 ```bash
 .venv\Scripts\python.exe labeler.py review
@@ -786,6 +786,8 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
   import_o365.py       Objects365 의 Van·Pickup Truck 사진을 검수 대기로 넣는다 (기본은 보기만, --apply 로 넣음.
                        Objects365 를 푼 폴더는 --root, 기본 E:\datasets\objects365 — 11-02 부터 원본은
                        E:\datasets\objects365.tar 로 묶여 있어 먼저 풀어야 한다)
+  import_virat.py      VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — VIRAT 라벨 + 운영 모델 보충
+                       (기본은 보기만, --apply 로 넣음, --per-scene 을 올리면 모자란 만큼만 더. docs/provenance.md)
   merge_class.py       맨 끝 클래스를 다른 클래스에 합친다 (기본은 보기만, --apply 로 DB 를 떠 두고 합침)
   finetune.py          해상도를 올려 짧게 미세조정
   probe_scale.py       모델 크기 비교 실험

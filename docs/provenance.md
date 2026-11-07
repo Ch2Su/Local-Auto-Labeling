@@ -1,4 +1,4 @@
-# 출처 기록 설계 (2026-11-03 — 1~4단계 구현됨, 5단계(공개 데이터셋 가져오기)는 따로)
+# 출처 기록 설계 (2026-11-03 — 1~4단계 구현됨, 5단계(공개 데이터셋 가져오기)는 VIRAT 만 11-07)
 
 11-03 에 그때까지 모인 이미지를 `data/visible/legacy/` 로 옮겼다(출처 모름). 그 뒤로 새로 모으는 이미지는
 **어느 출처 단위(카메라)에서 언제 찍혔는지** 를 DB 에 남긴다. 이 문서는 그 규칙과 구현 계획이다.
@@ -153,13 +153,15 @@ cameras:
    카메라별 보고를 한다.
 3. **(11-03 구현)** `tools/extract_frames.py`.
 4. **(11-03 구현)** `tools/test_baseline.py` 출처 도메인 · 검수 UI 카메라 필터와 카메라·시각 표시.
-5. (따로) 공개 데이터셋 가져오기 — VIRAT 은 장면(`XXYY`)을 카메라로, 라벨은 **검수 대기**로 넣는다
-   (행동과 무관한 객체 박스가 빠져 있다 — VIRAT 배포본 `docs/VIRAT_Video_Dataset_Release2.0_Introduction_v1.0.pdf` 3.1).
+5. **(11-07 VIRAT 구현)** 공개 데이터셋 가져오기 — `tools/import_virat.py`. VIRAT 장면(`XXYY`)을 카메라
+   `virat-XXYY` 로, 라벨은 **검수 대기**로 넣는다(행동과 무관한 객체 박스가 빠져 있다 — VIRAT 배포본
+   `docs/VIRAT_Video_Dataset_Release2.0_Introduction_v1.0.pdf` 3.1 — 그래서 운영 모델 예측으로 보탠다. 아래 'VIRAT 가져오기').
 
-## 공개 데이터셋 (11-04 조사 — 5단계는 아직)
+## 공개 데이터셋 (11-04 조사 — VIRAT 가져오기 11-07)
 
 `E:\datasets`(저장소 밖)에 받아 둔다. **사용자 결정(11-04): VIRAT 은 다른 장면 영상을 더 받은 뒤 가져오기 도구를
-만들고, MOT17 은 보류한다.** 11-07 에 VIRAT 영상을 다 받았다(가져오기 도구는 아직). 같은 날 그 폴더에 MOT17 zip 은
+만들고, MOT17 은 보류한다.** 11-07 에 VIRAT 영상을 다 받아 장면당 50장을 검수 대기로 넣었다(아래 'VIRAT 가져오기').
+같은 날 그 폴더에 MOT17 zip 은
 없었고(옮겼는지 지웠는지 모름) `154.유동 인구 분석을 위한 CCTV 영상 데이터`·`Songdo Vision` 폴더가 새로 있었다(아직 보지 않았다).
 
 **VIRAT Ground Release 2.0** — `VIRAT_Ground_partial\VIRAT Ground Dataset\`(`annotations/`·`docs/`·`homographies/`·

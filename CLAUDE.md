@@ -169,6 +169,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/label_qa_claude.py` | missing 후보를 Claude API 로 거르는 파일럿 — API 키 필요, 아직 한 번도 호출 안 함 |
 | `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
 | `tools/import_o365.py` | Objects365 사진을 검수 대기로 넣는다(위 'Objects365') |
+| `tools/import_virat.py` | VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — VIRAT 라벨 + 운영 모델 보충, 장면 = 카메라 `virat-XXYY`(docs/provenance.md 'VIRAT 가져오기'). 기본은 보기만·`--apply`, `--per-scene` 을 올려 다시 돌리면 모자란 만큼만 기존 프레임과 떨어진 곳에서 더 넣는다. **넣은 뒤 `labeler.py label --all` 금지**(검수 대기 라벨을 예측으로 덮는다) |
 | `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
