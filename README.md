@@ -165,6 +165,10 @@ data/visible/labeling.db  ← 라벨과 검수 상태. 작업물 그 자체입�
 모양으로 넣고 `scan` 만 돌리면 됩니다. Roboflow 의 YOLO 내보내기는 가려져 조각난 객체의
 박스를 잘라 버리므로 쓰지 마세요(COCO 대비 IoU 0.7 미만이 6%).
 
+휴지통을 비워 시드 사진을 지우면 json 에는 이름이 남아, `scan` 이 'JSON 에 있으나 파일이 없는 이미지 N장' 으로
+알리고 건너뜁니다(다시 넣지는 않습니다). 지운 것이 맞으면 `tools/prune_seed_json.py --apply` 로 json 에서 그 항목을
+뺍니다. 원본 json 은 `seed_coco` 폴더 밖의 `seed_json_backup/<시각>/` 에 떠 두고, 기본은 보기만 합니다.
+
 아래는 `seed_coco` 를 비웠을 때의 YOLO `.txt` 방식입니다. 경로에 `images/` 폴더가 있으면
 같은 위치의 `labels/` 에서 같은 이름의 `.txt` 를 찾습니다.
 
