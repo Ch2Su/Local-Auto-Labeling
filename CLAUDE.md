@@ -169,7 +169,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/label_qa_claude.py` | missing 후보를 Claude API 로 거르는 파일럿 — API 키 필요, 아직 한 번도 호출 안 함 |
 | `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
 | `tools/import_o365.py` | Objects365 사진을 검수 대기로 넣는다(위 'Objects365') |
-| `tools/import_virat.py` | VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — 운영 모델 예측 + 모델이 그 자리에서 못 찾은 VIRAT 박스, 장면 = 카메라 `virat-XXYY`(docs/provenance.md 'VIRAT 가져오기'). 기본은 보기만·`--apply`, `--per-scene` 을 올려 다시 돌리면 모자란 만큼만 기존 프레임과 떨어진 곳에서 더 넣는다. 이미 넣은 검수 대기를 지금 모델로 다시 라벨링하는 것은 `--relabel`(사람이 고친 이미지는 건너뛴다, VIRAT 박스 없이는 `--model-only` — 0503 은 그렇게 했다). `cameras.yaml` 의 VIRAT 카메라에 `crop:` 이 있으면 그 영역만 쓴다(0503) — 이미 넣은 통째 이미지는 `--recrop`(같은 행의 파일·크기를 바꾼다, `store.replace_file` — **돌린 뒤 검수 화면을 새로 고칠 것**: 열려 있던 옛 화면이 통째 기준 박스를 잘린 이미지에 저장할 수 있다). **`labeler.py label --all` 금지**(VIRAT 박스까지 예측으로 덮는다) |
+| `tools/import_virat.py` | VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — 운영 모델 예측 + 모델이 그 자리에서 못 찾은 VIRAT 박스, 장면 = 카메라 `virat-XXYY`(docs/provenance.md 'VIRAT 가져오기'). 기본은 보기만·`--apply`, `--per-scene` 을 올려 다시 돌리면 모자란 만큼만 기존 프레임과 떨어진 곳에서 더 넣는다. 이미 넣은 검수 대기를 지금 모델로 다시 라벨링하는 것은 `--relabel`(사람이 고친 이미지는 건너뛴다, VIRAT 박스 없이는 `--model-only` — 0503 은 그렇게 했다). `cameras.yaml` 의 VIRAT 카메라에 `crop:` 이 있으면 그 영역만 쓴다(0503·0500) — 이미 넣은 통째 이미지는 `--recrop`(같은 행의 파일·크기를 바꾼다, `store.replace_file` — **돌린 뒤 검수 화면을 새로 고칠 것**: 열려 있던 옛 화면이 통째 기준 박스를 잘린 이미지에 저장할 수 있다). **`labeler.py label --all` 금지**(VIRAT 박스까지 예측으로 덮는다) |
 | `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
@@ -249,7 +249,9 @@ scooter 1,031  truck 1,043  pickup 723
   다시 라벨링했다(`--model-only`). 승인 전에는 학습에 안 들어간다.
   - 같은 날 저녁 점검에서 확실한 오류만 고쳤다(사용자 승인): 박스 211개(116장), 휴지통 6장. 이력 묶음 'VIRAT 정리 A~D',
     백업 `labeling.db.bak_viratfix_20261107_195710`. 자세한 것은 provenance.
-  - 그 뒤 VIRAT: 승인 8 / 검수 대기 535. 검수 대기 박스는 모델 7,919 · VIRAT 1,594 · 사람 67.
+  - 0500 도 위쪽 띠를 잘라 1920×810(y 270 아래)만 쓰고 `split: train` 으로 고정했다(사용자 결정, 11-07 밤).
+    위쪽 인도에 겹쳐 선 오토바이 뭉치를 눈으로 가를 수 없어서다. 백업 `labeling.db.bak_viratrecrop_20261107_210025`.
+  - 그 뒤 VIRAT: 승인 8 / 검수 대기 535. 검수 대기 박스는 모델 7,636 · VIRAT 1,552 · 사람 22.
   - 휴지통 7장은 같은 날 비워 행·파일이 없다. 그래서 0000·0002·0502 는 48장, 0503 은 49장이다.
   - `import_virat.py --per-scene 50 --apply` 를 다시 돌리면 모자란 만큼 다시 채운다(지운 것과 같은 프레임을 다시 고를 수 있다).
   - 남은 후보 목록은 git 밖 `data/visible/virat_qa/`.
