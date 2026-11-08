@@ -310,7 +310,8 @@ cameras:
     VIRAT 1,321.
 - 카메라 등록은 `data/visible/cameras.yaml`(11-07 에 처음 만들었다 — VIRAT 11대, `split` 은 비움, mount 는 부감으로 본
   짐작). 평가에 쓸 장면을 고정하려면 다음 학습(또는 `split`) 전에 `split:` 을 적는다.
-- 검수 때 볼 것: 남은 VIRAT bicycle 은 오토바이일 수 있다(VIRAT bike 는 오토바이도 담는다). 운영 모델은 pickup 을 몰라
+- 검수 때 볼 것: 남은 VIRAT bicycle 은 오토바이일 수 있다(VIRAT bike 는 오토바이도 담는다). 박스를 만든 visible-3(그때
+  운영 모델 — 11-08 부터는 pickup 을 아는 8클래스 m)은 pickup 을 몰라
   픽업이 car·truck 으로 들어와 있다. 모델도 VIRAT 도 놓친 물체가 있다(0502 표본의 세워 둔 작업 트럭 등 — VIRAT 은 주차
   차량을 비워 둔다). 모델을 새로 학습한 뒤에는 `--relabel` 로 남은 검수 대기를 다시 라벨링할 수 있다(사람이 고친 이미지는
   건너뛴다). `labeler.py label --all` 은 VIRAT 박스까지 지우니 쓰지 말 것.

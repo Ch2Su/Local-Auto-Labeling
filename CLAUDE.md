@@ -338,11 +338,13 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
 `.jpg .jpeg .png .bmp .webp .tif .tiff .avif`. AVIF 는 Pillow 11.3+ 에서 된다. `.heic` 를 받으려면 `pillow-heif` 를 먼저 깔고 추가할 것.
 
 **가중치.** `weights/` 에 사전학습 가중치(`yolo26n/s/m/l.pt`, `sam2.1_t.pt`)가 있다 — config 에 이름만 적으면
-`config.pretrained_path()` 가 여기서 찾는다(없으면 Ultralytics 가 실행한 폴더에 받아 버린다). `models/best.pt`(운영) =
-`best_visible3.pt`(visible-3 epoch 156, val 0.654, sha256 `ca1f9f5c…`). 같은 폴더의 `best_y26m_8cls.pt` 는 11-08 8클래스 첫 학습
-(yolo26m, 운영 아님, sha256 `f09f02f4…`), `best_detectview_y26m.pt` 는 DetectView 배포 모델 원본의 사본(7클래스, sha256
-`785b3542…`)이다 — 셋의 test 비교는 docs/experiments.md '8클래스 첫 학습'. **`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라
-중단할 때마다 그 시점 best 로 밀려난다** — 운영할 가중치는 늘 `best_<이름>.pt` 로 따로 둔다.
+`config.pretrained_path()` 가 여기서 찾는다(없으면 Ultralytics 가 실행한 폴더에 받아 버린다). **`models/best.pt`(운영)는 11-08
+부터 `best_y26m_8cls.pt`** 다(8클래스 첫 학습, yolo26m 640, epoch 84, val 0.693, sha256 `f09f02f4…` — 사용자 결정). 그 전 운영
+visible-3(yolo26s 7클래스, epoch 156, val 0.654, sha256 `ca1f9f5c…`)은 `best_visible3.pt`·`best.prev.pt` 에 있다.
+`best_detectview_y26m.pt` 는 DetectView 배포 모델 원본의 사본(7클래스, sha256 `785b3542…`)이다 — 셋의 test 비교는
+docs/experiments.md '8클래스 첫 학습'. **`model.base` 는 아직 `weights/yolo26s.pt` 라, 웹 UI 로 학습하면 s 로 돌고 끝날 때(중단
+포함) `best.pt` 를 그 s 모델로 바꾼다.** **`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라 중단할 때마다 그 시점 best 로
+밀려난다** — 운영할 가중치는 늘 `best_<이름>.pt` 로 따로 둔다.
 
 **다른 디스크 백업: `C:\local_auto_labeling_backup\20261031\`**(C: = 디스크 1, E: 와 다른 물리 디스크). `.venv`·`graft`·
 `data/visible/dataset`·`__pycache__`·`*.tar`·살아 있는 DB 파일을 뺀 전부(8,127개 5.11GB, md5 전수 대조)와 sqlite `backup()` 으로
@@ -473,8 +475,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 ## 아키텍처·설계 의도
 
 코드는 `src/autolabel/` 에 있다. 각 파일 맨 위 docstring 에 그렇게 된 이유를 적어 두었으니 고치기 전에 읽을 것.
-- 학습은 매번 사전학습 가중치(`model.base`, 지금 `weights/yolo26s.pt`)에서 **새로** 미세조정한다 — 이어 학습하면 자기학습
-  루프에서 모델이 자기 오류를 굳힌다.
+- 학습은 매번 사전학습 가중치(`model.base`, 지금 `weights/yolo26s.pt` — 11-08 부터 운영 가중치는 m 이라 크기가 다르다)에서
+  **새로** 미세조정한다 — 이어 학습하면 자기학습 루프에서 모델이 자기 오류를 굳힌다.
 - 분할은 DB 에 고정한다(위 '묶음 단위 계층화') — 그래야 사이클 간 비교가 유효하다.
 - **자동 승인은 없다** — 신뢰도가 높아도 사람이 봐야 학습에 들어간다.
 - 재스캔은 이미 등록된 이미지를 건너뛴다(UI 에서 손본 라벨을 원본으로 되덮지 않는다). **`INSERT ... ON CONFLICT DO UPDATE`
@@ -499,7 +501,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 - 같은 자리 일괄 수정(`store.same_place` → `set_class_bulk`)은 적용 때 다시 찾아 미리 본 수와 다르면 409, 묶음째 되돌리기는 그
   뒤 손대지 않은 이미지만 되돌린다. 묶음(grp)이 정해지기 전의 새 이미지는 쓸 수 없다.
 - **예측 비교(P)** 는 운영 가중치로 한 장 추론만 하고 DB 에 쓰지 않는다(비교는 브라우저 `computeFindings`, 규칙은
-  `tools/label_qa.py` 와 같고 예측 하한만 다르다 — label_qa 0.10, P 는 `predict.conf` 0.25). 모델이 모르는 클래스(visible-3 은
+  `tools/label_qa.py` 와 같고 예측 하한만 다르다 — label_qa 0.10, P 는 `predict.conf` 0.25). 모델이 모르는 클래스(11-08 전 운영 visible-3 은
   pickup)는 비교하지 않는다. 올릴 때 빈 이미지로 예열하는데, **자동 라벨링(`AutoLabeler`)은 예열하지 않는다** — 첫 추론이 CUDA
   초기화로 길어지면 NMS 시간 제한에 걸려 검출이 'NMS time limit exceeded' 경고만 남기고 잘릴 수 있다(한 번 봤고 조건은 모른다).
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
@@ -565,15 +567,15 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 
 3. **미검토 제안.** 640 입력에서 박스의 23.3% 가 32px 미만이다. 학습 자체를 960 으로 올리는 것은 s 로는 해 보지 않았다 —
    해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). SAHI 식 타일 추론은 `tools/test_tiles.py` 로 재 봤다(11-03, visible-3·CCTV test) — mAP50-95 는 +0.035\~0.038 이지만 같은 conf 에서 FP 가 늘고(대부분 라벨 누락이 아니라 진짜 오검출), FP 를 맞추면 이득이 16px 미만 객체(+4.5pt)로 좁혀져 `AutoLabeler` 에는 아직 넣지 않았다 — 타일↔통째 사이에만 NMS IoU 0.3 을 걸면 F1 이 통째와 같고(0.890) 재현율 +1.8pt·mAP +0.035(CCTV)라 넣을 만하지만, 사용자가 FP 표본 48개를 직접 확인한 뒤 정한다(표·한계는 docs/experiments.md '타일 추론' — 그 CCTV 는 11-04 전 규칙으로 가른 것이라, 다시 잴 때는 손 분류 도메인으로 바뀐다).
-4. **8클래스 학습 — 11-08 에 임시로 한 번 했다(yolo26m, `models/best_y26m_8cls.pt`, 운영 아님).** 운영 모델(visible-3)은
-   pickup 을 모르고 car 에 옛 van 이 섞였다. test 749장에서 새 m 은 visible-3 보다 모든 클래스가 높고(pickup 뺀 7: 0.6585 →
-   0.7398), 같은 설정의 DetectView y26m 과는 pickup 과 상관없는 클래스에서 거의 같다(+0.013). 표는 docs/experiments.md
-   '8클래스 첫 학습'. 남은 것:
-   - 운영 가중치로 쓸지는 사용자가 정한다. 바꾸면 예측 비교(P)·자동 라벨링이 그때부터 pickup 을 본다.
+4. **8클래스 학습 — 11-08 에 한 번 했고(yolo26m, `models/best_y26m_8cls.pt`) 같은 날 운영 가중치로 올렸다(사용자 결정).** 그 전
+   운영 visible-3 은 pickup 을 모르고 car 에 옛 van 이 섞였다. test 749장에서 새 m 은 visible-3 보다 모든 클래스가 높고(pickup 뺀
+   7: 0.6585 → 0.7398), 같은 설정의 DetectView y26m 과는 pickup 과 상관없는 클래스에서 거의 같다(+0.013). 표는
+   docs/experiments.md '8클래스 첫 학습'. 예측 비교(P)·자동 라벨링도 이제 pickup 을 본다. 그날 멈춘 s 학습
+   `~/new_env/yolo/runs_wsl/visible` 은 사용자 요청으로 지웠다('WSL 이어하기' 후보 없음). 남은 것:
    - 8클래스 모델로 `tools/label_qa.py` 를 돌려 176px 아래의 truck·pickup·car 판정을 거른다(눈으로는 176px 위만 봤다 — 그 아래는
      사람도 1톤급과 2.5톤급을 못 가른다).
-   - 그날 멈춘 s 학습 `~/new_env/yolo/runs_wsl/visible`(resume.pt)이 웹 UI 'WSL 이어하기' 후보로 남아 있다. 이어 가면 끝날 때
-     `models/best.pt` 를 그 s 모델로 바꾸니, 지울지 사용자에게 물었다(11-08).
+   - 검수 대기 VIRAT 478장의 모델 박스는 visible-3 이 만든 것이다(pickup 이 car·truck 으로). 새 모델로 다시 라벨링할지는 사용자가
+     정한다(`tools/import_virat.py --relabel`).
    - **사용자 결정 거리:** `g000001` 에 섞여 train 에 갇혔던 CCTV 가 아닌 사진(약 640장)을 val·test 로도 보내려면
      `labeler.py split --reset --yes` 가 필요하다 — 그러면 지금까지의 점수 비교가 끊긴다.
 5. **기준선을 처음부터 새로 잰다 (11-03 사용자 결정).** 순서: test 점검 → 압축 백업 뒤 구내식당 CCTV 338장(seed1

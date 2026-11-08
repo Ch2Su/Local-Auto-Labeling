@@ -515,8 +515,9 @@ runs_wsl 밖에 둠). `weights/yolo26m.pt` 에서 새로 시작했고 설정은 
 - 사용자 요청으로 epoch 9 의 368/373 배치에서 정지 파일로 멈췄다(resume.pt). 다른 세션의 파일 복구가 끝난 뒤 이어서 100 까지
   갔다. 멈춘 epoch 은 5배치(1.3%)를 건너뛰고 검증·저장됐다. 이어 학습의 results.csv `time` 은 0 부터 다시 센다.
 - epoch 중앙값은 99.6초다(시작·재시작 직후 epoch 은 약 120초). 합계 2.74시간, nvidia-smi 6.5\~6.6GB.
-- **best = epoch 84 (val mAP50-95 0.6934 / mAP50 0.8410).** 가중치는 `models/best_y26m_8cls.pt`(sha256 `f09f02f4…`)다. 운영
-  가중치(`best.pt` = visible-3)는 바꾸지 않았다.
+- **best = epoch 84 (val mAP50-95 0.6934 / mAP50 0.8410).** 가중치는 `models/best_y26m_8cls.pt`(sha256 `f09f02f4…`)다. 학습이
+  끝날 때는 운영 가중치를 바꾸지 않았고, 아래 비교를 본 뒤 같은 날 사용자 결정으로 운영 `best.pt` 로 올렸다(visible-3 은
+  `best.prev.pt`·`best_visible3.pt`).
 - **close_mosaic 은 세 번째도 이득이 없었고, 이번에는 떨어졌다.** 91\~100(mosaic 끔) 평균 0.6801 대 81\~90 평균 0.6901 이고,
   epoch 91 에서 바로 0.692 → 0.678 이 됐다. 다만 끄지 않은 학습과 직접 비교한 적은 여전히 없다.
 
@@ -562,5 +563,7 @@ pickup 영향이 없는 5(bicycle·bus·motorcycle·person·scooter). 표는 mAP
 - 드론의 bicycle·bus·motorcycle 은 박스가 1\~2개라, 드론의 5클래스 평균은 쓰지 말 것. 드론에서 DetectView y26m 대비 새 m 은
   person +0.045·car −0.024·scooter +0.015 다.
 - **확인하지 않은 것.** 학습은 한 번(seed 0)뿐이라 클래스별 ±0.01 은 잡음일 수 있고, 신뢰구간(이미지 부트스트랩)도 내지 않았다.
-  추론 시간도 재지 않았다 — 이번 측정은 VRAM 이 거의 찬 채(nvidia-smi 7.9GB) 돌아 그 값을 못 쓴다. m 은 s 의 약 3.3배 연산이다
-  (fuse 전 22.8 → 75.0 GFLOPs). truck 에서 pickup 이 깎는 몫은 pickup 을 truck 으로 합쳐 다시 재면 가를 수 있다(안 했다).
+  추론 시간은 이 측정에서 재지 못했다 — VRAM 이 거의 찬 채(nvidia-smi 7.9GB) 돌았다. m 은 s 의 약 3.3배 연산이다(fuse 전 22.8
+  → 75.0 GFLOPs). 운영으로 올린 뒤 예측 비교(P)와 같은 범위(디코딩 포함, conf 0.25)로 test 10장을 재니 한 장 중앙값이 CPU 는
+  s 94ms → m 179ms 였고, GPU 는 50 → 40ms 로 디코딩에 묻혀 차이가 안 보였다(순수 추론 시간은 따로 재지 않았다).
+  truck 에서 pickup 이 깎는 몫은 pickup 을 truck 으로 합쳐 다시 재면 가를 수 있다(안 했다).
