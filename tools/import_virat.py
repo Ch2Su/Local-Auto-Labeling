@@ -35,7 +35,9 @@ status='pending' 로 넣은 뒤 domain 을 'cctv' 로 정한다. 촬영 시각�
 
 **박스.**
 - 모델(`--weights`, 기본 운영 가중치) 예측은 자동 라벨링과 같은 설정(predict.conf·iou·max_det·imgsz)으로 전부 넣는다
-  (출처 'auto', 신뢰도). 운영 모델(visible-3)은 pickup 을 모른다 — 픽업은 검수에서 고친다.
+  (출처 'auto', 신뢰도). 11-08 전 운영 visible-3 은 pickup 을 몰랐다(픽업이 car·truck 으로). 11-08 부터 운영 m 은
+  pickup 을 내지만, 클래스별 NMS 라 한 차에 car·pickup 박스가 겹쳐 나오기도 한다(검수 화면 '⚠ 겹침'). model_version 은
+  가중치 파일 이름이라, `--weights models/best_<이름>.pt` 로 주면 어느 모델이 만든 박스인지 남는다.
 - VIRAT 종류 1 person → person, 2 car·3 vehicle → car, 5 bike → bicycle(오토바이도 bike 다 — 검수에서 가른다).
   0(구역 상자)·4 object 는 버리고, 열 수·형이 틀린 줄은 건너뛴다.
 - 같은 무리(사람 / 차: car·bus·truck·pickup / 두 바퀴: bicycle·motorcycle·scooter)끼리 IoU 0.5 이상을 큰 것부터 하나씩
