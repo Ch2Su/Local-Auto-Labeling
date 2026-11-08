@@ -342,9 +342,9 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
 부터 `best_y26m_8cls.pt`** 다(8클래스 첫 학습, yolo26m 640, epoch 84, val 0.693, sha256 `f09f02f4…` — 사용자 결정). 그 전 운영
 visible-3(yolo26s 7클래스, epoch 156, val 0.654, sha256 `ca1f9f5c…`)은 `best_visible3.pt`·`best.prev.pt` 에 있다.
 `best_detectview_y26m.pt` 는 DetectView 배포 모델 원본의 사본(7클래스, sha256 `785b3542…`)이다 — 셋의 test 비교는
-docs/experiments.md '8클래스 첫 학습'. **`model.base` 는 아직 `weights/yolo26s.pt` 라, 웹 UI 로 학습하면 s 로 돌고 끝날 때(중단
-포함) `best.pt` 를 그 s 모델로 바꾼다.** **`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라 중단할 때마다 그 시점 best 로
-밀려난다** — 운영할 가중치는 늘 `best_<이름>.pt` 로 따로 둔다.
+docs/experiments.md '8클래스 첫 학습'. **`model.base` 도 같은 날 `weights/yolo26m.pt`(`train.batch` 10)로 바꿨다** — 운영 m 은
+epochs 100·close_mosaic 10 으로 학습했고 config 는 300·30 그대로다. **`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라 중단할
+때마다 그 시점 best 로 밀려난다** — 운영할 가중치는 늘 `best_<이름>.pt` 로 따로 둔다.
 
 **다른 디스크 백업: `C:\local_auto_labeling_backup\20261031\`**(C: = 디스크 1, E: 와 다른 물리 디스크). `.venv`·`graft`·
 `data/visible/dataset`·`__pycache__`·`*.tar`·살아 있는 DB 파일을 뺀 전부(8,127개 5.11GB, md5 전수 대조)와 sqlite `backup()` 으로
@@ -475,7 +475,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 ## 아키텍처·설계 의도
 
 코드는 `src/autolabel/` 에 있다. 각 파일 맨 위 docstring 에 그렇게 된 이유를 적어 두었으니 고치기 전에 읽을 것.
-- 학습은 매번 사전학습 가중치(`model.base`, 지금 `weights/yolo26s.pt` — 11-08 부터 운영 가중치는 m 이라 크기가 다르다)에서
+- 학습은 매번 사전학습 가중치(`model.base`, 11-08 부터 `weights/yolo26m.pt`)에서
   **새로** 미세조정한다 — 이어 학습하면 자기학습 루프에서 모델이 자기 오류를 굳힌다.
 - 분할은 DB 에 고정한다(위 '묶음 단위 계층화') — 그래야 사이클 간 비교가 유효하다.
 - **자동 승인은 없다** — 신뢰도가 높아도 사람이 봐야 학습에 들어간다.
@@ -570,7 +570,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 4. **8클래스 학습 — 11-08 에 한 번 했고(yolo26m, `models/best_y26m_8cls.pt`) 같은 날 운영 가중치로 올렸다(사용자 결정).** 그 전
    운영 visible-3 은 pickup 을 모르고 car 에 옛 van 이 섞였다. test 749장에서 새 m 은 visible-3 보다 모든 클래스가 높고(pickup 뺀
    7: 0.6585 → 0.7398), 같은 설정의 DetectView y26m 과는 pickup 과 상관없는 클래스에서 거의 같다(+0.013). 표는
-   docs/experiments.md '8클래스 첫 학습'. 예측 비교(P)·자동 라벨링도 이제 pickup 을 본다. 그날 멈춘 s 학습
+   docs/experiments.md '8클래스 첫 학습'. 예측 비교(P)·자동 라벨링도 이제 pickup 을 보고, 웹 UI 학습도 m(batch 10)으로 돈다. 그날 멈춘 s 학습
    `~/new_env/yolo/runs_wsl/visible` 은 사용자 요청으로 지웠다('WSL 이어하기' 후보 없음). 남은 것:
    - 8클래스 모델로 `tools/label_qa.py` 를 돌려 176px 아래의 truck·pickup·car 판정을 거른다(눈으로는 176px 위만 봤다 — 그 아래는
      사람도 1톤급과 2.5톤급을 못 가른다).

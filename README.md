@@ -29,7 +29,7 @@
 | PyTorch | 2.14.0+cu130 (CUDA 13.0) |
 | Ultralytics | 8.4.142 (WSL 학습 환경도 같은 버전) |
 | GPU | RTX 5060 Laptop 8GB, sm_120 네이티브 지원 |
-| 검출 모델 | Ultralytics YOLO26 (`yolo26s`, DFL-free) |
+| 검출 모델 | Ultralytics YOLO26 (`yolo26m` — 11-08 전에는 `yolo26s`, DFL-free) |
 | 보조 모델 | SAM 2.1 tiny (검수 UI 의 클릭 한 번 박스) |
 
 ## 새 PC 에서 시작하기
@@ -654,7 +654,7 @@ http://127.0.0.1:7860/p/visible/#ids=5493-5497,5532
 train → label → review(수십~수백 장) → train → label → review → ...
 ```
 
-학습은 매번 사전학습 가중치(`model.base`, 지금 `weights/yolo26s.pt`)에서 새로 미세조정합니다. 직전 모델에 이어서 학습하면
+학습은 매번 사전학습 가중치(`model.base`, 지금 `weights/yolo26m.pt`)에서 새로 미세조정합니다. 직전 모델에 이어서 학습하면
 자기가 만든 오류를 스스로 굳히는 문제(confirmation bias)가 생기기 때문입니다.
 
 ## 데이터 나누기 — train / val / test
@@ -739,12 +739,12 @@ CCTV = 그 밖의 seed). 뜻이 바뀌었으므로 `cctv`·`drone`·`noncctv`·`
 
 | 키 | 설명 |
 |---|---|
-| `model.base` | `weights/yolo26s.pt`(지금) / `yolo26n.pt` 등. 바꿔도 `dfl` 은 1.5 유지 (아래 참고) |
-| `train.batch` | 20 (yolo26s·640). Windows 학습에서 24 부터는 에러 없이 몇 배 느려집니다 |
-| `train.epochs` | 300, `patience` 120 으로 조기 종료, 마지막 30 epoch 은 mosaic 끔(`close_mosaic`) |
+| `model.base` | `weights/yolo26m.pt`(지금, 11-08 부터) / `yolo26s.pt`·`yolo26n.pt` 등. 바꿔도 `dfl` 은 1.5 유지 (아래 참고) |
+| `train.batch` | 10 (yolo26m·640 — 8GB 에서 들어가는 최대치). s 는 20 이었고, 넘치면 에러 없이 몇 배 느려집니다 |
+| `train.epochs` | 300, `patience` 120 으로 조기 종료, 마지막 30 epoch 은 mosaic 끔(`close_mosaic`). 운영 m 은 100 epoch·마지막 10 으로 학습했습니다 |
 | `train.val_ratio` / `test_ratio` | 0.15 / 0.15. 바꿔도 이미 배정된 이미지는 움직이지 않습니다 |
 | `wsl.*` | WSL 학습 버튼의 WSL 쪽 경로·워커·캐시. 학습 인자는 위 `train` 값을 그대로 씁니다 |
-| `predict.imgsz` | 자동 라벨링 해상도. 가중치와 짝이 맞아야 합니다 (s 는 640, n 은 960 이 최선이었음) |
+| `predict.imgsz` | 자동 라벨링 해상도. 가중치와 짝이 맞아야 합니다 (s 는 640, n 은 960 이 최선이었음 — m 은 640 으로만 학습·평가) |
 | `train.overrides` | Ultralytics `train()` 인자를 그대로 전달 (손실 가중치·증강 등). |
 | `predict.conf` | 이 신뢰도 미만 예측은 버립니다. 낮추면 검출은 늘고 오검출도 늘어납니다. |
 | `review.low_band` / `high_band` | 검수 우선순위 계산 구간. |

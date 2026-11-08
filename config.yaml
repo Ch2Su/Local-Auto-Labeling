@@ -62,16 +62,21 @@ classes: ["bicycle", "bus", "car", "motorcycle", "person", "scooter", "truck", "
 
 model:
   # 콜드스타트용 COCO 사전학습 가중치 (최초 1회 자동 다운로드)
-  #   yolo26n/s = 최신. DFL 대신 L1 로 박스 거리를 학습 (reg_max=1)
+  #   yolo26n/s/m = 최신. DFL 대신 L1 로 박스 거리를 학습 (reg_max=1)
   #   yolo11n/s/m = DFL 사용 (reg_max=16)
   # 어느 쪽이든 train.overrides.dfl 은 1.5 로 두어야 합니다. 아래 설명 참고.
   #
   # n -> s 로 올렸습니다 (2026-09-09). 같은 조건 60 epoch A/B 에서
   # mAP50-95 0.6495 -> 0.7288 이고 train/val 손실이 둘 다 낮았습니다.
   # 추론 비용도 s@640 4.47ms 로 n@960 4.58ms 와 같습니다. tools/probe_scale.py 참고.
+  # s -> m 으로 올렸습니다 (2026-11-08, 사용자 결정). m 으로 한 8클래스 첫 학습(640 b10, WSL)이
+  # 운영 가중치가 됐고, test 749장에서 visible-3(s) 보다 모든 클래스가 높았습니다(pickup 뺀 7클래스
+  # 0.6585 -> 0.7398). 그 학습은 epochs 100·close_mosaic 10 이었다 — 아래 train 값(300·30)과 다르다.
+  # 연산은 s 의 약 3.3배(22.8 -> 75.0 GFLOPs)이고 DetectView 도 yolo26m 을 쓴다.
+  # docs/experiments.md '8클래스 첫 학습' 참고.
   # 사전학습 가중치는 weights/ 에 모아 둔다 (2026-09-11 정리). 이름만 적어도
   # config.pretrained_path() 가 weights/ 에서 찾지만, 경로를 적는 편이 분명하다.
-  base: weights/yolo26s.pt
+  base: weights/yolo26m.pt
   # 학습 후 생성되는 가중치. 존재하면 자동 라벨링에 이 파일을 사용.
   weights: models/best.pt
   imgsz: 640
@@ -79,7 +84,7 @@ model:
 
 train:
   epochs: 300
-  # yolo26s + imgsz 640 기준 실측 VRAM (8GB 카드, AMP):
+  # (s 시절 기록, batch 20) yolo26s + imgsz 640 기준 실측 VRAM (8GB 카드, AMP):
   #   b16  4.47 GiB   220 ms/step   실제 학습 262초/epoch (300 step)
   #   b20  약 5.5 GiB (추정)         240 step
   #   b24  6.61 GiB   650 ms/step   공유 메모리 페이징 시작 (3배 느림)
@@ -88,7 +93,12 @@ train:
   # epoch 시간은 스텝 수 x 약 0.87초다. 스텝당 시간이 배치와 거의 무관해서
   # (b4 도 b40 도 1.1 s/it) 배치를 키우면 그만큼 총 시간이 줄어든다.
   # 여유가 빠듯하니(b20 기준 약 460MB) epoch 시간이 튀면 바로 되돌릴 것.
-  batch: 20
+  #
+  # yolo26m + imgsz 640 (2026-11-08 부터): b10 이 8GB 에서 들어가는 최대치다(wsl/probe_vram.py,
+  # docs/experiments.md 'VRAM'). 11-08 WSL 학습(b10)은 nvidia-smi 6.5~6.6GB, epoch 중앙값 99.6초
+  # (373 step)라 300 epoch 이면 약 8시간이다. Windows 학습으로는 m 을 재 보지 않았다 — epoch 시간이
+  # 튀면(CLAUDE.md 함정 9) 배치를 줄일 것.
+  batch: 10
   # 개선 없이 N epoch 지나면 조기 종료.
   # 75 였을 때 close_mosaic 을 만나지 못하고 끝났습니다 — best 184 + 75 = 259 에서
   # 멈췄는데 close_mosaic 은 285 에서 켜질 예정이었습니다. 아래 close_mosaic 참고.
@@ -166,6 +176,7 @@ predict:
   # n 은 960 이 정점이라 960 을 썼지만, s 는 640 이 정점이다(960 은 -0.0018,
   # 1280 은 -0.0501). 그래서 s 로 갈아타며 640 으로 되돌렸습니다 (2026-09-09).
   # n 계열 가중치로 되돌린다면 이 값도 960 으로 함께 되돌릴 것.
+  # m(2026-11-08 운영)은 640 으로 학습·평가했고 다른 해상도는 재지 않았다.
   imgsz: 640
   conf: 0.25           # 이 신뢰도 미만 예측은 버림
   iou: 0.6             # NMS IoU
@@ -192,7 +203,8 @@ wsl:
   # WSL 에서 학습하고, 끝나면 best.pt 를 models/best.pt 로 가져온다.
   #
   # 같은 설정(yolo26s / 640 / batch 20 / Ultralytics 8.4.142)에서 실측:
-  # Windows epoch 258초 -> WSL 62초 (2026-09-12, 중앙값).
+  # Windows epoch 258초 -> WSL 62초 (2026-09-12, 중앙값). yolo26m / 640 / batch 10 은
+  # WSL epoch 중앙값 99.6초다 (2026-11-08, 학습 3,725장).
   # Linux 라 cache: ram 을 쓸 수 있고(Windows 는 불가) 워커가 fork 로 뜨기 때문이다.
   #
   # 경로는 전부 WSL 안의 경로다. ~ 는 WSL 홈으로 풀린다.

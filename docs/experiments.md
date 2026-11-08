@@ -517,7 +517,8 @@ runs_wsl 밖에 둠). `weights/yolo26m.pt` 에서 새로 시작했고 설정은 
 - epoch 중앙값은 99.6초다(시작·재시작 직후 epoch 은 약 120초). 합계 2.74시간, nvidia-smi 6.5\~6.6GB.
 - **best = epoch 84 (val mAP50-95 0.6934 / mAP50 0.8410).** 가중치는 `models/best_y26m_8cls.pt`(sha256 `f09f02f4…`)다. 학습이
   끝날 때는 운영 가중치를 바꾸지 않았고, 아래 비교를 본 뒤 같은 날 사용자 결정으로 운영 `best.pt` 로 올렸다(visible-3 은
-  `best.prev.pt`·`best_visible3.pt`).
+  `best.prev.pt`·`best_visible3.pt`). config 의 `model.base` 도 yolo26m(batch 10)으로 바꿨다 — epochs·close_mosaic 은 300·30
+  그대로다(이 학습은 100·10).
 - **close_mosaic 은 세 번째도 이득이 없었고, 이번에는 떨어졌다.** 91\~100(mosaic 끔) 평균 0.6801 대 81\~90 평균 0.6901 이고,
   epoch 91 에서 바로 0.692 → 0.678 이 됐다. 다만 끄지 않은 학습과 직접 비교한 적은 여전히 없다.
 
