@@ -97,14 +97,17 @@ o365 행은 없고 `data/visible/unlabeled/o365/` 도 없다. 원본은 `E:\data
 **2026-10-02 에 저장소로 만들었다**(브랜치 `main`, `core.autocrlf=false` — 파일을 바이트 그대로 둔다). 담는 것은 코드·설정·
 문서와 `runs/` 의 텍스트 기록(results.csv·args.yaml·`test_baseline/history.jsonl`·스크립트)뿐이다. `data/`·`models/`·
 `weights/`·`export/`·`.venv`·`graft/`·그림·로그·tar 는 `.gitignore` 로 뺐다 — **데이터와 DB 는 git 이 아니라 백업으로 지킨다.**
-- **원격은 GitHub `chisu0208/Local-Auto-Labeling` — public 이다(11-02).** **push 하는 순간 누구나 본다** — 올리기 전에 담긴
+- **원격은 GitHub `Ch2Su/Local-Auto-Labeling` — public 이다(11-02).** **push 하는 순간 누구나 본다** — 올리기 전에 담긴
   내용을 볼 것. **올린 커밋은 다시 쓰지 말 것**(amend·rebase 뒤 force push 금지 — 칠판이 커밋을 해시로 가리킨다). 11-02 에
   커밋 메일을 감추느라 이력을 한 번 다시 쓴 것(사용자 결정)만 예외다. 그 옛 이력은 로컬 `refs/archive/pre-noreply/main` 에
   있다 — **이 ref 는 push 하지 말 것**(옛→새 해시 대응표 `.git/noreply-rewrite-20261102.map`, 옛 저장소
   `Local-Auto-Labeling-old` 는 private). **public 에 올라간 것은 이력을 고쳐 force push 해도 GitHub 에 옛 커밋이 해시로
   남는다**(11-02 에 새 저장소로 옮긴 이유) — 키·개인정보가 올라갔으면 지워졌다고 여기지 말고 바로 사용자에게 알릴 것.
+  11-08 에 GitHub 계정 이름이 `chisu0208` → `Ch2Su` 로 바뀌어(id 42445310 그대로) origin 주소도 바꿨다(사용자 결정). 옛 주소는
+  아직 리다이렉트되지만 옛 이름을 남이 가져가 같은 이름의 저장소를 만들면 끊긴다 — 다른 클론도 `git remote set-url` 할 것.
 - **이 저장소의 `user.email` 은 `.git/config` 의 noreply 다**(`42445310+chisu0208@users.noreply.github.com`). 새로 클론한 곳에서는
-  자동 커밋 훅이 돌기 전에 같은 설정을 할 것 — 안 하면 원래 메일이 다시 커밋에 들어간다.
+  자동 커밋 훅이 돌기 전에 같은 설정을 할 것 — 안 하면 원래 메일이 다시 커밋에 들어간다. 계정 이름이 바뀐 뒤에도 이 메일의
+  커밋은 앞 번호(id)로 `Ch2Su` 계정에 연결된다(11-08 에 7e5f275 로 확인).
 - **턴이 끝날 때마다 자동 커밋된다**(`.claude/settings.json` 의 Stop 훅 → `.claude/hooks/autocommit.sh`, 추적 파일이라 클론한
   PC 에서도 돈다). 바뀐 것을 임시 색인으로 `git add -A` 해 '자동 커밋: <파일 이름들>' 으로 남기고, 5MB 넘는 파일은 빼고
   알린다. 머지·리베이스·cherry-pick·revert 중, HEAD 가 브랜치에 없을 때, 충돌이 남았거나 담을 내용에 충돌 표시·**키 모양
