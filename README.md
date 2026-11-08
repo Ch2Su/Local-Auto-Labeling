@@ -261,7 +261,7 @@ http://127.0.0.1:7860 에서 검수합니다(`--host`·`--port` 로 바꿀 수 �
 | 버튼 | 하는 일 |
 |---|---|
 | **학습** | Windows 에서 학습. 승인 라벨로 `data/visible/dataset` 을 새로 만든다 |
-| **WSL 학습** | WSL(Linux)에서 학습. 같은 설정에서 **약 4배 빠르다** (epoch 258초 → 62초, 300 epoch 이면 약 5시간) |
+| **WSL 학습** | WSL(Linux)에서 학습. 같은 설정에서 **약 4배 빠르다** (s 기준 epoch 258초 → 62초. 지금 설정 m·100 epoch 은 WSL 에서 약 2.8시간) |
 | **이어서 학습** / **WSL 이어하기** | 중단한 학습이 있을 때만 나타난다 |
 
 어느 쪽이든 끝나면(중간에 멈춰도) 결과가 `models/best.pt` 로 올라가고, 직전 것은
@@ -741,7 +741,7 @@ CCTV = 그 밖의 seed). 뜻이 바뀌었으므로 `cctv`·`drone`·`noncctv`·`
 |---|---|
 | `model.base` | `weights/yolo26m.pt`(지금, 11-08 부터) / `yolo26s.pt`·`yolo26n.pt` 등. 바꿔도 `dfl` 은 1.5 유지 (아래 참고) |
 | `train.batch` | 10 (yolo26m·640 — 8GB 에서 들어가는 최대치). s 는 20 이었고, 넘치면 에러 없이 몇 배 느려집니다 |
-| `train.epochs` | 300, `patience` 120 으로 조기 종료, 마지막 30 epoch 은 mosaic 끔(`close_mosaic`). 운영 m 은 100 epoch·마지막 10 으로 학습했습니다 |
+| `train.epochs` | 100, 마지막 10 epoch 은 mosaic 끔(`close_mosaic`) — 운영 m 과 같은 설정(11-08, 그 전 s 는 300·30). `patience` 120 이라 조기 종료는 걸리지 않습니다 |
 | `train.val_ratio` / `test_ratio` | 0.15 / 0.15. 바꿔도 이미 배정된 이미지는 움직이지 않습니다 |
 | `wsl.*` | WSL 학습 버튼의 WSL 쪽 경로·워커·캐시. 학습 인자는 위 `train` 값을 그대로 씁니다 |
 | `predict.imgsz` | 자동 라벨링 해상도. 가중치와 짝이 맞아야 합니다 (s 는 640, n 은 960 이 최선이었음 — m 은 640 으로만 학습·평가) |

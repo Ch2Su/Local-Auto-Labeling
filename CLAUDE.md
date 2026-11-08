@@ -342,9 +342,10 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
 부터 `best_y26m_8cls.pt`** 다(8클래스 첫 학습, yolo26m 640, epoch 84, val 0.693, sha256 `f09f02f4…` — 사용자 결정). 그 전 운영
 visible-3(yolo26s 7클래스, epoch 156, val 0.654, sha256 `ca1f9f5c…`)은 `best_visible3.pt`·`best.prev.pt` 에 있다.
 `best_detectview_y26m.pt` 는 DetectView 배포 모델 원본의 사본(7클래스, sha256 `785b3542…`)이다 — 셋의 test 비교는
-docs/experiments.md '8클래스 첫 학습'. **`model.base` 도 같은 날 `weights/yolo26m.pt`(`train.batch` 10)로 바꿨다** — 운영 m 은
-epochs 100·close_mosaic 10 으로 학습했고 config 는 300·30 그대로다. **`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라 중단할
-때마다 그 시점 best 로 밀려난다** — 운영할 가중치는 늘 `best_<이름>.pt` 로 따로 둔다.
+docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운영 m 과 같게 바꿨다**(`model.base` `weights/yolo26m.pt`·
+`train.batch` 10·epochs 100·close_mosaic 10 — 경로를 빼면 Ultralytics 전체 설정이 그 학습과 같다).
+**`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라 중단할 때마다 그 시점 best 로 밀려난다** — 운영할 가중치는 늘
+`best_<이름>.pt` 로 따로 둔다.
 
 **다른 디스크 백업: `C:\local_auto_labeling_backup\20261031\`**(C: = 디스크 1, E: 와 다른 물리 디스크). `.venv`·`graft`·
 `data/visible/dataset`·`__pycache__`·`*.tar`·살아 있는 DB 파일을 뺀 전부(8,127개 5.11GB, md5 전수 대조)와 sqlite `backup()` 으로
@@ -562,15 +563,16 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 
 ## 다음에 할 일
 
-지난 학습의 결론은 docs/experiments.md 에 있다 — yolo26n → **yolo26s**(같은 조건 60 epoch 0.6495 → 0.7288), s 는
-**`predict.imgsz` 640 이 정점**(960·1280 은 낮다), close_mosaic 마지막 30 epoch 은 두 번 연속 이득이 없었다.
+지난 학습의 결론은 docs/experiments.md 에 있다 — yolo26n → **yolo26s**(같은 조건 60 epoch 0.6495 → 0.7288) → 11-08
+**yolo26m**(8클래스 첫 학습), s 는 **`predict.imgsz` 640 이 정점**(960·1280 은 낮다), close_mosaic 은 세 번 연속 이득이 없었다
+(s 마지막 30 두 번, m 마지막 10 은 −0.010).
 
 3. **미검토 제안.** 640 입력에서 박스의 23.3% 가 32px 미만이다. 학습 자체를 960 으로 올리는 것은 s 로는 해 보지 않았다 —
    해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). SAHI 식 타일 추론은 `tools/test_tiles.py` 로 재 봤다(11-03, visible-3·CCTV test) — mAP50-95 는 +0.035\~0.038 이지만 같은 conf 에서 FP 가 늘고(대부분 라벨 누락이 아니라 진짜 오검출), FP 를 맞추면 이득이 16px 미만 객체(+4.5pt)로 좁혀져 `AutoLabeler` 에는 아직 넣지 않았다 — 타일↔통째 사이에만 NMS IoU 0.3 을 걸면 F1 이 통째와 같고(0.890) 재현율 +1.8pt·mAP +0.035(CCTV)라 넣을 만하지만, 사용자가 FP 표본 48개를 직접 확인한 뒤 정한다(표·한계는 docs/experiments.md '타일 추론' — 그 CCTV 는 11-04 전 규칙으로 가른 것이라, 다시 잴 때는 손 분류 도메인으로 바뀐다).
 4. **8클래스 학습 — 11-08 에 한 번 했고(yolo26m, `models/best_y26m_8cls.pt`) 같은 날 운영 가중치로 올렸다(사용자 결정).** 그 전
    운영 visible-3 은 pickup 을 모르고 car 에 옛 van 이 섞였다. test 749장에서 새 m 은 visible-3 보다 모든 클래스가 높고(pickup 뺀
    7: 0.6585 → 0.7398), 같은 설정의 DetectView y26m 과는 pickup 과 상관없는 클래스에서 거의 같다(+0.013). 표는
-   docs/experiments.md '8클래스 첫 학습'. 예측 비교(P)·자동 라벨링도 이제 pickup 을 보고, 웹 UI 학습도 m(batch 10)으로 돈다. 그날 멈춘 s 학습
+   docs/experiments.md '8클래스 첫 학습'. 예측 비교(P)·자동 라벨링도 이제 pickup 을 보고, 웹 UI 학습도 같은 설정(m·batch 10·100 epoch·close_mosaic 10)으로 돈다. 그날 멈춘 s 학습
    `~/new_env/yolo/runs_wsl/visible` 은 사용자 요청으로 지웠다('WSL 이어하기' 후보 없음). 남은 것:
    - 8클래스 모델로 `tools/label_qa.py` 를 돌려 176px 아래의 truck·pickup·car 판정을 거른다(눈으로는 176px 위만 봤다 — 그 아래는
      사람도 1톤급과 2.5톤급을 못 가른다).

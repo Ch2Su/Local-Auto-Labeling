@@ -71,7 +71,7 @@ model:
   # 추론 비용도 s@640 4.47ms 로 n@960 4.58ms 와 같습니다. tools/probe_scale.py 참고.
   # s -> m 으로 올렸습니다 (2026-11-08, 사용자 결정). m 으로 한 8클래스 첫 학습(640 b10, WSL)이
   # 운영 가중치가 됐고, test 749장에서 visible-3(s) 보다 모든 클래스가 높았습니다(pickup 뺀 7클래스
-  # 0.6585 -> 0.7398). 그 학습은 epochs 100·close_mosaic 10 이었다 — 아래 train 값(300·30)과 다르다.
+  # 0.6585 -> 0.7398). 아래 train 의 epochs·close_mosaic 도 그 학습과 같은 100·10 이다.
   # 연산은 s 의 약 3.3배(22.8 -> 75.0 GFLOPs)이고 DetectView 도 yolo26m 을 쓴다.
   # docs/experiments.md '8클래스 첫 학습' 참고.
   # 사전학습 가중치는 weights/ 에 모아 둔다 (2026-09-11 정리). 이름만 적어도
@@ -83,7 +83,10 @@ model:
   device: 0            # 0 = 첫 번째 GPU, "cpu" = CPU
 
 train:
-  epochs: 300
+  # 운영 m(8클래스 첫 학습 — DetectView y26m 과 같은 설정)과 같게 100 으로 맞췄다 (2026-11-08, 사용자
+  # 결정 — 그 전 s 는 300). 그 학습의 best 는 epoch 84 였다. cos_lr 이 총 epoch 에 묶여 있으니 epoch 수가
+  # 다른 학습끼리 같은 epoch 의 mAP 를 견주지 말 것.
+  epochs: 100
   # (s 시절 기록, batch 20) yolo26s + imgsz 640 기준 실측 VRAM (8GB 카드, AMP):
   #   b16  4.47 GiB   220 ms/step   실제 학습 262초/epoch (300 step)
   #   b20  약 5.5 GiB (추정)         240 step
@@ -96,12 +99,13 @@ train:
   #
   # yolo26m + imgsz 640 (2026-11-08 부터): b10 이 8GB 에서 들어가는 최대치다(wsl/probe_vram.py,
   # docs/experiments.md 'VRAM'). 11-08 WSL 학습(b10)은 nvidia-smi 6.5~6.6GB, epoch 중앙값 99.6초
-  # (373 step)라 300 epoch 이면 약 8시간이다. Windows 학습으로는 m 을 재 보지 않았다 — epoch 시간이
+  # (373 step)라 100 epoch 이면 약 2.8시간이다(그 학습은 2.74시간). Windows 학습으로는 m 을 재 보지 않았다 — epoch 시간이
   # 튀면(CLAUDE.md 함정 9) 배치를 줄일 것.
   batch: 10
   # 개선 없이 N epoch 지나면 조기 종료.
   # 75 였을 때 close_mosaic 을 만나지 못하고 끝났습니다 — best 184 + 75 = 259 에서
   # 멈췄는데 close_mosaic 은 285 에서 켜질 예정이었습니다. 아래 close_mosaic 참고.
+  # epochs 100 에서는 120 이 걸리지 않아 끝까지 간다 — 운영 m 학습도 그랬다 (2026-11-08).
   patience: 120
   # 학습/검증 분할 비율. 배정은 **DB(images.split)에 고정**되고, 새로 승인된 이미지만
   # 클래스 비중이 모자란 쪽으로 들어간다(계층화, src/autolabel/split.py).
@@ -145,14 +149,16 @@ train:
     # 0.0 으로 두면 두 경우 모두 박스 위치 학습이 통째로 꺼집니다. 반드시 0 이 아닌 값으로.
     dfl: 1.5
 
-    # 마지막 N epoch 는 mosaic 증강을 끈다. epochs - N 에서 발동하므로 300-30 = 270.
+    # 마지막 N epoch 는 mosaic 증강을 끈다. epochs - N 에서 발동하므로 100-10 = 90.
+    # 운영 m 과 같게 10 으로 맞췄다 (2026-11-08 — 그 전 s 는 300-30). 이득은 아직 못 봤다: s 에서 두 번,
+    # 운영 m 학습에서도 91~100 평균이 81~90 보다 0.010 낮았다(끄지 않은 학습과 직접 비교한 적은 없다).
     #
-    # patience 와 짝을 맞춰야 한다. 조기 종료는 `현재 epoch - best epoch >= patience`
+    # (s 시절 기록) patience 와 짝을 맞춰야 한다. 조기 종료는 `현재 epoch - best epoch >= patience`
     # 일 때 걸리므로, 270 에 닿으려면 **best 가 epoch 150 이후에 나와야** 한다
     # (150 + 120 = 270). 지난 학습은 15/75 조합이라 항상 못 만나는 구조였다.
     # s 프로브가 60 epoch 에서도 계속 오르던 중이었으니 150 이후일 가능성이 높지만,
     # 그보다 이르면 이번에도 mosaic 을 끄는 구간 없이 끝난다.
-    close_mosaic: 30
+    close_mosaic: 10
 
     # 증강
     hsv_h: 0.015
