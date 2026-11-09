@@ -31,6 +31,8 @@ from .export import default_export_dir, export_yolo
 from .ingest import discover_classes, ingest
 from .jobs import JobManager
 from .predictor import AutoLabeler, LiveDetector
+from .masks import MAX_MASKS
+from .masks import clean as clean_masks
 from .provenance import SPLITS, load_cameras
 from .scoring import image_uncertainty
 from . import wsl_train
@@ -64,8 +66,20 @@ class BoxIn(BaseModel):
     origin: str = "human"
 
 
+class MaskIn(BaseModel):
+    # 가릴 영역 하나 — 정규화 xyxy (2026-11-09, masks.py). NaN·Infinity 는 박스처럼 422.
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
 class BoxesIn(BaseModel):
     boxes: list[BoxIn]
+    # None(옛 화면·영역을 손대지 않은 저장)이면 영역은 그대로 둔다. [] 면 모두 지운다.
+    masks: list[MaskIn] | None = None
 
 
 class StatusIn(BaseModel):
@@ -342,9 +356,36 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             empty=float(cfg.get("review.empty_score", 0.60)),
         )
 
-    def save_boxes(image_id: int, boxes: list[Box], *, source: str, batch: str | None = None):
-        """박스를 저장하고 검수 우선순위를 다시 매긴다. (바뀌기 전 개수, 뒤 개수)"""
-        return store.set_boxes(image_id, boxes, uncertainty=score_of(boxes), source=source, batch=batch)
+    def save_boxes(image_id: int, boxes: list[Box], *, source: str, batch: str | None = None,
+                   masks: list | None = None):
+        """박스(와 masks 를 주면 가릴 영역)를 저장하고 검수 우선순위를 다시 매긴다. (바뀌기 전 개수, 뒤 개수)"""
+        return store.set_boxes(image_id, boxes, uncertainty=score_of(boxes), source=source, batch=batch,
+                               masks=masks)
+
+    def mask_block(row) -> str | None:
+        """이 이미지에 가릴 영역을 둘 수 없는 이유, 둘 수 있으면 None (2026-11-09, masks.py).
+
+        test 는 평가용이라 실제 화면 그대로여야 한다 — 분할이 test 이거나, 아직 미배정이어도 cameras.yaml 에서 test 로
+        고정한 카메라면 막는다. 학습 세트도 test 분할은 칠하지 않으니 여기를 빠져나간 영역이 평가를 바꾸지는 않는다.
+        """
+        if row["split"] == "test":
+            return "test 이미지에는 가릴 영역을 둘 수 없습니다 — 평가는 실제 화면 그대로여야 합니다."
+        cam = _cameras()[0].get(row["camera"]) if row["camera"] else None
+        if cam is not None and cam.split == "test":
+            return (f"test 로 고정한 카메라({row['camera']})의 이미지에는 가릴 영역을 둘 수 없습니다"
+                    " — 평가는 실제 화면 그대로여야 합니다.")
+        return None
+
+    def clean_mask_input(row, masks_in: list[MaskIn] | None) -> list | None:
+        """요청의 영역을 정리한다. 너무 많으면 400, test 이미지에 영역을 남기려 하면 409(지우기만은 받는다)."""
+        if masks_in is None:
+            return None
+        if len(masks_in) > MAX_MASKS:
+            raise HTTPException(400, f"가릴 영역은 한 장에 {MAX_MASKS}개까지입니다.")
+        masks = clean_masks([(m.x1, m.y1, m.x2, m.y2) for m in masks_in])
+        if masks and (why := mask_block(row)):
+            raise HTTPException(409, why + " 이 이미지의 가릴 영역을 모두 지워야 저장됩니다.")
+        return masks
 
     # ------------------------------------------------------------- 상태 / 목록
 
@@ -601,6 +642,9 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             "camera_place": _camera_place(row["camera"]),
             "domain": row["domain"],
             "tags": store.image_tag_ids(image_id),
+            # 가릴 영역(정규화 xyxy)과, 둘 수 없으면 그 이유(test 이미지) — masks.py
+            "masks": [list(m) for m in store.get_masks(image_id)],
+            "mask_block": mask_block(row),
         }
 
     @app.get("/api/images/{image_id}/file")
@@ -661,7 +705,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
 
     @app.put("/api/images/{image_id}/boxes")
     def put_boxes(image_id: int, payload: BoxesIn) -> dict:
-        if store.get_image(image_id) is None:
+        row = store.get_image(image_id)
+        if row is None:
             raise HTTPException(404, "이미지를 찾을 수 없습니다.")
         n_classes = len(store.get_classes())
         boxes: list[Box] = []
@@ -671,7 +716,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             box = Box(b.cls, b.cx, b.cy, b.w, b.h, b.conf, b.origin).clamped()
             if box.is_valid():
                 boxes.append(box)
-        n_before, n_after = save_boxes(image_id, boxes, source="ui")
+        masks = clean_mask_input(row, payload.masks)
+        n_before, n_after = save_boxes(image_id, boxes, source="ui", masks=masks)
         return {"ok": True, "n_boxes": n_after, "n_before": n_before,
                 "n_history": store.history_count(image_id)}
 
@@ -698,10 +744,15 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         boxes = [Box(**b) for b in entry[which]]
         if any(b.cls >= n_classes for b in boxes):
             raise HTTPException(400, "지금 없는 클래스 번호가 들어 있어 되돌릴 수 없습니다.")
-        n_before, n_after = save_boxes(image_id, boxes, source="restore")
+        # 그 저장에서 가릴 영역도 바뀌었으면 영역도 그때로 (아니면 None — 지금 영역을 그대로 둔다)
+        masks = entry[f"masks_{which}"]
+        if masks and (why := mask_block(store.get_image(image_id))):
+            raise HTTPException(409, why)
+        n_before, n_after = save_boxes(image_id, boxes, source="restore", masks=masks)
         return {"ok": True, "n_boxes": n_after, "n_before": n_before,
                 "n_history": store.history_count(image_id),
-                "boxes": [b.to_dict() for b in store.get_boxes(image_id)]}
+                "boxes": [b.to_dict() for b in store.get_boxes(image_id)],
+                "masks": [list(m) for m in store.get_masks(image_id)]}
 
     # ------------------------------------------------------- 같은 자리 일괄 수정
 

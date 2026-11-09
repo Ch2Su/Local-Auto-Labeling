@@ -525,6 +525,7 @@ def recrop(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | Non
         raise SystemExit(f"{cfg.cameras} 에 crop 을 적은 VIRAT 카메라가 없습니다")
     vdir = args.root / "videos_original"
     rows, human = virat_rows(store)
+    masked = set(store.masks_by_image())      # 가릴 영역(masks.py)은 옮기지 않는다 — 그런 이미지는 건너뛴다
     targets, skipped = [], collections.Counter()
     for r in rows:
         pn = parse_name(r["name"])
@@ -535,7 +536,9 @@ def recrop(args, cfg: Config, store: Store, lab: Labeler, scenes: set[str] | Non
         if not crop or now == crop or (scenes and scene_of(clip) not in scenes):
             continue
         move = args.keep_boxes or (r["id"] in human and args.keep_edits)   # 다시 라벨링하지 않고 지금 박스를 옮긴다
-        if r["status"] != "pending":
+        if r["id"] in masked:
+            skipped["가릴 영역이 있음(검수 화면에서 지운 뒤 다시 자를 것)"] += 1
+        elif r["status"] != "pending":
             skipped[f"상태가 {r['status']}"] += 1
         elif r["id"] in human and not move:
             skipped["사람이 고친 이력이 있음(--keep-edits 면 박스째 자른다)"] += 1

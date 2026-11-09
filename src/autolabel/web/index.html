@@ -177,11 +177,12 @@
       <button id="btn-restore" class="btn hidden" title="휴지통에서 꺼내 검수 대기로 되돌립니다">복원</button>
       <button id="btn-purge"   class="btn btn-danger hidden" title="휴지통을 비웁니다. 원본 파일까지 영구 삭제됩니다.">휴지통 비우기</button>
       <button id="btn-sam" class="btn" title="SAM 클릭 모드 (C). 객체를 한 번 찍으면 박스가 생기고, 끌면 그 범위를 다듬습니다. 이 모드에서는 모든 좌클릭이 SAM 으로 갑니다 — 박스를 고르거나 옮기려면 B 모드나 오른쪽 목록을 쓰세요.">SAM 클릭 <kbd>C</kbd></button>
+      <button id="btn-mask" class="btn" title="가릴 영역 (M). 사람을 한 명씩 가를 수 없는 무리 같은 곳에 사각형을 그리면, 학습 세트를 만들 때만 그 자리를 회색으로 칠합니다(원본 그림은 그대로). 반 넘게 가려진 박스는 학습 라벨에서 빠집니다. 물체 박스 안은 칠하지 마세요 — 그 물체에 회색 조각이 붙어 배웁니다. 이 모드에서는 영역만 고르고 옮깁니다(우클릭·Del = 지우기). test 이미지에는 둘 수 없습니다.">가릴 영역 <kbd>M</kbd></button>
       <button id="btn-pred" class="btn" title="예측 비교 (P). 운영 모델을 이 이미지에 돌려, 라벨과 다르게 본 곳을 점선으로 겹쳐 보여 줍니다. 오른쪽 목록에서 받아들이거나 무시합니다. A = 맨 위 항목 받기">예측 비교 <kbd>P</kbd></button>
       <span class="spacer"></span>
       <span id="mode-badge" class="mode-badge box">새 박스</span>
       <span class="hints">
-        <kbd>B</kbd>=새 박스 · <kbd>C</kbd>=SAM 클릭 · <kbd>R</kbd>=선택 박스 SAM 으로 다듬기 ·
+        <kbd>B</kbd>=새 박스 · <kbd>C</kbd>=SAM 클릭 · <kbd>R</kbd>=선택 박스 SAM 으로 다듬기 · <kbd>M</kbd>=가릴 영역 ·
         <kbd>D</kbd>=화면 끌기 · <kbd>Ctrl</kbd>=누른 동안 화면 끌기 ·
         <kbd>Del</kbd>=삭제 · <kbd>1</kbd>–<kbd>9</kbd>=클래스 · <kbd>Ctrl+Z</kbd>=되돌리기 · 휠=확대
       </span>

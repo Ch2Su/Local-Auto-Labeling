@@ -488,6 +488,17 @@ body.list-resizing, body.list-resizing * { cursor: col-resize !important; user-s
 .conf.high { color: var(--ok); }
 .conf.human { color: var(--accent); }
 .box-list .dup { font-size: 11px; color: var(--warn); white-space: nowrap; }
+/* 가릴 영역 (2026-11-09): 박스가 가려진 몫과, 박스 아래의 영역 줄 */
+.box-list .mcov { font-size: 11px; white-space: nowrap; }
+.box-list .mcov.part { color: var(--warn); }
+.box-list .mcov.out  { color: var(--fg-dim); }
+.box-list li.mask-row .nm { color: var(--fg-dim); }
+.box-list li.mask-row .msize { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.box-list li.mask-row.warn { color: var(--warn); font-size: 11px; cursor: default; white-space: normal; }
+.swatch.hatch {
+  background: repeating-linear-gradient(135deg, #727272 0 3px, #d6d6d6 3px 4.5px);
+  border: 1px solid #9a9a9a;
+}
 .box-list .del { color: var(--fg-dim); padding: 0 2px; }
 .box-list .del:hover { color: var(--err); }
 
@@ -618,6 +629,7 @@ body.list-resizing, body.list-resizing * { cursor: col-resize !important; user-s
 .mode-badge.box { background: rgba(76,141,255,.18); color: var(--accent); border-color: #35507e; }
 .mode-badge.pan { background: rgba(62,207,142,.18); color: var(--ok);     border-color: #2c6350; }
 .mode-badge.sam { background: rgba(190,130,255,.18); color: #c79cff;      border-color: #5a3e82; }
+.mode-badge.mask { background: rgba(160,160,160,.18); color: #d8d8d8;     border-color: #6b6b6b; }
 /* Ctrl 로 임시 반전 중이면 점선으로 구분 */
 .mode-badge.temp { border-style: dashed; }
 

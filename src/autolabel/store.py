@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
+from .masks import clean as clean_masks
+from .masks import mask_key
 from .yolo_io import Box
 
 STATUSES = ("unlabeled", "pending", "approved", "skipped", "trashed")
@@ -111,6 +113,19 @@ CREATE TABLE IF NOT EXISTS image_tags (
     PRIMARY KEY (image_id, tag_id)
 );
 CREATE INDEX IF NOT EXISTS idx_image_tags_tag ON image_tags(tag_id, image_id);
+
+-- 가릴 영역 (2026-11-09, masks.py). 학습 세트를 만들 때만 회색(114)으로 칠할 사각형 — 원본 그림은 그대로 둔다.
+-- 좌표는 박스와 같은 화면(EXIF 회전 적용) 기준 정규화 xyxy. 박스처럼 저장 때마다 통째로 바꾸고, 바뀌면
+-- box_history 의 masks_before·masks_after 에 전후를 남긴다(박스만 바뀐 이력은 NULL).
+CREATE TABLE IF NOT EXISTS masks (
+    id       INTEGER PRIMARY KEY,
+    image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+    x1       REAL    NOT NULL,
+    y1       REAL    NOT NULL,
+    x2       REAL    NOT NULL,
+    y2       REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_masks_image ON masks(image_id);
 """
 
 # 이력에 남기는 박스 한 개의 모양. 순서를 바꾸면 옛 이력을 못 읽는다.
@@ -132,6 +147,15 @@ def _boxes_json(rows) -> str:
 
 def _boxes_from_json(text: str) -> list[Box]:
     return [Box(*vals) for vals in json.loads(text)]
+
+
+def _masks_json(rects) -> str:
+    """가릴 영역 목록의 이력 모양: [[x1, y1, x2, y2], ...]."""
+    return json.dumps([[float(v) for v in r] for r in rects])
+
+
+def _masks_from_json(text: str | None) -> list[list[float]] | None:
+    return None if text is None else [list(map(float, r)) for r in json.loads(text)]
 
 
 def _iou_xywh(a, b) -> float:
@@ -268,6 +292,11 @@ class Store:
             for col in ("split", "grp", "dhash", "camera", "captured_at", "domain"):
                 if col not in cols:
                     con.execute(f"ALTER TABLE images ADD COLUMN {col} TEXT")
+            # 가릴 영역의 전후 (2026-11-09). NULL = 그 저장에서 영역은 그대로였다.
+            hcols = {r["name"] for r in con.execute("PRAGMA table_info(box_history)")}
+            for col in ("masks_before", "masks_after"):
+                if col not in hcols:
+                    con.execute(f"ALTER TABLE box_history ADD COLUMN {col} TEXT")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -649,6 +678,40 @@ class Store:
             ).fetchall()
         return [Box(**dict(r)) for r in rows]
 
+    # ------------------------------------------------------------ 가릴 영역
+
+    def get_masks(self, image_id: int) -> list[tuple[float, float, float, float]]:
+        """이 이미지의 가릴 영역(정규화 xyxy) — 넣은 순서대로 (masks.py)."""
+        with self.connect() as con:
+            return [tuple(r) for r in con.execute(
+                "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
+
+    def masks_by_image(self) -> dict[int, list[tuple[float, float, float, float]]]:
+        """영역이 있는 이미지만 {id: [영역, ...]} — 학습 세트·내보내기가 한 번에 읽는다."""
+        out: dict[int, list] = {}
+        with self.connect() as con:
+            for r in con.execute("SELECT image_id, x1, y1, x2, y2 FROM masks ORDER BY image_id, id"):
+                out.setdefault(int(r["image_id"]), []).append((r["x1"], r["y1"], r["x2"], r["y2"]))
+        return out
+
+    def set_masks(self, image_id: int, masks: list, *, expect: tuple[str, str] | None = None,
+                  source: str = "mask") -> bool:
+        """가릴 영역만 바꾼다 — 박스·상태·파일은 그대로 (tools/mask_images.py). 영역 전후는 변경 이력에 남는다.
+
+        expect(status, updated_at)를 주면 지금 값이 다를 때 아무것도 쓰지 않고 False(도는 사이 검수 화면에서 바뀐 장).
+        학습 라벨이 달라지는 손이라 updated_at 은 새로 찍는다(검수 화면의 저장과 같다).
+        """
+        rects = clean_masks(masks)
+        with _write_lock, self.connect() as con:
+            row = con.execute("SELECT status, updated_at FROM images WHERE id=?", (image_id,)).fetchone()
+            if row is None or (expect is not None and (row["status"], row["updated_at"]) != tuple(expect)):
+                return False
+            boxes = [Box(**dict(r)) for r in con.execute(
+                "SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id", (image_id,))]
+            self._replace_boxes(con, image_id, boxes, source=source, batch=None, masks=rects)
+            con.execute("UPDATE images SET updated_at=? WHERE id=?", (_now(), image_id))
+        return True
+
     def set_boxes(
         self,
         image_id: int,
@@ -658,15 +721,18 @@ class Store:
         model_version: str | None = None,
         source: str = "ui",
         batch: str | None = None,
+        masks: list | None = None,
     ) -> tuple[int, int]:
         """해당 이미지의 박스를 통째로 교체하고 (바뀌기 전 개수, 바뀐 뒤 개수) 를 돌려준다.
 
         내용이 달라졌으면 `box_history` 에 전후를 남긴다. **바뀌기 전이 비어 있으면 남기지
         않는다** — 되돌릴 것이 없고, 자동 라벨링이 미라벨 수천 장에 쓰는 몫이 쌓일 뿐이다.
+        masks 를 주면 가릴 영역도 같은 트랜잭션에서 그것으로 바꾼다(None 이면 그대로 둔다 — masks.py).
         """
         new = [b for b in boxes if b.is_valid()]
         with _write_lock, self.connect() as con:
-            n_old = self._replace_boxes(con, image_id, new, source=source, batch=batch)
+            n_old = self._replace_boxes(con, image_id, new, source=source, batch=batch,
+                                        masks=None if masks is None else clean_masks(masks))
             fields = ["updated_at=?"]
             args: list = [_now()]
             if uncertainty is not None:
@@ -722,6 +788,7 @@ class Store:
         model_version: str,
         keep_status: bool = False,
         source: str = "predict",
+        masks: list | None = None,
     ) -> bool:
         """같은 이미지 행이 다른 파일(새 경로·크기)을 가리키게 하고 박스를 그 파일 기준으로 바꾼다 — 검수 대기로 둔다
         (2026-11-07, VIRAT 장면을 잘라 다시 쓸 때 `tools/import_virat.py --recrop`. id·태그·도메인·카메라는 그대로).
@@ -732,13 +799,18 @@ class Store:
         keep_status 면 상태(승인·휴지통 등)를 그대로 둔다 — 잘라 내기만 해서 남는 박스가 사람이 본 그대로일 때
         (2026-11-09 `tools/crop_images.py`, source='crop' — 그 전 이력은 좌표가 달라 서버가 되돌리기를 막는다.
         `tools/mask_images.py` 는 source='mask' — 크기가 같아 그 전 이력도 좌표는 맞는다).
+        **가릴 영역이 있는 이미지는 masks(새 그림 기준으로 옮긴 영역)를 함께 줘야 한다** — 안 주면 ValueError(아무것도
+        쓰지 않는다). 옛 그림 좌표의 영역이 새 그림의 엉뚱한 자리를 칠하지 않게 (2026-11-09).
         """
         new = [b for b in boxes if b.is_valid()]
         with _write_lock, self.connect() as con:
             row = con.execute("SELECT status, updated_at FROM images WHERE id=?", (image_id,)).fetchone()
             if row is None or (row["status"], row["updated_at"]) != tuple(expect):
                 return False
-            self._replace_boxes(con, image_id, new, source=source, batch=None)
+            if masks is None and con.execute("SELECT 1 FROM masks WHERE image_id=? LIMIT 1", (image_id,)).fetchone():
+                raise ValueError(f"{image_id}: 가릴 영역이 있는 이미지다 — 새 그림 기준으로 옮긴 영역(masks)을 함께 줘야 한다")
+            self._replace_boxes(con, image_id, new, source=source, batch=None,
+                                masks=None if masks is None else clean_masks(masks))
             con.execute(
                 "UPDATE images SET path=?, name=?, width=?, height=?, dhash=NULL,"
                 + ("" if keep_status else " status='pending',")
@@ -750,21 +822,32 @@ class Store:
 
     @staticmethod
     def _replace_boxes(con: sqlite3.Connection, image_id: int, new: list[Box], *,
-                       source: str, batch: str | None) -> int:
+                       source: str, batch: str | None, masks: list | None = None) -> int:
         """열린 트랜잭션 안에서 박스를 통째로 바꾸고 이력을 남긴다. 바뀌기 전 개수를 돌려준다.
 
         잠금(_write_lock)은 부르는 쪽이 쥐고 있어야 한다 — 이 안에서 다시 잡으면 멈춘다.
+        masks(정리된 정규화 xyxy 목록)를 주면 가릴 영역도 바꾼다. 영역이 바뀌었으면 박스가 그대로여도 이력을 남긴다
+        (masks_before·masks_after — 학습 라벨이 달라지는 사람의 손이다). 바뀌기 전이 비어 있어도 남긴다.
         """
         old = con.execute(
             "SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id",
             (image_id,),
         ).fetchall()
-        if old and [_box_key(r) for r in old] != [_box_key(b) for b in new]:
+        boxes_changed = bool(old) and [_box_key(r) for r in old] != [_box_key(b) for b in new]
+        old_m = None                          # 영역이 바뀔 때만 (바뀌기 전 영역 목록)
+        if masks is not None:
+            cur = [tuple(r) for r in con.execute(
+                "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
+            if mask_key(cur) != mask_key(masks):
+                old_m = cur
+        if boxes_changed or old_m is not None:
             con.execute(
                 "INSERT INTO box_history(image_id, at, source, batch, before, after,"
-                " n_before, n_after) VALUES (?,?,?,?,?,?,?,?)",
+                " n_before, n_after, masks_before, masks_after) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (image_id, _now(), source, batch, _boxes_json(old), _boxes_json(new),
-                 len(old), len(new)),
+                 len(old), len(new),
+                 None if old_m is None else _masks_json(old_m),
+                 None if old_m is None else _masks_json(masks)),
             )
         con.execute("DELETE FROM boxes WHERE image_id=?", (image_id,))
         con.executemany(
@@ -772,6 +855,10 @@ class Store:
             " VALUES (?,?,?,?,?,?,?,?)",
             [(image_id, b.cls, b.cx, b.cy, b.w, b.h, b.conf, b.origin) for b in new],
         )
+        if old_m is not None:
+            con.execute("DELETE FROM masks WHERE image_id=?", (image_id,))
+            con.executemany("INSERT INTO masks(image_id, x1, y1, x2, y2) VALUES (?,?,?,?,?)",
+                            [(image_id, *map(float, r)) for r in masks])
         return len(old)
 
     # ------------------------------------------------------- 같은 자리 일괄 수정
@@ -899,6 +986,10 @@ class Store:
     @staticmethod
     def _hist_row(r: sqlite3.Row, with_boxes: bool = True) -> dict:
         out = {k: r[k] for k in ("id", "image_id", "at", "source", "batch", "n_before", "n_after")}
+        keys = r.keys()
+        # 가릴 영역의 전후 — 그 저장에서 영역이 바뀌었을 때만 목록, 아니면 None (2026-11-09)
+        out["masks_before"] = _masks_from_json(r["masks_before"]) if "masks_before" in keys else None
+        out["masks_after"] = _masks_from_json(r["masks_after"]) if "masks_after" in keys else None
         if with_boxes:
             out["before"] = [b.to_dict() for b in _boxes_from_json(r["before"])]
             out["after"] = [b.to_dict() for b in _boxes_from_json(r["after"])]

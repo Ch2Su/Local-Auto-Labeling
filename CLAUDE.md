@@ -172,12 +172,12 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/label_qa_claude.py` | missing 후보를 Claude API 로 거르는 파일럿 — API 키 필요, 아직 한 번도 호출 안 함 |
 | `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
 | `tools/import_o365.py` | Objects365 사진을 검수 대기로 넣는다(위 'Objects365') |
-| `tools/import_virat.py` | VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — 운영 모델 예측 + 모델이 그 자리에서 못 찾은 VIRAT 박스, 장면 = 카메라 `virat-XXYY`(docs/provenance.md 'VIRAT 가져오기'). 기본은 보기만·`--apply`, `--per-scene` 을 올려 다시 돌리면 모자란 만큼만 기존 프레임과 떨어진 곳에서 더 넣는다. 이미 넣은 검수 대기를 지금 모델로 다시 라벨링하는 것은 `--relabel`(사람이 고친 이미지는 건너뛴다, VIRAT 박스 없이는 `--model-only` — 0503 은 그렇게 했다). `cameras.yaml` 의 VIRAT 카메라에 `crop:` 이 있으면 그 영역만 쓴다(0503·0500·0101) — 이미 넣은 이미지는 `--recrop`(같은 행의 파일·크기를 바꾼다, `store.replace_file` — **돌린 뒤 검수 화면을 새로 고칠 것**: 열려 있던 옛 화면이 옛 기준 박스를 잘린 이미지에 저장할 수 있다). 이미 자른 장면을 더 좁힐 때는 `--keep-boxes`(다시 라벨링하지 않고 박스만 옮긴다 — 폭이 바뀌면 모델 예측이 달라진다). **`labeler.py label --all` 금지**(VIRAT 박스까지 예측으로 덮는다) |
+| `tools/import_virat.py` | VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — 운영 모델 예측 + 모델이 그 자리에서 못 찾은 VIRAT 박스, 장면 = 카메라 `virat-XXYY`(docs/provenance.md 'VIRAT 가져오기'). 기본은 보기만·`--apply`, `--per-scene` 을 올려 다시 돌리면 모자란 만큼만 기존 프레임과 떨어진 곳에서 더 넣는다. 이미 넣은 검수 대기를 지금 모델로 다시 라벨링하는 것은 `--relabel`(사람이 고친 이미지는 건너뛴다, VIRAT 박스 없이는 `--model-only` — 0503 은 그렇게 했다). `cameras.yaml` 의 VIRAT 카메라에 `crop:` 이 있으면 그 영역만 쓴다(0503·0500·0101) — 이미 넣은 이미지는 `--recrop`(같은 행의 파일·크기를 바꾼다, `store.replace_file` — **돌린 뒤 검수 화면을 새로 고칠 것**: 열려 있던 옛 화면이 옛 기준 박스를 잘린 이미지에 저장할 수 있다). 이미 자른 장면을 더 좁힐 때는 `--keep-boxes`(다시 라벨링하지 않고 박스만 옮긴다 — 폭이 바뀌면 모델 예측이 달라진다). 가릴 영역이 있는 이미지는 `--recrop` 이 건너뛴다. **`labeler.py label --all` 금지**(VIRAT 박스까지 예측으로 덮는다) |
 | `tools/import_roadplus.py` | ROAD PLUS(고속도로 교통정보) CCTV 를 OBS 로 녹화한 파일에서 **전체 화면으로 재생된 구간만** 골라(사이트 화면·빈 화면은 뺀다) 영상 영역을 잘라 높이 720 으로, `--every` 초마다 `unlabeled/<카메라>/` 에 extract_frames 와 같은 이름으로 쓴다(2026-11-09). 시각은 파일 수정 시각 − 길이. 다시 튼 구간은 건너뛴다. 카메라는 `cameras.yaml` 에 먼저(kind screen). 그다음 scan → label → OWLv2 미리 라벨. 원본을 지우기 전엔 `--save-clips data\visible\videos`(구간마다 720p 영상 — ffmpeg 필요, 이미 뽑은 녹화면 `--no-frames`) |
 | `tools/ovd_propose.py` | OWLv2(이름만 주면 찾는 검출기)로 출동 차량·라바콘 후보를 JSONL 로(2026-11-09). **다른 가상 환경**(`E:\OpenVocab\.venv` — transformers)으로 돌고 DB 를 열지 않는다. 입력은 아래 `list` 가 쓴 TSV |
 | `tools/import_proposals.py` | 그 후보로 responder·cone 박스를 만들어 검수 대기로(11-09). `list`(이미지 목록) → `apply`(기본은 보기만, `--apply` 때 DB 를 뜨고 `source='bulk'` 묶음 'OWLv2 후보 …' 로 써서 검수 UI '변경 내역' 에서 되돌릴 수 있다 — **승인 이미지는 검수 대기로 간다**) → `restore`(되돌린 뒤 옛 승인 이미지를 승인으로). responder 후보가 기존 차량 박스와 IoU 0.5 이상이면 그 박스 클래스만 바꾼다. 결과·목록은 `runs/ovd/`(git 밖 — 이미지 경로 목록이라) |
-| `tools/crop_images.py` | DB 이미지를 사각형 영역으로 잘라 바꾼다 — 박스는 그 영역 좌표로 옮기고(원래 넓이의 30% 미만만 남는 박스는 버림) **상태(승인·검수 대기·휴지통)는 그대로**(2026-11-09, hw-04 줌 화면 36장 — docs/provenance.md). 카메라와 id 로 고르고, 크기가 다른 이미지가 섞이면 멈춘다(같은 카메라라도 줌이 다르면 id 로 가른다). 기본은 보기만, `--apply` 때 DB 를 뜨고 옛 파일은 `<DB 폴더>/backups/crop_<시각>/` 로 옮긴다(목록도 거기 — git 밖). 이력 source 는 'crop'(검수 화면 '자르기') — 그 전 이력으로 되돌리기는 서버가 막는다(409). **돌린 뒤 검수 화면을 새로 고칠 것**(`--recrop` 과 같은 이유) |
-| `tools/mask_images.py` | DB 이미지의 사각형 영역을 **회색(114 — 학습 때 여백 색)으로 칠한다** — 사람이 한 명씩 가를 수 없는 무리를 학습에서 빼는 무시 영역(YOLO 에는 없다). 반 넘게 덮인 박스는 지우고 상태는 그대로(2026-11-09, hw-04 줌 화면의 사다리 뒤 대원 무리 — docs/provenance.md). `--mask id:x1,y1,x2,y2` 를 여러 번, `--preview <jpg>` 로 칠하기 전·후 대조 그림, 기본은 보기만·`--apply` 때 DB 를 뜨고 옛 파일은 `backups/mask_<시각>/`, 이름 끝 `_m`. **test 카메라는 멈춘다**. 물체 박스 안은 칠하지 말 것(그 물체에 회색 조각이 붙는다 — 그럴 땐 `crop_images.py`). 이력 source 'mask'('회색 칠하기') |
+| `tools/crop_images.py` | DB 이미지를 사각형 영역으로 잘라 바꾼다 — 박스는 그 영역 좌표로 옮기고(원래 넓이의 30% 미만만 남는 박스는 버림) **상태(승인·검수 대기·휴지통)는 그대로**(2026-11-09, hw-04 줌 화면 36장 — docs/provenance.md). 카메라와 id 로 고르고, 크기가 다른 이미지가 섞이면 멈춘다(같은 카메라라도 줌이 다르면 id 로 가른다). 기본은 보기만, `--apply` 때 DB 를 뜨고 옛 파일은 `<DB 폴더>/backups/crop_<시각>/` 로 옮긴다(목록도 거기 — git 밖). 이력 source 는 'crop'(검수 화면 '자르기') — 그 전 이력으로 되돌리기는 서버가 막는다(409). 가릴 영역도 같은 좌표로 옮긴다. **돌린 뒤 검수 화면을 새로 고칠 것**(`--recrop` 과 같은 이유) |
+| `tools/mask_images.py` | DB 이미지에 **가릴 영역**(검수 화면 `M` 과 같다 — 아래 'UI 조작')을 명령으로 넣는다 — 같은 자리를 여러 장에(`--ids 8017-8029 --rect x1,y1,x2,y2`, 한 장씩은 `--mask id:x1,y1,x2,y2`, 지금 화면 픽셀). 원본·박스·상태는 그대로. 기본은 보기만(학습에서 빠질·일부 가려질 박스), `--preview <jpg>` 칠하기 전·후 대조 그림, `--apply` 때 DB 를 뜬다, `--replace` 는 더하지 않고 바꾼다. **test 이미지는 멈춘다**. 이력 source 'mask'(검수 화면 '가릴 영역'). 11-09 오후의 첫 판은 그림 파일에 직접 칠했고(이름 끝 `_m`) 그 11장은 같은 날 되돌렸다(docs/provenance.md) |
 | `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
@@ -518,7 +518,18 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   남긴다). 새 경로도 그걸 거치게 하고, `_write_lock` 은 **부르는 쪽이** 쥔다(안에서 다시 잡으면 멈춘다).
   - 파일을 바꾼 이미지(`store.replace_file` — VIRAT `--recrop` 은 source predict, `tools/crop_images.py` 는 crop)는 그 전 이력의
     박스가 옛 화면 좌표다. crop 은 서버가 그 전 이력으로 되돌리기를 막지만(`store.crop_entries`), VIRAT 자르기 이력은 가려내지 못한다.
-    `tools/mask_images.py`(source mask)는 크기가 그대로라 그 전 이력도 좌표는 맞는다(되돌리면 칠한 자리의 박스가 돌아올 뿐).
+    가릴 영역이 있는 이미지에 `masks=`(새 그림 기준으로 옮긴 영역)를 안 주면 `replace_file` 이 ValueError 를 낸다(아무것도 안 쓴다).
+- **가릴 영역 (2026-11-09, `src/autolabel/masks.py`)** — 한 명씩 가를 수 없는 무리 같은 자리를 검수 화면 `M` 모드로 덮는 사각형.
+  DB `masks` 표(정규화 xyxy, EXIF 회전을 적용한 화면 기준)에만 있고 **원본 그림은 그대로**다. 학습 세트(`trainer.build_dataset`)와
+  이미지를 함께 내보내기(`export_yolo`)만 그 자리를 회색 114 로 칠한 JPEG 을 쓰고, 영역들의 합집합이 박스 넓이의 반 이상을 덮는
+  박스는 그 라벨 파일에서만 뺀다(DB 박스는 그대로). **test 는 칠하지 않는다** — 서버가 test 이미지(분할 test·test 고정 카메라)에
+  영역을 받지 않고(409, 지우기만 받는다) 학습 세트도 test 분할은 원본 그대로다. 원본을 직접 읽는 도구(test_baseline·label_qa·
+  test_tiles 등)는 영역을 모른다.
+  - 저장(PUT boxes)의 `masks` 는 **그 화면에서 영역을 손댄 뒤로만** 싣는다(`S.masksTouched`) — 안 실으면(옛 화면 포함) 서버가
+    그대로 둔다. 영역이 바뀐 저장은 박스가 그대로여도 이력에 남고(`box_history.masks_before·masks_after`, 박스만 바뀐 줄은 NULL),
+    되돌리기는 그 줄에 영역이 있을 때만 영역도 되돌린다. 되돌리기(Ctrl+Z) 한 칸은 박스와 영역을 함께 쌓는다.
+  - 가릴 영역 모드에서는 영역만 고르고 옮긴다(박스는 B). 덮는 몫은 `masks.covered` 와 `app.js` 의 `maskCover` 가 같은 식이다
+    (좌표 압축으로 합집합) — 고치면 둘 다.
 - DB 자동 백업(`store.backup_daily`)은 `<DB 폴더>/backups/` 에 하루 한 번, 최근 `backup.keep`(14)개 — 그 이름 꼴의 파일만 지운다.
   **시험 서버는 `backup.keep: 0` 으로 끌 것.**
 - 같은 자리 일괄 수정(`store.same_place` → `set_class_bulk`)은 적용 때 다시 찾아 미리 본 수와 다르면 409, 묶음째 되돌리기는 그

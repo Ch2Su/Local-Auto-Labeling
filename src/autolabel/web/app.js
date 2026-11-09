@@ -22,12 +22,18 @@ const S = {
   cur: null,          // 현재 이미지 메타
   boxes: [],          // [{cls, cx, cy, w, h, conf, origin}]
   sel: -1,            // 선택된 박스 인덱스
+  // 가릴 영역 (2026-11-09, masks.py): 학습 세트를 만들 때만 회색으로 칠할 사각형. 박스와 같은 {cx, cy, w, h} 로 들고
+  // 있어 고르기·옮기기·크기 조절을 박스 코드로 한다(서버와는 xyxy — maskFromXyxy·maskToXyxy).
+  masks: [],
+  msel: -1,           // 고른 가릴 영역 번호 (박스 선택 S.sel 과 함께 쓰지 않는다)
+  masksTouched: false,// 이 이미지에서 영역을 손댔나 — 손댄 뒤로만 저장에 영역을 싣는다(영역을 모르는 저장이 덮지 않게)
+  maskBlock: null,    // 영역을 둘 수 없는 이유(test 이미지) — 서버가 준다
   curClass: 0,        // 새 박스에 붙일 클래스
   img: null,          // HTMLImageElement
   imgId: null,        // S.img 가 어느 이미지의 사진인가 (onload 때 정한다). S.cur.id 와 다르면 아직 안 떴다
   loadSeq: 0,         // loadImage 순번 — 겹치면 마지막 것만 반영한다
   view: { scale: 1, ox: 0, oy: 0 },
-  mode: "box",        // "box" = 새 박스 / "pan" = 화면 끌기 / "sam" = SAM 클릭
+  mode: "box",        // "box" = 새 박스 / "pan" = 화면 끌기 / "sam" = SAM 클릭 / "mask" = 가릴 영역
   ctrl: false,        // Ctrl 을 누르고 있는 동안 두 모드가 뒤바뀐다
   sam: null,          // SAM 사용 가능 여부 {enabled, model, error}
   samBusy: false,     // SAM 요청 중 (중복 클릭 방지)
@@ -194,6 +200,39 @@ function tooSmall(b) {
   return Math.min(b.w * S.cur.width, b.h * S.cur.height) < 1 || Math.min(b.w, b.h) <= 2e-4;
 }
 
+/* 가릴 영역 (2026-11-09) — 서버는 정규화 xyxy, 화면은 박스와 같은 {cx, cy, w, h}. */
+const maskFromXyxy = ([x1, y1, x2, y2]) => ({ cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: x2 - x1, h: y2 - y1 });
+const maskToXyxy = (m) => [m.cx - m.w / 2, m.cy - m.h / 2, m.cx + m.w / 2, m.cy + m.h / 2];
+const MASK_DROP = 0.5;      // masks.DROP — 이만큼 넘게 가려진 박스는 학습 라벨에서 빠진다
+const MASK_MAX = 50;        // masks.MAX_MASKS
+
+/** 박스 넓이 가운데 가릴 영역들의 **합집합**이 덮는 몫(0~1). 서버 masks.covered 와 같은 식이다(좌표 압축) — 고치면 둘 다. */
+function maskCover(b, masks = S.masks) {
+  const bx1 = b.cx - b.w / 2, by1 = b.cy - b.h / 2, bx2 = b.cx + b.w / 2, by2 = b.cy + b.h / 2;
+  const area = (bx2 - bx1) * (by2 - by1);
+  if (!(area > 0) || !masks.length) return 0;
+  const parts = [];
+  for (const m of masks) {
+    const [x1, y1, x2, y2] = maskToXyxy(m);
+    const a = Math.max(x1, bx1), t = Math.max(y1, by1), c = Math.min(x2, bx2), d = Math.min(y2, by2);
+    if (c > a && d > t) parts.push([a, t, c, d]);
+  }
+  if (!parts.length) return 0;
+  const xs = [...new Set(parts.flatMap((p) => [p[0], p[2]]))].sort((u, v) => u - v);
+  const ys = [...new Set(parts.flatMap((p) => [p[1], p[3]]))].sort((u, v) => u - v);
+  let inside = 0;
+  for (let i = 0; i < xs.length - 1; i++) {
+    const mx = (xs[i] + xs[i + 1]) / 2;
+    for (let j = 0; j < ys.length - 1; j++) {
+      const my = (ys[j] + ys[j + 1]) / 2;
+      if (parts.some((p) => p[0] <= mx && mx < p[2] && p[1] <= my && my < p[3])) {
+        inside += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]);
+      }
+    }
+  }
+  return Math.min(1, inside / area);
+}
+
 /** 이동용. 크기를 유지한 채 이미지 안으로 밀어 넣는다 (잘라서 줄이지 않는다). */
 function rectToBoxInside(x, y, w, h) {
   const W = S.cur.width, H = S.cur.height;
@@ -257,17 +296,25 @@ function draw() {
   const sh = S.cur.height * S.view.scale;
   ctx.drawImage(S.img, ox, oy, sw, sh);
 
+  // 가릴 영역은 박스 밑에 깐다 — 영역에 걸친 박스의 테두리가 위로 보이게
+  if (S.masks.length) drawMasks();
+  const cover = S.masks.length ? S.boxes.map((b) => maskCover(b)) : null;
+
   S.boxes.forEach((b, i) => {
     const [ix, iy, iw, ih] = boxRect(b);
     const [x, y] = toScreen(ix, iy);
     const w = iw * S.view.scale, h = ih * S.view.scale;
     const color = classColor(b.cls);
     const selected = i === S.sel;
+    // 가릴 영역에 반 넘게 가려져 학습 라벨에서 빠지는 박스는 흐리게 (DB 에는 남는다)
+    const out = cover !== null && cover[i] >= MASK_DROP;
+    const alpha = out ? 0.4 : 1;
+    ctx.globalAlpha = alpha;
 
     ctx.lineWidth = selected ? 2.5 : 1.5;
     ctx.strokeStyle = color;
     // 자동 라벨 중 신뢰도가 낮은 것은 점선으로 눈에 띄게 한다.
-    ctx.setLineDash(b.conf != null && b.conf < 0.5 ? [6, 4] : []);
+    ctx.setLineDash(out ? [3, 3] : b.conf != null && b.conf < 0.5 ? [6, 4] : []);
     ctx.strokeRect(x, y, w, h);
     ctx.setLineDash([]);
 
@@ -275,7 +322,7 @@ function draw() {
       ctx.fillStyle = color.replace(")", " / 0.12)");
       ctx.globalAlpha = 0.15;
       ctx.fillRect(x, y, w, h);
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = alpha;
     }
 
     // 라벨 칩
@@ -289,16 +336,11 @@ function draw() {
     ctx.fillStyle = "#14161a";
     ctx.fillText(text, x + 4, ty + 11);
 
-    if (selected) {
-      ctx.fillStyle = "#fff";
-      ctx.strokeStyle = "#14161a";
-      ctx.lineWidth = 1;
-      for (const [, hx, hy] of handlePositions(b)) {
-        ctx.fillRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
-        ctx.strokeRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
-      }
-    }
+    if (selected) drawHandles(b);
+    ctx.globalAlpha = 1;
   });
+  // 고른 가릴 영역의 손잡이는 박스 위에 — 박스 밑에 깔린 영역도 크기를 바꿀 수 있게
+  if (S.msel >= 0 && S.masks[S.msel]) drawHandles(S.masks[S.msel]);
 
   if (S.predOn) drawFindings();
 
@@ -322,6 +364,55 @@ function draw() {
 
 const clsName = (i) => S.classes[i] ?? `cls_${i}`;
 
+/** 고른 박스(또는 가릴 영역)의 크기 조절 손잡이 8개. */
+function drawHandles(b) {
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#fff";
+  ctx.strokeStyle = "#14161a";
+  ctx.lineWidth = 1;
+  for (const [, hx, hy] of handlePositions(b)) {
+    ctx.fillRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
+    ctx.strokeRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
+  }
+  ctx.restore();
+}
+
+/* 가릴 영역의 빗금 — 학습 때 칠할 회색(114)을 반투명으로 깔고 흰 사선을 긋는다. 한 번 만들어 다시 쓴다. */
+let maskHatch = null;
+function hatchPattern() {
+  if (maskHatch) return maskHatch;
+  const c = document.createElement("canvas");
+  c.width = c.height = 10;
+  const g = c.getContext("2d");
+  g.fillStyle = "rgba(114, 114, 114, 0.6)";
+  g.fillRect(0, 0, 10, 10);
+  g.strokeStyle = "rgba(240, 240, 240, 0.55)";
+  g.lineWidth = 1.5;
+  g.beginPath();
+  for (const k of [-10, 0, 10]) { g.moveTo(k, 10); g.lineTo(k + 10, 0); }
+  g.stroke();
+  maskHatch = ctx.createPattern(c, "repeat");
+  return maskHatch;
+}
+
+function drawMasks() {
+  ctx.save();
+  ctx.fillStyle = hatchPattern();
+  S.masks.forEach((m, i) => {
+    const [ix, iy, iw, ih] = boxRect(m);
+    const [x, y] = toScreen(ix, iy);
+    const w = iw * S.view.scale, h = ih * S.view.scale;
+    ctx.fillRect(x, y, w, h);
+    const selected = i === S.msel;
+    ctx.lineWidth = selected ? 2.5 : 1.5;
+    ctx.strokeStyle = selected ? "#ffffff" : "rgba(220, 220, 220, 0.9)";
+    ctx.setLineDash(selected ? [] : [4, 3]);
+    ctx.strokeRect(x, y, w, h);
+  });
+  ctx.restore();
+}
+
 /* ───────────────────────────── 마우스 ───────────────────────────── */
 
 let drag = null;
@@ -330,14 +421,16 @@ let drag = null;
  *  넘어갔다. 예전에는 mousemove 가 TypeError 를 냈고, mouseup 이 관계없는 되돌리기 한 칸을 버렸다 (2026-11-05). */
 function dragLost() {
   if (!S.cur) return true;
-  if (drag.box) return !S.boxes.includes(drag.box);
+  if (drag.box) return !(drag.mask ? S.masks : S.boxes).includes(drag.box);
   return drag.id !== undefined && drag.id !== S.cur.id;
 }
 
-/** 끄는 박스를 nb 로 바꾼다. 되돌리기는 처음 바꿀 때 한 번 쌓는다 — 누르기만 하고 놓으면 쌓을 것도 거둘 것도 없다. */
+/** 끄는 박스(가릴 영역이면 drag.mask)를 nb 로 바꾼다. 되돌리기는 처음 바꿀 때 한 번 쌓는다 — 누르기만 하고 놓으면 쌓을
+ *  것도 거둘 것도 없다. */
 function editDragBox(nb) {
   if (!drag.edited) { pushUndo(); drag.edited = true; }
   Object.assign(drag.box, nb);
+  if (drag.mask) S.masksTouched = true;
   markDirty();
   draw();
 }
@@ -347,7 +440,7 @@ function mousePos(e) {
   return [e.clientX - r.left, e.clientY - r.top];
 }
 
-const MODE_LABEL = { box: "새 박스", pan: "화면 끌기", sam: "SAM 클릭" };
+const MODE_LABEL = { box: "새 박스", pan: "화면 끌기", sam: "SAM 클릭", mask: "가릴 영역" };
 
 /** Ctrl 을 누르고 있으면 화면 끌기와 현재 편집 모드가 뒤바뀐다. */
 function effectiveMode() {
@@ -361,6 +454,9 @@ function setMode(mode) {
     toast("SAM 이 꺼져 있습니다 (config.yaml 의 sam.enabled)", true);
     return;
   }
+  if (mode === "mask" && S.maskBlock) { toast(S.maskBlock, true); return; }
+  // 영역은 가릴 영역 모드에서만 고르고 옮긴다 — 다른 모드로 가면 고른 영역을 놓는다(Del 이 엉뚱한 것을 지우지 않게)
+  if (mode !== "mask" && S.msel >= 0) { S.msel = -1; renderBoxList(); draw(); }
   S.mode = mode;
   renderMode();
 }
@@ -378,7 +474,7 @@ function renderMode() {
   el.className = "mode-badge " + eff + (S.ctrl ? " temp" : "");
   el.title = S.ctrl
     ? "Ctrl 을 누르고 있는 동안 임시로 바뀐 상태입니다"
-    : "B = 새 박스, C = SAM 클릭, D = 화면 끌기 (Ctrl 을 누르면 잠시 화면 끌기로)";
+    : "B = 새 박스, C = SAM 클릭, M = 가릴 영역, D = 화면 끌기 (Ctrl 을 누르면 잠시 화면 끌기로)";
 }
 
 /* ───────────────────────────── SAM ───────────────────────────── */
@@ -444,18 +540,20 @@ function samRefineSelected() {
   });
 }
 
-function hitHandle(sx, sy) {
-  if (S.sel < 0) return null;
-  for (const [k, hx, hy] of handlePositions(S.boxes[S.sel])) {
+/** 고른 박스 b(기본은 S.sel 의 박스, 가릴 영역이면 그 영역)의 손잡이를 눌렀나. */
+function hitHandle(sx, sy, b = S.sel >= 0 ? S.boxes[S.sel] : null) {
+  if (!b) return null;
+  for (const [k, hx, hy] of handlePositions(b)) {
     if (Math.abs(sx - hx) <= HANDLE && Math.abs(sy - hy) <= HANDLE) return k;
   }
   return null;
 }
 
-function hitBox(sx, sy) {
+/** 누른 자리의 박스 번호(겹치면 가장 작은 것). list 를 주면 그 목록에서 (가릴 영역 — S.masks). */
+function hitBox(sx, sy, list = S.boxes) {
   const [ix, iy] = toImage(sx, sy);
   let best = -1, bestArea = Infinity;
-  S.boxes.forEach((b, i) => {
+  list.forEach((b, i) => {
     const [x, y, w, h] = boxRect(b);
     if (ix >= x && ix <= x + w && iy >= y && iy <= y + h && w * h < bestArea) {
       best = i; bestArea = w * h;
@@ -492,6 +590,30 @@ canvas.addEventListener("mousedown", (e) => {
     selectBox(-1);
     const [ix, iy] = toImage(sx, sy);
     drag = { mode: "new", ix, iy, sam: true, id: S.cur.id };
+    return;
+  }
+
+  // 가릴 영역 모드에서는 영역만 고르고 옮기고 새로 그린다 — 박스는 건드리지 않는다(박스는 B 모드로).
+  // 영역 안에 서 있는 사람 박스를 고치다 영역이 딸려 오거나, 영역을 그리다 박스가 옮겨지지 않게.
+  if (effectiveMode() === "mask") {
+    if (S.maskBlock) { toast(S.maskBlock, true); return; }
+    const cur = S.msel >= 0 ? S.masks[S.msel] : null;
+    const mh = hitHandle(sx, sy, cur);
+    if (mh) {
+      drag = { mode: "resize", handle: mh, start: boxRect(cur), sx, sy, box: cur, mask: true };
+      return;
+    }
+    const mi = hitBox(sx, sy, S.masks);
+    if (mi >= 0) {
+      selectMask(mi);
+      const [ix, iy] = toImage(sx, sy);
+      const [x, y] = boxRect(S.masks[mi]);
+      drag = { mode: "move", dx: ix - x, dy: iy - y, sx, sy, box: S.masks[mi], mask: true };
+      return;
+    }
+    selectMask(-1);
+    const [ix, iy] = toImage(sx, sy);
+    drag = { mode: "new", ix, iy, id: S.cur.id, mask: true };
     return;
   }
 
@@ -536,7 +658,11 @@ window.addEventListener("mousemove", (e) => {
     // 그리는 중인 사각형 미리보기
     const [x1, y1] = toScreen(Math.min(drag.ix, ix), Math.min(drag.iy, iy));
     const [x2, y2] = toScreen(Math.max(drag.ix, ix), Math.max(drag.iy, iy));
-    ctx.strokeStyle = classColor(S.curClass);
+    if (drag.mask) {                  // 가릴 영역은 칠해질 모양(빗금 회색) 그대로 미리 본다
+      ctx.fillStyle = hatchPattern();
+      ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+    }
+    ctx.strokeStyle = drag.mask ? "#ffffff" : classColor(S.curClass);
     ctx.lineWidth = 2;
     ctx.setLineDash([5, 3]);
     ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
@@ -625,18 +751,29 @@ window.addEventListener("mouseup", (e) => {
       const nb = rectToBox(x1, y1, x2 - x1, y2 - y1);
       // 이미지 밖에서만 그렸으면 잘라낸 결과가 비어 있다. 그때는 만들지 않는다. 남은 것이 1px 도 안 되면(가장자리에
       // 걸친 것·크게 확대한 것) 서버가 저장할 때 조용히 버리므로 그것도 만들지 않는다 (tooSmall, 2026-11-05).
-      if (!tooSmall(nb)) {
+      if (tooSmall(nb)) {
+        toast(nb.w > 0 && nb.h > 0 ? `${drag.mask ? "영역이" : "박스가"} 너무 작습니다 (이미지에서 1px 미만)`
+          : `이미지 바깥에는 ${drag.mask ? "영역을" : "박스를"} 만들 수 없습니다`);
+      } else if (drag.mask) {
+        if (S.masks.length >= MASK_MAX) {
+          toast(`가릴 영역은 한 장에 ${MASK_MAX}개까지입니다`, true);
+        } else {
+          pushUndo();
+          S.masks.push(nb);
+          S.masksTouched = true;
+          selectMask(S.masks.length - 1);
+          markDirty();
+        }
+      } else {
         pushUndo();
         S.boxes.push({ cls: S.curClass, ...nb, conf: null, origin: "human" });
         selectBox(S.boxes.length - 1);
         markDirty();
-      } else {
-        toast(nb.w > 0 && nb.h > 0 ? "박스가 너무 작습니다 (이미지에서 1px 미만)" : "이미지 바깥에는 박스를 만들 수 없습니다");
       }
     }
   }
   if (drag.mode === "move" || drag.mode === "resize") {
-    if (drag.edited) {
+    if (drag.edited && !drag.mask) {
       // 사람이 손댄 박스는 더 이상 모델 예측이 아니다. 끄는 도중에 자동 저장이 한 번
       // 돌았을 수 있으므로 이 변경도 저장 대상으로 올린다.
       drag.box.origin = "human"; drag.box.conf = null;
@@ -672,32 +809,61 @@ canvas.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   if (!S.cur || S.imgId !== S.cur.id) return;     // 사진이 뜨기 전에는 보이지 않는 박스를 지우지 않게 (mousedown 과 같다)
   const [sx, sy] = mousePos(e);
+  if (effectiveMode() === "mask") {               // 가릴 영역 모드에서는 영역만 지운다 (박스는 B 모드로)
+    const mi = hitBox(sx, sy, S.masks);
+    if (mi >= 0) deleteMask(mi);
+    return;
+  }
   const hit = hitBox(sx, sy);
   if (hit >= 0) { pushUndo(); S.boxes.splice(hit, 1); selectBox(-1); markDirty(); refresh(); }
 });
 
 /* ───────────────────────── 편집 상태 ───────────────────────── */
 
+/** 되돌리기 한 칸 = 박스와 가릴 영역을 함께 (2026-11-09 — 영역도 Ctrl+Z 로 되돌린다). */
 function pushUndo() {
-  S.undo.push(JSON.stringify(S.boxes));
+  S.undo.push(JSON.stringify({ b: S.boxes, m: S.masks }));
   if (S.undo.length > 60) S.undo.shift();
 }
 
 function undo() {
   const prev = S.undo.pop();
   if (!prev) return;
-  S.boxes = JSON.parse(prev);
+  const st = JSON.parse(prev);
+  if (JSON.stringify(st.m) !== JSON.stringify(S.masks)) S.masksTouched = true;
+  S.boxes = st.b;
+  S.masks = st.m;
   S.sel = -1;
+  S.msel = -1;
   markDirty();
   refresh();
 }
 
 function selectBox(i) {
   S.sel = i;
+  S.msel = -1;
   if (i >= 0) S.curClass = S.boxes[i].cls;
   renderBoxList();
   renderClassList();
   draw();
+}
+
+/** 가릴 영역을 고른다 (-1 = 놓기). 박스 선택은 푼다 — 한 번에 하나만 고른다. */
+function selectMask(i) {
+  S.msel = i;
+  if (i >= 0) S.sel = -1;
+  renderBoxList();
+  draw();
+}
+
+function deleteMask(i) {
+  if (i < 0 || i >= S.masks.length) return;
+  pushUndo();
+  S.masks.splice(i, 1);
+  S.masksTouched = true;
+  S.msel = -1;
+  markDirty();
+  refresh();
 }
 
 function markDirty() {
@@ -729,7 +895,12 @@ async function saveBoxes() {
     cls: b.cls, cx: b.cx, cy: b.cy, w: b.w, h: b.h,
     conf: b.conf, origin: b.origin || "human",
   }));
-  S.saving = api(`/api/images/${id}/boxes`, { method: "PUT", body: { boxes: payload } });
+  const body = { boxes: payload };
+  // 가릴 영역은 이 이미지에서 손댄 뒤로만 싣는다 — 안 실으면 서버가 그대로 둔다(masks.py)
+  if (S.masksTouched) {
+    body.masks = S.masks.map((m) => { const [x1, y1, x2, y2] = maskToXyxy(m); return { x1, y1, x2, y2 }; });
+  }
+  S.saving = api(`/api/images/${id}/boxes`, { method: "PUT", body });
   try {
     const res = await S.saving;
     // 저장하는 사이에 또 고쳤으면 수정 표시를 그대로 둔다 — 걸어 둔 타이머나 flushSave 가
@@ -857,7 +1028,9 @@ function renderBoxList() {
   const ul = $("#box-list");
   ul.innerHTML = "";
   const overlaps = selfOverlaps();
+  const cover = S.masks.length ? S.boxes.map((b) => maskCover(b)) : null;
   $("#box-count").textContent = (S.boxes.length ? `${S.boxes.length}개` : "")
+    + (S.masks.length ? ` · 가릴 영역 ${S.masks.length}` : "")
     + (overlaps.length ? ` · 겹침 ${overlaps.length}쌍` : "");
   $("#btn-same").disabled = S.sel < 0;
   // 박스 목록이 바뀌는 곳(추가·삭제·클래스 변경·되돌리기)은 전부 여기를 지난다.
@@ -870,10 +1043,13 @@ function renderBoxList() {
   S.boxes.forEach((b, i) => {
     const li = document.createElement("li");
     li.className = i === S.sel ? "active" : "";
+    // 가릴 영역이 덮는 몫 — 1% 미만은 경계 반올림이라 보지 않는다
+    const cv = cover ? cover[i] : 0;
     li.innerHTML =
       `<span class="swatch" style="background:${classColor(b.cls)}"></span>` +
       `<span class="nm"></span>` +
       (partner.has(i) ? `<span class="dup"></span>` : "") +
+      (cv >= 0.01 ? `<span class="mcov ${cv >= MASK_DROP ? "out" : "part"}"></span>` : "") +
       `<span class="conf ${confClass(b)}">${b.conf == null ? "수동" : b.conf.toFixed(2)}</span>` +
       `<span class="del" title="삭제">✕</span>`;
     li.querySelector(".nm").textContent = S.classes[b.cls] ?? `cls_${b.cls}`;
@@ -883,12 +1059,46 @@ function renderBoxList() {
       el.textContent = `⚠ 겹침 ${v.toFixed(2)}`;
       el.title = `${clsName(S.boxes[j].cls)} 박스와 거의 같은 자리입니다 (IoU ${v.toFixed(3)}). 같은 물체를 두 번 그렸는지 보세요.`;
     }
+    if (cv >= 0.01) {
+      const el = li.querySelector(".mcov");
+      if (cv >= MASK_DROP) {
+        el.textContent = "학습 제외";
+        el.title = `가릴 영역이 이 박스의 ${Math.round(cv * 100)}% 를 덮어 학습 라벨에서 빠집니다 (DB 박스는 그대로 — 지우지 않아도 됩니다).`;
+      } else {
+        el.textContent = `⚠ ${Math.round(cv * 100)}% 가림`;
+        el.title = "가릴 영역이 이 박스의 일부를 덮습니다 — 학습 때 이 물체에 회색 조각이 붙은 채로 배웁니다."
+          + " 영역을 박스 밖으로 좁히거나, 그 자리는 칠하지 말고 잘라 내세요 (tools/crop_images.py).";
+      }
+    }
     li.onclick = (e) => {
       if (e.target.classList.contains("del")) {
         pushUndo(); S.boxes.splice(i, 1); S.sel = -1; markDirty(); refresh();
       } else {
         selectBox(i);
       }
+    };
+    ul.appendChild(li);
+  });
+  // 가릴 영역은 박스 아래에 (2026-11-09 사용자 선택 — 따로 칸을 두지 않는다). 고르면 가릴 영역 모드로 간다.
+  if (S.masks.length && S.maskBlock) {
+    const li = document.createElement("li");
+    li.className = "mask-row warn";
+    li.textContent = `⚠ ${S.maskBlock} 이 영역은 학습에도 평가에도 쓰이지 않습니다 — 지우세요.`;
+    ul.appendChild(li);
+  }
+  S.masks.forEach((m, i) => {
+    const li = document.createElement("li");
+    li.className = "mask-row" + (i === S.msel ? " active" : "");
+    const [, , iw, ih] = boxRect(m);
+    li.innerHTML = '<span class="swatch hatch"></span><span class="nm"></span>'
+      + '<span class="msize"></span><span class="del" title="삭제">✕</span>';
+    li.querySelector(".nm").textContent = `가릴 영역 ${i + 1}`;
+    li.querySelector(".msize").textContent = `${Math.round(iw)}×${Math.round(ih)}px`;
+    li.title = "학습 세트를 만들 때 이 자리를 회색(114)으로 칠합니다 — 원본 그림은 그대로입니다. 반 넘게 가려진 박스는 학습 라벨에서 빠집니다.";
+    li.onclick = (e) => {
+      if (e.target.classList.contains("del")) { deleteMask(i); return; }
+      if (S.mode !== "mask" && !S.maskBlock) setMode("mask");
+      selectMask(i);
     };
     ul.appendChild(li);
   });
@@ -1812,7 +2022,7 @@ function refresh() {
  * 서버가 박스를 저장할 때마다 '바뀌기 전·뒤' 를 box_history 에 남긴다. 여기서는 그걸
  * 보여 주고, 한 줄을 골라 '그 저장 전' 으로 되돌린다. 되돌린 것도 이력에 남는다. */
 
-const SRC_KO = { ui: "수정", predict: "자동 라벨", restore: "되돌림", bulk: "일괄 수정", revert: "일괄 취소", crop: "자르기", mask: "회색 칠하기" };
+const SRC_KO = { ui: "수정", predict: "자동 라벨", restore: "되돌림", bulk: "일괄 수정", revert: "일괄 취소", crop: "자르기", mask: "가릴 영역" };
 
 function fmtTime(iso) {
   const d = new Date(iso);
@@ -1836,6 +2046,15 @@ function histDiff(before, after) {
   if (moved) return "위치·크기";
   const recls = before.some((b, i) => after[i] && b.cls !== after[i].cls);
   return recls ? "클래스 (개수 같음)" : "신뢰도·출처만";
+}
+
+/** 이력 한 줄의 차이 — 가릴 영역이 바뀐 저장(masks_before·after 가 있음)이면 그것도 (2026-11-09). 박스는 그대로이고
+ *  영역만 바뀐 저장은 영역만 적는다(histDiff 가 '신뢰도·출처만' 이라고 하지 않게). */
+function entryDiff(h) {
+  if (h.masks_before == null && h.masks_after == null) return histDiff(h.before, h.after);
+  const n0 = (h.masks_before || []).length, n1 = (h.masks_after || []).length;
+  const m = n0 === n1 ? "가릴 영역 위치·크기" : `가릴 영역 ${n0}→${n1}`;
+  return sameBoxes(h.before, h.after) ? m : `${m} · ${histDiff(h.before, h.after)}`;
 }
 
 function setHistCount(n) {
@@ -1880,7 +2099,7 @@ function renderHistory() {
     li.querySelector(".when").textContent = fmtTime(h.at);
     li.querySelector(".what").textContent = SRC_KO[h.source] || h.source;
     li.querySelector(".cnt").textContent = `${h.n_before}→${h.n_after}`;
-    li.querySelector(".diff").textContent = histDiff(h.before, h.after);
+    li.querySelector(".diff").textContent = entryDiff(h);
     li.onmouseenter = () => { S.ghost = h.before; draw(); };
     li.onmouseleave = () => { S.ghost = null; draw(); };
     li.querySelector(".btn").onclick = () => restoreEntry(h);
@@ -1890,7 +2109,8 @@ function renderHistory() {
 
 async function restoreEntry(h) {
   if (!S.cur) return;
-  const msg = `${fmtTime(h.at)} 저장 직전 상태(박스 ${h.n_before}개)로 되돌립니다.\n`
+  const msg = `${fmtTime(h.at)} 저장 직전 상태(박스 ${h.n_before}개`
+    + (h.masks_before != null ? ` · 가릴 영역 ${h.masks_before.length}개` : "") + ")로 되돌립니다.\n"
     + "되돌린 것도 변경 내역에 남으므로 다시 되돌릴 수 있습니다.";
   if (!confirm(msg)) return;
   if (!(await saveBeforeLeaving())) return;
@@ -1901,7 +2121,9 @@ async function restoreEntry(h) {
     if (!S.cur || S.cur.id !== id) return;
     pushUndo();                       // Ctrl+Z 로 되돌리기 전으로 다시 갈 수 있다
     S.boxes = r.boxes.map((b) => ({ ...b, cls0: b.cls }));
+    if (r.masks) S.masks = r.masks.map(maskFromXyxy);    // 그 저장에서 영역도 바뀌었으면 영역도 되돌아왔다
     S.sel = -1;
+    S.msel = -1;
     S.ghost = null;
     showSaved(r.n_boxes);
     setHistCount(r.n_history);
@@ -2169,6 +2391,8 @@ function computeFindings() {
   const W = S.cur.width, H = S.cur.height;
   const gHit = labels.map(() => false);
   const pHit = preds.map(() => false);
+  // 가릴 영역에 반 넘게 가려진 곳은 학습에서 빠지는 자리라 견주지 않는다 — 칠한 무리 속 사람을 '빠짐' 으로 띄우지 않게
+  const hidden = (b) => S.masks.length > 0 && maskCover(b) >= MASK_DROP;
 
   // 1) 짝짓기: 같은 클래스끼리, 신뢰도 높은 예측부터. 모델이 모르는 클래스의 라벨은
   //    어느 클래스 예측과도 짝이 될 수 있다 (그 자리를 '빠짐' 으로 띄우지 않게).
@@ -2186,7 +2410,7 @@ function computeFindings() {
   const used = new Set();
   // 2) 짝 없는 확신 예측
   preds.forEach((p, i) => {
-    if (pHit[i] || p.conf < FIND.HIGH) return;
+    if (pHit[i] || p.conf < FIND.HIGH || hidden(p)) return;
     let jo = -1, io = 0, js = -1, is = 0;
     labels.forEach((g, j) => {
       const v = iouN(p, g);
@@ -2211,7 +2435,7 @@ function computeFindings() {
   });
   // 3) 모델이 아무것도 못 보는 라벨
   labels.forEach((g, j) => {
-    if (gHit[j] || used.has(j) || !known.has(g.cls)) return;
+    if (gHit[j] || used.has(j) || !known.has(g.cls) || hidden(g)) return;
     if (Math.min(g.w * W, g.h * H) < FIND.MIN_SIDE) return;
     const best = preds.reduce((m, p) => Math.max(m, iouN(p, g)), 0);
     if (best < FIND.NEAR) out.push({ kind: "unseen", pred: -1, label: j, iou: best });
@@ -2386,7 +2610,11 @@ async function reloadCurrentBoxes() {
   const meta = await api(`/api/images/${id}`);
   if (!S.cur || S.cur.id !== id) return;
   S.boxes = meta.boxes.map((b) => ({ ...b, cls0: b.cls }));
+  S.masks = (meta.masks || []).map(maskFromXyxy);
+  S.maskBlock = meta.mask_block || null;
+  S.masksTouched = false;
   S.sel = -1;
+  S.msel = -1;
   S.undo = [];
   setHistCount(meta.n_history);
   refresh();
@@ -2561,6 +2789,15 @@ async function loadImage(id) {
   // 저장 페이로드에는 들어가지 않는다 (saveBoxes 가 필드를 골라 보낸다).
   S.boxes = meta.boxes.map((b) => ({ ...b, cls0: b.cls }));
   S.sel = -1;
+  S.masks = (meta.masks || []).map(maskFromXyxy);       // 옛 서버(영역 모름)면 비어 있다
+  S.msel = -1;
+  S.masksTouched = false;
+  S.maskBlock = meta.mask_block || null;
+  if (S.mode === "mask" && S.maskBlock) {               // test 이미지 — 영역을 그릴 수 없으니 새 박스 모드로
+    S.mode = "box";
+    renderMode();
+    toast("test 이미지라 가릴 영역 모드를 껐습니다 (평가는 실제 화면 그대로)");
+  }
   S.undo = [];
   S.dirty = false;
   S.loadedCount = meta.boxes.length;
@@ -2781,6 +3018,7 @@ function clearCurrent() {
   clearTimeout(S._predTimer);
   Object.assign(S, {
     cur: null, boxes: [], sel: -1, undo: [], dirty: false, img: null, imgId: null,
+    masks: [], msel: -1, masksTouched: false, maskBlock: null,
     ghost: null, history: [], pred: null, predLoading: false, findings: [], findHot: -1,
   });
   $("#img-name").textContent = "";
@@ -3005,6 +3243,7 @@ $("#btn-purge").onclick = () => {
 };
 $("#btn-skip").onclick = () => skipOrAdvance();
 $("#btn-sam").onclick = () => setMode(S.mode === "sam" ? "box" : "sam");
+$("#btn-mask").onclick = () => setMode(S.mode === "mask" ? "box" : "mask");
 $("#btn-prev").onclick = () => step(-1);
 $("#btn-fit").onclick = fitView;
 
@@ -3303,13 +3542,15 @@ window.addEventListener("keydown", (e) => {
     case "ArrowDown": e.preventDefault(); step(1); break;
     case "ArrowUp":   e.preventDefault(); step(-1); break;
     case "Delete": case "Backspace":
-      if (S.sel >= 0) { e.preventDefault(); pushUndo(); S.boxes.splice(S.sel, 1); S.sel = -1; markDirty(); refresh(); }
+      if (S.msel >= 0) { e.preventDefault(); deleteMask(S.msel); }
+      else if (S.sel >= 0) { e.preventDefault(); pushUndo(); S.boxes.splice(S.sel, 1); S.sel = -1; markDirty(); refresh(); }
       break;
     case "Escape": selectBox(-1); break;
     case "f": case "F": case "ㄹ": fitView(); break;
     case "d": case "D": case "ㅇ": e.preventDefault(); setMode("pan"); break;
     case "b": case "B": case "ㅠ": e.preventDefault(); setMode("box"); break;
     case "c": case "C": case "ㅊ": e.preventDefault(); setMode("sam"); break;
+    case "m": case "M": case "ㅡ": e.preventDefault(); setMode("mask"); break;
     case "r": case "R": case "ㄱ": e.preventDefault(); samRefineSelected(); break;
     case "h": case "H": case "ㅗ": e.preventDefault(); toggleHistory(); break;
     case "g": case "G": case "ㅎ": e.preventDefault(); openSamePlace(); break;

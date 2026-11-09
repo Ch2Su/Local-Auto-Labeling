@@ -29,6 +29,7 @@ from pathlib import Path
 import yaml
 
 from .config import ROOT, Config, resolve
+from .masks import split_boxes, write_masked
 from .split import SPLITS
 from .store import Store
 from .yolo_io import write_yolo_txt
@@ -51,6 +52,9 @@ class ExportReport:
     missing: list[str] = field(default_factory=list)       # 이미지를 함께 내보내는데 원본이 없어 뺀 것(라벨도 안 씀)
     splits: dict[str, int] = field(default_factory=dict)    # 분할 목록(train.txt …)에 넣은 장수. 비면 분할 없음
     unassigned: int = 0         # DB 에 분할이 아직 없어 목록에서 뺀 장수 (다음 학습·split 때 배정된다)
+    masked: int = 0             # 가릴 영역을 칠해 내보낸 이미지 (masks.py — 이미지를 함께 내보낼 때만)
+    mask_dropped: int = 0       # 그 영역에 반 넘게 가려져 라벨에서 뺀 박스
+    masked_raw: int = 0         # 영역이 있지만 칠하지 않고 DB 박스 그대로 쓴 이미지 (라벨만 내보냄·test)
 
     def summary(self) -> str:
         lines = [
@@ -68,6 +72,12 @@ class ExportReport:
                              "(라벨은 labels/ 에 있다 — 다음 학습이나 labeler.py split 때 배정된다)")
         elif self.images:
             lines.append("  DB 에 분할(train·val·test)이 없어 data.yaml 의 train·val 이 모두 images/ 입니다")
+        if self.masked:
+            lines.append(f"가릴 영역  : {self.masked}장을 회색(114)으로 칠해 내보냈고, 반 넘게 가려진 박스 "
+                         f"{self.mask_dropped}개는 라벨에서 뺐습니다")
+        if self.masked_raw:
+            lines.append(f"  가릴 영역이 있는 {self.masked_raw}장은 칠하지 않고 DB 박스 그대로 썼습니다 "
+                         "(이미지를 함께 내보내지 않았거나 test 라서)")
         return "\n".join(lines)
 
 
@@ -152,6 +162,7 @@ def export_yolo(
     lists: dict[str, list[str]] = {s: [] for s in SPLITS}
 
     seen: set[str] = set()
+    masks = store.masks_by_image()      # 가릴 영역 (masks.py) — 이미지를 함께 내보낼 때만 칠한다
     # 박스는 연결 하나로 한꺼번에 읽는다 — 예전에는 이미지마다 get_boxes() 가 연결을 새로 열었다(2026-11-05).
     for row, boxes in store.approved_with_boxes(tuple(statuses)):
         src = Path(row["path"])
@@ -163,19 +174,34 @@ def export_yolo(
         if stem.lower() in seen:
             stem = f"{stem}__{hashlib.sha1(str(src).encode()).hexdigest()[:8]}"
 
+        suffix = src.suffix
+        rects = masks.get(row["id"])
+        if rects and (not with_images or row.get("split") == "test"):
+            # 라벨만 내보내면 받는 쪽은 원본을 쓴다 — 칠하지 않은 그림에서 박스만 빼면 그 사람들이 배경이 된다.
+            # test 는 실제 화면 그대로(masks.py). 둘 다 DB 박스를 그대로 쓴다.
+            report.masked_raw += 1
+            rects = None
         if with_images:                  # 이미지를 먼저 — 복사가 안 되면 라벨도 쓰지 않는다
             try:
-                shutil.copy2(src, images_dir / f"{stem}{src.suffix}")
+                if rects:
+                    suffix = ".jpg"
+                    write_masked(src, images_dir / f"{stem}{suffix}", rects)
+                else:
+                    shutil.copy2(src, images_dir / f"{stem}{suffix}")
             except FileNotFoundError:
                 report.missing.append(str(src))
                 continue
             report.copied_images += 1
+            if rects:
+                boxes, dropped = split_boxes(boxes, rects)
+                report.masked += 1
+                report.mask_dropped += len(dropped)
         seen.add(stem.lower())
         write_yolo_txt(labels_dir / f"{stem}.txt", boxes)
         report.images += 1
         report.boxes += len(boxes)
         if row.get("split") in lists:
-            lists[row["split"]].append(f"./images/{stem}{src.suffix}")
+            lists[row["split"]].append(f"./images/{stem}{suffix}")
         else:
             report.unassigned += 1
 
@@ -195,6 +221,10 @@ def export_yolo(
         head.append("# DB 에 분할(train·val·test)이 없어 train·val 이 모두 images/ 다 — val 점수는 학습한 이미지로 잰 값이 된다.")
     if not with_images:
         head.append("# 이미지를 함께 내보내지 않았다(images/ 가 비어 있다) — 그대로는 학습할 수 없다.")
+    if report.masked:
+        head.append(f"# 가릴 영역이 있는 {report.masked}장은 그 자리를 회색(114)으로 칠한 JPEG 이고, 반 넘게 가려진 박스는 라벨에서 뺐다.")
+    if report.masked_raw:
+        head.append(f"# 가릴 영역이 있는 {report.masked_raw}장은 칠하지 않고 DB 박스 그대로다(라벨만 내보냈거나 test).")
     (out_dir / "data.yaml").write_text(
         "\n".join(head) + "\n"
         + yaml.safe_dump({**spec, "names": dict(enumerate(classes))}, allow_unicode=True, sort_keys=False),
