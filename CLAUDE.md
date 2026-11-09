@@ -649,6 +649,16 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
      비CCTV 716장 중 236장이 CCTV). **11-04 분할은 test 802장 중 198장이 train 과 같은 잎 태그(카메라)를 썼다**(드론 55/95 —
      주차장 드론 영상·Shibuya 라이브캠 등) — 다시 나눌 때는 태그를 묶음으로 쓸 것(장면 묶음은 30초 스크린샷·숫자 이름에서
      다른 카메라를 합친다). 태그 오타는 `Moive`·`stablilized` 를 고쳤고 `deque de caxias`(파일은 duque_de_caxias, 110장)가 남았다.
+6. **라벨링 모델을 DetectView 배포 모델과 떼어 무겁게 (11-10 사용자 결정 — responder·cone 검수가 끝나면 준비).** 자동 라벨링·
+   P·label_qa 가 쓰는 `best.pt` 는 DetectView(m 640×384 — 그쪽이 `~/rfdetr_work` 에서 따로 학습)에 맞출 필요가 없다. 근거는
+   09-18 A40 비교(docs/experiments.md — s640 대조 0.6515 → l960 0.7264·x960 0.7243, 크기와 해상도를 함께 바꿔 어느 쪽 덕인지는 모름).
+   - 시점: 옛 승인 605장·hw train 검수(responder·cone)가 끝난 뒤 10클래스로 한 번에 — 그 전에 돌리면 8클래스 모델이 나온다.
+   - 같은 데이터로 m640(로컬, 약 2.7시간)·l960·x960(Runpod RTX 6000 Ada — 09-20 가격으로 약 2시간·2달러, 약 4시간·3–4달러, 추정)을
+     끝까지 학습해, test 클래스별 점수와 conf 0.25 에서의 놓친 박스·헛 박스 수로 고른다. 로컬 8GB 는 l 640 b8·x 640 b5 까지라 960 은 못 돈다.
+   - pod 를 띄우기 전에 그때 가격·시간을 말하고 허락받는다(Runpod MCP 는 다시 붙여야 한다). 데이터셋 tar 스크립트는 새로 짠다(위 'Runpod').
+   - 고른 모델은 `models/best_<이름>.pt` 로 두고 `best.pt` 로 올린다. 960 이면 `predict.imgsz` 도 960 으로 바꾸고, 학습 중 P(CPU)는
+     m 보다 몇 배 느려진다. 웹 UI 학습 버튼(config `model.base`)은 m640 그대로 둬 로컬 반복용으로 쓴다. 그 뒤로 `best.pt` 는
+     DetectView 에 그대로 넘길 모델이 아니다 — 넘길 때는 m 을 따로 학습한다.
 
 ## 사용자에 대해
 
