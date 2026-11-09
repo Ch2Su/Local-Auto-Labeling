@@ -197,6 +197,10 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 전문·차종별 실물 예시·전수 검사 기록은 [docs/label-rules.md](docs/label-rules.md) — 판정 기준을 바꾸면 그 파일도 같이 고칠
 것. **배달 로봇은 라벨하지 않는다**(드론 주차장 장면의 흰 소형 차량 — 모델이 car 로 잡아 missing 후보로 나와도 무시할 것).
 
+**사람을 포함해 라벨하기 애매한 물체는 가릴 영역(`M`)으로 덮는다**(11-09 사용자 결정, 전문은 docs/label-rules.md) — 박스를
+짐작해 그리지도, 비워 두지도 않는다. 몇 px 조각이라도 덮고, 라벨된 박스와 조금 겹쳐도 괜찮다. 차종만 애매한 차는 여기에 들지
+않는다(아래 판정 순서대로).
+
 **차량 클래스 판정 순서** — 크기나 용도가 아니라 **차체가 한 덩어리인가**로 본다. 위에서부터 처음 걸리는 것으로 정한다.
 **11-02 에 van 을 car 로 합쳤다**(사용자 결정) — 가를 것은 pickup·truck·bus 와 그 밖(car)이다.
 
@@ -525,7 +529,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   - 파일을 바꾼 이미지(`store.replace_file` — VIRAT `--recrop` 은 source predict, `tools/crop_images.py` 는 crop)는 그 전 이력의
     박스가 옛 화면 좌표다. crop 은 서버가 그 전 이력으로 되돌리기를 막지만(`store.crop_entries`), VIRAT 자르기 이력은 가려내지 못한다.
     가릴 영역이 있는 이미지에 `masks=`(새 그림 기준으로 옮긴 영역)를 안 주면 `replace_file` 이 ValueError 를 낸다(아무것도 안 쓴다).
-- **가릴 영역 (2026-11-09, `src/autolabel/masks.py`)** — 한 명씩 가를 수 없는 무리 같은 자리를 검수 화면 `M` 모드로 덮는 사각형.
+- **가릴 영역 (2026-11-09, `src/autolabel/masks.py`)** — 사람을 포함해 라벨하기 애매한 물체(가를 수 없는 무리·조각만 보이는 사람 등 — 위 '라벨 기준')를 검수 화면 `M` 모드로 덮는 사각형.
   DB `masks` 표(정규화 xyxy, EXIF 회전을 적용한 화면 기준)에만 있고 **원본 그림은 그대로**다. 학습 세트(`trainer.build_dataset`)와
   이미지를 함께 내보내기(`export_yolo`)만 그 자리를 회색 114 로 칠한 JPEG 을 쓰고, 영역들의 합집합이 박스 넓이의 반 이상을 덮는
   박스는 그 라벨 파일에서만 뺀다(DB 박스는 그대로). **test 는 칠하지 않는다** — 서버가 test 이미지(분할 test·test 고정 카메라)에
