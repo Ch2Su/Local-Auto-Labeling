@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS box_history (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
     at       TEXT    NOT NULL,
-    source   TEXT    NOT NULL,     -- ui | predict | restore | bulk | revert | crop
+    source   TEXT    NOT NULL,     -- ui | predict | restore | bulk | revert | crop | mask
     batch    TEXT,                 -- 일괄 수정 한 번을 묶는 키 (같은 자리 일괄 수정)
     before   TEXT    NOT NULL,
     after    TEXT    NOT NULL,
@@ -730,7 +730,8 @@ class Store:
         `_replace_boxes` 로 바꿔 이전 박스가 이력(source)에 남는다. 파일 쓰기·옛 파일 지우기는 부르는 쪽이 한다(이 함수는 DB 만).
         dhash 는 지운다 — 다음 분할 때 새 파일로 다시 잰다.
         keep_status 면 상태(승인·휴지통 등)를 그대로 둔다 — 잘라 내기만 해서 남는 박스가 사람이 본 그대로일 때
-        (2026-11-09 `tools/crop_images.py`, source='crop' — 그 전 이력은 좌표가 달라 서버가 되돌리기를 막는다).
+        (2026-11-09 `tools/crop_images.py`, source='crop' — 그 전 이력은 좌표가 달라 서버가 되돌리기를 막는다.
+        `tools/mask_images.py` 는 source='mask' — 크기가 같아 그 전 이력도 좌표는 맞는다).
         """
         new = [b for b in boxes if b.is_valid()]
         with _write_lock, self.connect() as con:

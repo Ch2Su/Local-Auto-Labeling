@@ -820,6 +820,8 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
   import_proposals.py  그 후보로 responder·cone 박스를 만들어 검수 대기로 (기본은 보기만, 묶음째 되돌릴 수 있다)
   crop_images.py       DB 이미지를 사각형 영역으로 잘라 바꾼다 — 박스를 옮기고 상태는 그대로
                        (기본은 보기만, --apply 로 DB 를 떠 두고 자름 — 뒤에 검수 화면을 새로 고칠 것)
+  mask_images.py       가를 수 없는 사람 무리 같은 영역을 회색(114)으로 칠한다 — 학습에서 빼는 무시 영역
+                       (반 넘게 덮인 박스는 지움, 상태는 그대로, test 카메라는 멈춤, --preview 로 대조 그림)
 ```
 
 `data/`·`models/`·`weights/`·`export/`·`.venv/` 는 git 에 없습니다(데이터·가중치는 백업으로 지킵니다).

@@ -83,13 +83,16 @@ def parse_rect(text: str) -> Rect:
 def crop_name(name: str, rect: Rect) -> str:
     """새 파일 이름. 꼬리표는 처음 통째 화면 기준 영역이라, 이미 잘린 이름이면 그 왼쪽 위만큼 더한다."""
     stem = Path(name).stem
+    painted = stem.endswith("_m")            # tools/mask_images.py 가 칠한 그림 — 표시는 끝에 그대로 둔다
+    if painted:
+        stem = stem[:-2]
     ox = oy = 0
     m = TAIL_RE.search(stem)
     if m:
         ox, oy = int(m.group(1)), int(m.group(2))
         stem = stem[:m.start()]
     x1, y1, x2, y2 = rect
-    return f"{stem}_c{ox + x1}-{oy + y1}-{ox + x2}-{oy + y2}.jpg"
+    return f"{stem}_c{ox + x1}-{oy + y1}-{ox + x2}-{oy + y2}{'_m' if painted else ''}.jpg"
 
 
 def crop_box(b: Box, img_w: int, img_h: int, rect: Rect) -> tuple[Box | None, str]:
