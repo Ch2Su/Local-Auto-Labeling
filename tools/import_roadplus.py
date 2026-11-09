@@ -20,6 +20,13 @@
   사이트가 주는 CCTV 는 몇 분 안의 영상이라 촬영 시각도 그 언저리다(정확하지 않다).
 - 카메라는 `cameras.yaml` 에 먼저 등록해야 한다(kind: screen — docs/provenance.md). 같은 이름이 있으면 건너뛴다(다시 돌려도 같다).
   녹화 파일은 읽기만 한다.
+- **원본을 지우기 전에 영상으로 남기기 (`--save-clips`, 11-09).** 녹화는 2560×1440 60fps 라 크다(30초에 100 MB 남짓). 구간마다
+  영상 영역만 잘라 높이 720 · H.264 CRF 18 · 1초마다 키프레임 · 60fps 그대로 · 소리 없이 `<폴더>/<카메라>/<카메라>_<구간 시작 시각>.mp4`
+  로 쓴다(11-07 사고 영상을 다듬은 방식 — DetectView 로 재생할 수 있고, extract_frames.py 가 이름에서 시각을 읽는다). 앞뒤는 프레임과
+  같은 만큼 뺀다. ffmpeg 이 PATH 에 없으면 `--ffmpeg` 로 준다. 이미 프레임을 뽑은 녹화면 `--no-frames` — **기본값을 바꾼 뒤 다시
+  돌리면 프레임 시각이 달라져 새 프레임이 생긴다**(11-09 첫 녹화 5개는 앞 2초를 뺀 프레임이다).
+
+    .venv\\Scripts\\python.exe tools\\import_roadplus.py "<녹화>.mkv" --camera hw-04 --no-frames --save-clips data\\visible\\videos --ffmpeg <ffmpeg.exe>
 
     .venv\\Scripts\\python.exe tools\\import_roadplus.py "<녹화>.mkv" --camera hw-04 --dry-run   # 구간·장수만
     .venv\\Scripts\\python.exe tools\\import_roadplus.py "<녹화>.mkv" --camera hw-04
@@ -109,6 +116,44 @@ def crop_box(samples, a: float, b: float, np):
     return int(xs[0]), int(ys[0]), int(xs[-1]) + 1, int(ys[-1]) + 1
 
 
+def find_ffmpeg(given: str | None) -> str | None:
+    import shutil
+    if given:
+        return given
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return None
+
+
+def save_clips(a, plan, start: datetime) -> int:
+    """구간마다 영상 영역만 잘라 높이 720·H.264 CRF 18·1초마다 키프레임·60fps 그대로·소리 없이 — 11-07 사고 영상을 다듬은 방식."""
+    import subprocess
+    exe = find_ffmpeg(a.ffmpeg)
+    if exe is None:
+        print("[멈춤] ffmpeg 를 찾지 못했다 — --ffmpeg 로 줄 것(예: uv 의 imageio-ffmpeg 가 받은 실행 파일)")
+        return 2
+    out_dir = a.save_clips / a.camera
+    out_dir.mkdir(parents=True, exist_ok=True)
+    wrote = skipped = 0
+    for (x0, y0, x1, y1), _times, sa, sb in plan:
+        dst = out_dir / f"{a.camera}_{start + timedelta(seconds=sa):%Y%m%d_%H%M%S}.mp4"
+        if dst.exists():
+            skipped += 1
+            continue
+        cmd = [exe, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{sa:.3f}", "-i", str(a.recording),
+               "-t", f"{sb - sa:.3f}", "-vf", f"crop={x1 - x0}:{y1 - y0}:{x0}:{y0},scale=-2:720:flags=area",
+               "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-g", "60", "-pix_fmt", "yuv420p", "-an", str(dst)]
+        subprocess.run(cmd, check=True)
+        wrote += 1
+    print(f"  영상 {wrote}개 · 이미 있어 건너뜀 {skipped} → {out_dir}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="ROAD PLUS 녹화 → 전체 화면 구간의 프레임 (머리말 참고)")
     ap.add_argument("recording", type=Path)
@@ -120,6 +165,10 @@ def main() -> int:
     ap.add_argument("--skip-tail", type=float, default=1.0)
     ap.add_argument("--keep-repeats", action="store_true", help="다시 튼 구간도 넣는다")
     ap.add_argument("--dry-run", action="store_true", help="구간과 장수만 보인다(파일을 쓰지 않는다)")
+    ap.add_argument("--save-clips", type=Path, default=None,
+                    help="구간마다 다듬은 영상을 <이 폴더>/<카메라>/<카메라>_<YYYYMMDD_HHMMSS>.mp4 로 (ffmpeg 필요 — 머리말)")
+    ap.add_argument("--no-frames", action="store_true", help="프레임은 쓰지 않는다(이미 프레임을 뽑은 녹화에서 영상만 남길 때)")
+    ap.add_argument("--ffmpeg", default=None, help="ffmpeg 실행 파일 (없으면 PATH → imageio_ffmpeg 순으로 찾는다)")
     ap.add_argument("--config", default=None)
     a = ap.parse_args()
     sys.stdout.reconfigure(errors="replace")
@@ -166,14 +215,19 @@ def main() -> int:
               f" · {len(times)}장{near}{' · 다시 튼 구간(건너뜀)' if repeat and not a.keep_repeats else ''}", flush=True)
         seen.extend(s[2].astype(np.int16) for s in samples if raw_a <= s[0] <= raw_b)
         if not repeat or a.keep_repeats:
-            plan.append((box, times))
-    total = sum(len(t) for _, t in plan)
+            plan.append((box, times, sa, sb))
+    total = sum(len(p[1]) for p in plan)
     if a.dry_run:
-        print(f"  넣을 프레임 {total}장 (보기만 했다)")
+        print(f"  넣을 프레임 {total}장 · 영상 {len(plan)}개 (보기만 했다)")
+        return 0
+    if a.save_clips:
+        if save_clips(a, plan, start) != 0:
+            return 2
+    if a.no_frames:
         return 0
     out_dir = cfg.unlabeled / a.camera
     wrote = skipped = 0
-    for (x0, y0, x1, y1), times in plan:
+    for (x0, y0, x1, y1), times, _sa, _sb in plan:
         for t in times:
             when = start + timedelta(seconds=t)
             dst = out_dir / f"{when:%Y%m%d}" / frame_name(a.camera, when)
