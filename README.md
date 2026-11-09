@@ -184,8 +184,9 @@ train/valid/test 로 나뉜 내보내기를 그대로 넣으면 셋을 모두 �
 좁히세요.
 
 **클래스 목록**은 `config.yaml` 의 `classes` → `data/visible/classes.txt` → 시드 라벨 순으로
-정합니다. 지금은 `config.yaml` 에 8개(bicycle, bus, car, motorcycle, person, scooter,
-truck, pickup)가 적혀 있습니다 — 밴은 car 입니다(2026-11-02 에 van 을 car 로 합쳤습니다). 순서가 곧
+정합니다. 지금은 `config.yaml` 에 10개(bicycle, bus, car, motorcycle, person, scooter,
+truck, pickup, responder, cone)가 적혀 있습니다 — 밴은 car 입니다(2026-11-02 에 van 을 car 로 합쳤습니다).
+responder(출동 차량)·cone(라바콘)은 2026-11-09 에 붙였고 판정은 [docs/label-rules.md](docs/label-rules.md) 에 있습니다. 순서가 곧
 클래스 번호라 **뒤에만 붙이고** 중간에 끼워 넣거나 빼지 마세요. 맨 끝 클래스를 다른 클래스에 합칠 때는
 `tools/merge_class.py` 를 씁니다(config.yaml 에서 먼저 빼고, 기본은 보기만). `.txt` 라벨을 쓴다면
 순서가 클래스 ID 와 맞아야 합니다.

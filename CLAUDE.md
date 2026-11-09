@@ -173,6 +173,8 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
 | `tools/import_o365.py` | Objects365 사진을 검수 대기로 넣는다(위 'Objects365') |
 | `tools/import_virat.py` | VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — 운영 모델 예측 + 모델이 그 자리에서 못 찾은 VIRAT 박스, 장면 = 카메라 `virat-XXYY`(docs/provenance.md 'VIRAT 가져오기'). 기본은 보기만·`--apply`, `--per-scene` 을 올려 다시 돌리면 모자란 만큼만 기존 프레임과 떨어진 곳에서 더 넣는다. 이미 넣은 검수 대기를 지금 모델로 다시 라벨링하는 것은 `--relabel`(사람이 고친 이미지는 건너뛴다, VIRAT 박스 없이는 `--model-only` — 0503 은 그렇게 했다). `cameras.yaml` 의 VIRAT 카메라에 `crop:` 이 있으면 그 영역만 쓴다(0503·0500·0101) — 이미 넣은 이미지는 `--recrop`(같은 행의 파일·크기를 바꾼다, `store.replace_file` — **돌린 뒤 검수 화면을 새로 고칠 것**: 열려 있던 옛 화면이 옛 기준 박스를 잘린 이미지에 저장할 수 있다). 이미 자른 장면을 더 좁힐 때는 `--keep-boxes`(다시 라벨링하지 않고 박스만 옮긴다 — 폭이 바뀌면 모델 예측이 달라진다). **`labeler.py label --all` 금지**(VIRAT 박스까지 예측으로 덮는다) |
+| `tools/ovd_propose.py` | OWLv2(이름만 주면 찾는 검출기)로 출동 차량·라바콘 후보를 JSONL 로(2026-11-09). **다른 가상 환경**(`E:\OpenVocab\.venv` — transformers)으로 돌고 DB 를 열지 않는다. 입력은 아래 `list` 가 쓴 TSV |
+| `tools/import_proposals.py` | 그 후보로 responder·cone 박스를 만들어 검수 대기로(11-09). `list`(이미지 목록) → `apply`(기본은 보기만, `--apply` 때 DB 를 뜨고 `source='bulk'` 묶음 'OWLv2 후보 …' 로 써서 검수 UI '변경 내역' 에서 되돌릴 수 있다 — **승인 이미지는 검수 대기로 간다**) → `restore`(되돌린 뒤 옛 승인 이미지를 승인으로). responder 후보가 기존 차량 박스와 IoU 0.5 이상이면 그 박스 클래스만 바꾼다. 결과·목록은 `runs/ovd/`(git 밖 — 이미지 경로 목록이라) |
 | `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
@@ -191,6 +193,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 
 | | 묻는 것 | 결과 |
 |---|---|---|
+| 0 | 경광등·출동 도색·표지가 **보이는** 출동 차량 — 소방·구급·경찰·도로공사 순찰·견인차, 뒤에 LED 화살표판을 단 차(11-09 추가 — 애매하면 아래 차종으로) | **responder** |
 | 1a | 적재함이 캡과 **나뉘어** 있고 **열려** 있다(호로·탈착 덮개·캐노피 포함) — **1톤급까지**(포터·봉고·다마스·미국식 픽업) | **pickup** |
 | 1b | 위와 같은데 **그보다 크다**(마이티·메가트럭·평판·덤프) | **truck** |
 | 2 | 적재함이 나뉘어 있고 차체에 고정된 **상자 바디**다(탑차·트레일러·캡섀시에 얹은 특장차) | **truck** |
@@ -271,7 +274,10 @@ scooter 1,031  truck 1,050  pickup 770
   - `import_virat.py --per-scene 50 --apply` 를 다시 돌리면 모자란 만큼 다시 채운다(지운 것과 같은 프레임을 다시 고를 수 있다).
   - 남은 후보 목록은 git 밖 `data/visible/virat_qa/`.
   - VIRAT 이미지는 묶음(grp)이 없어 '같은 자리 일괄 수정' 이 400 이다.
-- **클래스는 8개다**(pickup 은 09-20 에 사용자가 검수 UI 에서 추가했고, 같은 날 추가한 van 은 11-02 에 car 로 합쳤다).
+- **클래스는 10개다** — 11-09 에 responder(8, 출동 차량)·cone(9, 라바콘)을 붙였다(사용자 결정 — DetectView 유고 단서용, 판정은
+  docs/label-rules.md '출동 차량·라바콘'). **그날 박스는 아직 없고, 옛 승인 라벨에는 출동 차량이 truck·car 로, 라바콘은 배경으로 들어 있다** —
+  고치기 전에 이 둘을 넣어 학습하지 말 것(후보 찾기·미리 라벨은 `tools/ovd_propose.py` → `tools/import_proposals.py`).
+  그 전 8개: pickup 은 09-20 에 사용자가 검수 UI 에서 추가했고, 같은 날 추가한 van 은 11-02 에 car 로 합쳤다.
   **클래스 번호는 순서가 전부다** — config.yaml 의 `classes` 에 **뒤에만 붙이고** 중간에 끼우거나 빼지 말 것(박스가 번호로
   가리킨다). 맨 끝 클래스를 없앨 때는 `tools/merge_class.py` — van 합침 묶음은 van 을 되살리기 전에는 되돌리기가 409 로
   막힌다. 합치자 같은 자리에 car 가 둘이 된 5185(test)는 칠판 묶음 1 의 DB 6건에 들어 있다.

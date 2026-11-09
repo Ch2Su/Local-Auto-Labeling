@@ -39,6 +39,8 @@ __pycache__/
 # 스크립트(.sh·.py)와 메모는 그대로 담기므로 거기에 키를 적지 말 것.
 /runs/runpod/**/*.json
 /runs/runpod/**/*.jsonl
+# OWLv2 후보(tools/ovd_propose.py·import_proposals.py, 2026-11-09)는 이미지 경로·이름 목록이다 — 데이터 목록을 public 에 올리지 않는다
+/runs/ovd/
 
 # IDE 설정
 .idea/
