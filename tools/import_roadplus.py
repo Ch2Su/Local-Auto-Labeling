@@ -7,8 +7,11 @@
 - **구간** — 0.5초 넘게 끊기지 않은 '영상' 이 `--min-seg`(3초) 이상이면 한 구간. 앞 `--skip-head`(4초 — 전체 화면 안내 'Esc'·
   재생 막대가 겹친다. 11-09 첫 녹화를 2초로 뽑았더니 구간 첫 장 위쪽에 안내 글상자가 남았다)와 뒤 `--skip-tail`(1초)을 뺀다.
   마우스를 움직여 재생 막대가 겹친 프레임은 남을 수 있다 — 검수 때 볼 것.
-- **같은 영상을 다시 튼 구간** — 앞 구간들의 1초 간격 썸네일(64×36 흑백)과 평균 밝기 차 3 미만으로 80% 이상 겹치면 건너뛴다
-  (`--keep-repeats` 면 넣는다).
+- **같은 영상을 다시 튼 구간** — 구간의 1초 간격 썸네일(216×144 흑백)마다 앞 구간들 썸네일(초당 4장) 중 가장 가까운 것과의 평균
+  밝기 차를 재서, 중앙값 < 0.8 이고 80% 값 < 1.2 이면(거의 같은 화면이 내내 이어지면) 건너뛴다(`--keep-repeats` 면 넣는다).
+  처음엔 64×36 썸네일·차 3 미만으로 셌는데, 11-09 hw-05 녹화(차가 드문 거의 멈춘 장면)에서 새 영상 두 구간을 '다시 튼 것'
+  으로 잘못 뺐다 — 같은 재생 시점끼리의 차가 중앙값 2.0~2.7 로 구간 안 0.5초 이웃(0.9)보다 컸다. 다시 튼 영상이면 같은 원본이라
+  차가 압축 잡음만큼(1 아래)이어야 한다 — 진짜로 다시 튼 녹화로는 아직 재 보지 않았다.
 - **자르기·줄이기** — 그 구간에서 검지 않은 행·열의 범위가 영상 영역이다(원본 SD 를 3배로 키운 화면 — 11-07 녹화는 2160×1440 @ x=200).
   높이 720 으로 줄인다(SD 원본이라 잃는 것이 없다 — 11-07 사고 영상도 이렇게 다듬었다).
 - **프레임** — 구간 안에서 `--every`(기본 2초)마다 `unlabeled/<카메라>/<YYYYMMDD>/<카메라>_<YYYYMMDD_HHMMSS>_<밀리초>.jpg`
@@ -40,8 +43,9 @@ BAND = 0.047          # 양옆 띠 폭(화면 폭 비율)
 BLACK = 6.0           # 띠 평균 밝기가 이보다 작으면 검다
 TEXTURE = 20.0        # 가운데 표준편차가 이보다 크면 영상이 있다
 GAP = 0.5             # 이만큼(초)까지 끊겨도 한 구간
-REPEAT_DIFF = 3.0     # 썸네일 평균 밝기 차가 이보다 작으면 같은 장면
-REPEAT_SHARE = 0.8    # 구간 썸네일의 이 비율 이상이 앞 구간과 같으면 다시 튼 것
+THUMB = (216, 144)    # 다시 튼 구간을 가릴 썸네일 크기(3:2)
+REPEAT_MEDIAN = 0.8   # 가장 가까운 앞 썸네일과의 평균 밝기 차 — 중앙값이 이보다 작고
+REPEAT_P80 = 1.2      # 80% 값도 이보다 작으면 다시 튼 구간
 
 
 def frame_name(camera: str, t: datetime) -> str:
@@ -69,7 +73,7 @@ def scan(cap, cv2, np, fps: float, n: int):
             if ok:
                 g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
                 kind = classify(g, np)
-                thumb = cv2.resize(g, (64, 36), interpolation=cv2.INTER_AREA).astype(np.float32)
+                thumb = cv2.resize(g, THUMB, interpolation=cv2.INTER_AREA)   # uint8 — 녹화 4분이면 약 30 MB
                 out.append((i / fps, kind, thumb, g.mean(axis=0) if kind == "video" else None,
                             g.mean(axis=1) if kind == "video" else None))
         i += 1
@@ -148,14 +152,19 @@ def main() -> int:
 
     plan, seen = [], []
     for raw_a, raw_b, sa, sb in segments(samples, a.min_seg, a.skip_head, a.skip_tail):
-        thumbs = [s[2] for s in samples if sa <= s[0] <= sb][:: SCAN_FPS]
-        same = sum(1 for t in thumbs if any(np.abs(t - u).mean() < REPEAT_DIFF for u in seen))
-        repeat = bool(thumbs) and same / len(thumbs) >= REPEAT_SHARE
+        thumbs = [s[2].astype(np.int16) for s in samples if sa <= s[0] <= sb][:: SCAN_FPS]
+        near = ""
+        repeat = False
+        if seen and thumbs:
+            best = np.array([min(float(np.abs(t - u).mean()) for u in seen) for t in thumbs])
+            med, p80 = float(np.median(best)), float(np.percentile(best, 80))
+            repeat = med < REPEAT_MEDIAN and p80 < REPEAT_P80
+            near = f" · 앞 구간과 차 중앙 {med:.2f}·80% {p80:.2f}"
         box = crop_box(samples, raw_a, raw_b, np)
         times = [sa + k * a.every for k in range(int((sb - sa) / a.every) + 1)]
         print(f"  구간 {raw_a:6.1f}~{raw_b:6.1f}초 → 쓸 곳 {sa:6.1f}~{sb:6.1f}초 · 영역 {box[2] - box[0]}×{box[3] - box[1]} @ ({box[0]},{box[1]})"
-              f" · {len(times)}장{' · 다시 튼 구간(건너뜀)' if repeat and not a.keep_repeats else ''}", flush=True)
-        seen.extend(thumbs)
+              f" · {len(times)}장{near}{' · 다시 튼 구간(건너뜀)' if repeat and not a.keep_repeats else ''}", flush=True)
+        seen.extend(s[2].astype(np.int16) for s in samples if raw_a <= s[0] <= raw_b)
         if not repeat or a.keep_repeats:
             plan.append((box, times))
     total = sum(len(t) for _, t in plan)
