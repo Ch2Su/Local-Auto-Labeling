@@ -690,6 +690,10 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         if entry is None or entry["image_id"] != image_id:
             raise HTTPException(404, "그 이력을 찾을 수 없습니다.")
         which = payload.which if payload else "before"
+        # 그림을 잘라 바꾼 뒤(source='crop')에는 그 전 박스가 통째 화면 좌표라 되돌리면 어긋난다 (2026-11-09).
+        # 자르기 한 줄 자신은 '후' 만 지금 좌표다.
+        if any(c > entry_id or (c == entry_id and which == "before") for c in store.crop_entries(image_id)):
+            raise HTTPException(409, "이 기록 뒤에 그림을 잘라 박스 좌표가 달라져서 되돌릴 수 없습니다.")
         n_classes = len(store.get_classes())
         boxes = [Box(**b) for b in entry[which]]
         if any(b.cls >= n_classes for b in boxes):

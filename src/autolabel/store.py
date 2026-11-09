@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS box_history (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
     at       TEXT    NOT NULL,
-    source   TEXT    NOT NULL,     -- ui | predict | restore | bulk | revert
+    source   TEXT    NOT NULL,     -- ui | predict | restore | bulk | revert | crop
     batch    TEXT,                 -- 일괄 수정 한 번을 묶는 키 (같은 자리 일괄 수정)
     before   TEXT    NOT NULL,
     after    TEXT    NOT NULL,
@@ -720,23 +720,28 @@ class Store:
         expect: tuple[str, str],
         uncertainty: float,
         model_version: str,
+        keep_status: bool = False,
+        source: str = "predict",
     ) -> bool:
         """같은 이미지 행이 다른 파일(새 경로·크기)을 가리키게 하고 박스를 그 파일 기준으로 바꾼다 — 검수 대기로 둔다
         (2026-11-07, VIRAT 장면을 잘라 다시 쓸 때 `tools/import_virat.py --recrop`. id·태그·도메인·카메라는 그대로).
 
         apply_prediction 처럼 expect(시작 때의 status, updated_at)가 지금과 다르면 아무것도 쓰지 않고 False. 박스는
-        `_replace_boxes` 로 바꿔 이전 박스가 이력에 남는다. 파일 쓰기·옛 파일 지우기는 부르는 쪽이 한다(이 함수는 DB 만).
+        `_replace_boxes` 로 바꿔 이전 박스가 이력(source)에 남는다. 파일 쓰기·옛 파일 지우기는 부르는 쪽이 한다(이 함수는 DB 만).
         dhash 는 지운다 — 다음 분할 때 새 파일로 다시 잰다.
+        keep_status 면 상태(승인·휴지통 등)를 그대로 둔다 — 잘라 내기만 해서 남는 박스가 사람이 본 그대로일 때
+        (2026-11-09 `tools/crop_images.py`, source='crop' — 그 전 이력은 좌표가 달라 서버가 되돌리기를 막는다).
         """
         new = [b for b in boxes if b.is_valid()]
         with _write_lock, self.connect() as con:
             row = con.execute("SELECT status, updated_at FROM images WHERE id=?", (image_id,)).fetchone()
             if row is None or (row["status"], row["updated_at"]) != tuple(expect):
                 return False
-            self._replace_boxes(con, image_id, new, source="predict", batch=None)
+            self._replace_boxes(con, image_id, new, source=source, batch=None)
             con.execute(
-                "UPDATE images SET path=?, name=?, width=?, height=?, dhash=NULL, status='pending',"
-                " uncertainty=?, model_version=?, updated_at=? WHERE id=?",
+                "UPDATE images SET path=?, name=?, width=?, height=?, dhash=NULL,"
+                + ("" if keep_status else " status='pending',")
+                + " uncertainty=?, model_version=?, updated_at=? WHERE id=?",
                 (path, Path(path).name, int(width), int(height), float(uncertainty), model_version, _now(),
                  image_id),
             )
@@ -906,6 +911,13 @@ class Store:
                 (image_id, limit),
             ).fetchall()
         return [self._hist_row(r) for r in rows]
+
+    def crop_entries(self, image_id: int) -> list[int]:
+        """이 이미지를 잘라 바꾼 이력(source='crop')의 id. 그보다 앞선 이력의 박스는 자르기 전 화면 좌표라
+        지금 그림에 되돌리면 어긋난다 (2026-11-09, `tools/crop_images.py`)."""
+        with self.connect() as con:
+            return [int(r[0]) for r in con.execute(
+                "SELECT id FROM box_history WHERE image_id=? AND source='crop' ORDER BY id", (image_id,))]
 
     def history_count(self, image_id: int) -> int:
         with self.connect() as con:

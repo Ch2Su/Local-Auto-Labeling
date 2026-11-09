@@ -814,6 +814,12 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
                        태그의 포함 관계·오타 후보·같은 카메라 누수 (DB 읽기 전용, data/visible/domain_review/)
                        — 다 본 뒤 --mark-seen 으로 적어 두면 다음부터 새로 걸린 것만 낸다 (--all 이면 전부)
                        — '일부가 빠진 태그' 표는 태그별로 다 본 뒤 --mark-tag <태그> (--mark-seen 은 이 표를 적지 않는다)
+  import_roadplus.py   ROAD PLUS CCTV 를 OBS 로 녹화한 파일에서 전체 화면 구간만 골라 프레임으로
+                       (--save-clips 면 구간마다 720p 영상도. docs/provenance.md)
+  ovd_propose.py       OWLv2 로 출동 차량·라바콘 후보를 JSONL 로 (다른 가상 환경, DB 를 열지 않는다)
+  import_proposals.py  그 후보로 responder·cone 박스를 만들어 검수 대기로 (기본은 보기만, 묶음째 되돌릴 수 있다)
+  crop_images.py       DB 이미지를 사각형 영역으로 잘라 바꾼다 — 박스를 옮기고 상태는 그대로
+                       (기본은 보기만, --apply 로 DB 를 떠 두고 자름 — 뒤에 검수 화면을 새로 고칠 것)
 ```
 
 `data/`·`models/`·`weights/`·`export/`·`.venv/` 는 git 에 없습니다(데이터·가중치는 백업으로 지킵니다).

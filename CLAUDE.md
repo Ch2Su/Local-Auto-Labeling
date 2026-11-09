@@ -176,6 +176,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/import_roadplus.py` | ROAD PLUS(고속도로 교통정보) CCTV 를 OBS 로 녹화한 파일에서 **전체 화면으로 재생된 구간만** 골라(사이트 화면·빈 화면은 뺀다) 영상 영역을 잘라 높이 720 으로, `--every` 초마다 `unlabeled/<카메라>/` 에 extract_frames 와 같은 이름으로 쓴다(2026-11-09). 시각은 파일 수정 시각 − 길이. 다시 튼 구간은 건너뛴다. 카메라는 `cameras.yaml` 에 먼저(kind screen). 그다음 scan → label → OWLv2 미리 라벨. 원본을 지우기 전엔 `--save-clips data\visible\videos`(구간마다 720p 영상 — ffmpeg 필요, 이미 뽑은 녹화면 `--no-frames`) |
 | `tools/ovd_propose.py` | OWLv2(이름만 주면 찾는 검출기)로 출동 차량·라바콘 후보를 JSONL 로(2026-11-09). **다른 가상 환경**(`E:\OpenVocab\.venv` — transformers)으로 돌고 DB 를 열지 않는다. 입력은 아래 `list` 가 쓴 TSV |
 | `tools/import_proposals.py` | 그 후보로 responder·cone 박스를 만들어 검수 대기로(11-09). `list`(이미지 목록) → `apply`(기본은 보기만, `--apply` 때 DB 를 뜨고 `source='bulk'` 묶음 'OWLv2 후보 …' 로 써서 검수 UI '변경 내역' 에서 되돌릴 수 있다 — **승인 이미지는 검수 대기로 간다**) → `restore`(되돌린 뒤 옛 승인 이미지를 승인으로). responder 후보가 기존 차량 박스와 IoU 0.5 이상이면 그 박스 클래스만 바꾼다. 결과·목록은 `runs/ovd/`(git 밖 — 이미지 경로 목록이라) |
+| `tools/crop_images.py` | DB 이미지를 사각형 영역으로 잘라 바꾼다 — 박스는 그 영역 좌표로 옮기고(원래 넓이의 30% 미만만 남는 박스는 버림) **상태(승인·검수 대기·휴지통)는 그대로**(2026-11-09, hw-04 줌 화면 36장 — docs/provenance.md). 카메라와 id 로 고르고, 크기가 다른 이미지가 섞이면 멈춘다(같은 카메라라도 줌이 다르면 id 로 가른다). 기본은 보기만, `--apply` 때 DB 를 뜨고 옛 파일은 `<DB 폴더>/backups/crop_<시각>/` 로 옮긴다(목록도 거기 — git 밖). 이력 source 는 'crop'(검수 화면 '자르기') — 그 전 이력으로 되돌리기는 서버가 막는다(409). **돌린 뒤 검수 화면을 새로 고칠 것**(`--recrop` 과 같은 이유) |
 | `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
@@ -514,6 +515,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 - 여러 장을 연달아 고친 뒤에는 **박스가 줄어든 저장을 확인할 것**(상단 '변경 기록' 이나 `GET /api/history?shrunk=1`).
 - **박스를 바꾸는 길은 전부 `store._replace_boxes` 를 지난다**(변경 이력 `box_history` 에 그 이미지의 박스 목록 전후를 JSON 으로
   남긴다). 새 경로도 그걸 거치게 하고, `_write_lock` 은 **부르는 쪽이** 쥔다(안에서 다시 잡으면 멈춘다).
+  - 파일을 바꾼 이미지(`store.replace_file` — VIRAT `--recrop` 은 source predict, `tools/crop_images.py` 는 crop)는 그 전 이력의
+    박스가 옛 화면 좌표다. crop 은 서버가 그 전 이력으로 되돌리기를 막지만(`store.crop_entries`), VIRAT 자르기 이력은 가려내지 못한다.
 - DB 자동 백업(`store.backup_daily`)은 `<DB 폴더>/backups/` 에 하루 한 번, 최근 `backup.keep`(14)개 — 그 이름 꼴의 파일만 지운다.
   **시험 서버는 `backup.keep: 0` 으로 끌 것.**
 - 같은 자리 일괄 수정(`store.same_place` → `set_class_bulk`)은 적용 때 다시 찾아 미리 본 수와 다르면 409, 묶음째 되돌리기는 그

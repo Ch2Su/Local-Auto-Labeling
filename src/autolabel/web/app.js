@@ -1812,7 +1812,7 @@ function refresh() {
  * 서버가 박스를 저장할 때마다 '바뀌기 전·뒤' 를 box_history 에 남긴다. 여기서는 그걸
  * 보여 주고, 한 줄을 골라 '그 저장 전' 으로 되돌린다. 되돌린 것도 이력에 남는다. */
 
-const SRC_KO = { ui: "수정", predict: "자동 라벨", restore: "되돌림", bulk: "일괄 수정", revert: "일괄 취소" };
+const SRC_KO = { ui: "수정", predict: "자동 라벨", restore: "되돌림", bulk: "일괄 수정", revert: "일괄 취소", crop: "자르기" };
 
 function fmtTime(iso) {
   const d = new Date(iso);
