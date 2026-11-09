@@ -108,8 +108,9 @@ o365 행은 없고 `data/visible/unlabeled/o365/` 도 없다. 원본은 `E:\data
 - **실제 장소 이름은 git 에 넣지 말 것 — 문서·코드 주석·커밋 메시지 모두.** `cameras.yaml` 의 `place`(도로·교량·휴게소·IC·
   지사 이름, 화면에 찍힌 지명 글자)는 카메라 키(`hw-04` 처럼)로 쓴다. 11-09 에 안 올린 커밋 16개 중 13개에서 이것을 빼느라
   이력을 다시 썼다(사용자 요청 — 올리기 전이라 가능했다). 빼기 전 이력은 로컬 `refs/archive/pre-placename/main` 에 있다 —
-  **이 ref 도 push 하지 말 것**(대응표 `.git/placename-rewrite-20261109.map`). 카메라 키 자체도 로마자 지명이다(바꾸려면 DB
-  `images.camera`·폴더·파일 이름까지 바꿔야 한다 — 사용자 결정).
+  **이 ref 도 push 하지 말 것**(대응표 `.git/placename-rewrite-20261109.map`). **카메라 키도 지명이 드러나지 않게 짓는다** —
+  같은 날 옛 키(로마자 지명)였던 고속도로 카메라 9대를 `hw-01`–`hw-09` 로 바꾸고(DB·폴더·파일 이름까지 — docs/provenance.md)
+  안 올린 커밋의 옛 키도 한 번 더 다시 썼다(대응표 `.git/camkey-rewrite-20261109.map`). 새 카메라는 다음 번호로 등록한다.
 - **이 저장소의 `user.email` 은 `.git/config` 의 noreply 다**(`42445310+chisu0208@users.noreply.github.com`). 새로 클론한 곳에서는
   자동 커밋 훅이 돌기 전에 같은 설정을 할 것 — 안 하면 원래 메일이 다시 커밋에 들어간다. 계정 이름이 바뀐 뒤에도 이 메일의
   커밋은 앞 번호(id)로 `Ch2Su` 계정에 연결된다(11-08 에 7e5f275 로 확인).
