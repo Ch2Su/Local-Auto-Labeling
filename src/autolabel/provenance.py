@@ -320,38 +320,53 @@ def _indent(s: str) -> int:
     return len(s) - len(s.lstrip(" "))
 
 
+class _Layout:
+    """등록 파일을 줄 단위로 본 것 — 줄(줄끝 포함)·판별용 글자·주석/빈 줄 여부·'cameras:' 줄·묶음 끝·카메라 키 들여쓰기."""
+
+    def __init__(self, old: str, verb: str):
+        self.nl = "\r\n" if "\r\n" in old else "\n"
+        self.lines = old.splitlines(keepends=True)
+        self.plain = [ln.rstrip("\r\n") for ln in self.lines]
+        if self.plain:
+            self.plain[0] = self.plain[0].lstrip("﻿")
+        self.is_note = [not s.strip() or s.lstrip().startswith("#") for s in self.plain]
+        self.head = next((i for i, s in enumerate(self.plain) if _TOP_CAMERAS.match(s)), None)
+        if self.head is None:
+            raise ValueError(f"등록 파일에 'cameras:' 줄이 없어 {verb} 수 없습니다 — 손으로 고칠 것")
+        self.child = None
+        self.end = len(self.lines)
+        for j in range(self.head + 1, len(self.lines)):
+            if self.is_note[j]:
+                continue
+            if _indent(self.plain[j]) == 0:
+                self.end = j
+                break
+            if self.child is None:
+                self.child = _indent(self.plain[j])
+
+    def entries(self):
+        """(키 줄 번호, 키, 그 아래 더 깊은 줄(안쪽 주석 포함)의 끝) — cameras 묶음 안의 카메라마다."""
+        for i in range(self.head + 1, self.end):
+            if self.is_note[i] or _indent(self.plain[i]) != self.child:
+                continue
+            m = _KEY_LINE.match(self.plain[i])
+            if not m:
+                continue
+            k = m.group("sq") if m.group("sq") is not None else m.group("dq") if m.group("dq") is not None \
+                else (m.group("pl") or "").strip()
+            j = i + 1
+            while j < self.end and (self.is_note[j] or _indent(self.plain[j]) > self.child):
+                j += 1
+            yield i, k, j
+
+
 def _remove_camera_text(old: str, keys: list[str]) -> str:
-    lines = old.splitlines(keepends=True)
-    plain = [ln.rstrip("\r\n") for ln in lines]
-    if plain:
-        plain[0] = plain[0].lstrip("﻿")
-    is_note = [not s.strip() or s.lstrip().startswith("#") for s in plain]
-    head = next((i for i, s in enumerate(plain) if _TOP_CAMERAS.match(s)), None)
-    if head is None:
-        raise ValueError("등록 파일에 'cameras:' 줄이 없어 뺄 수 없습니다 — 손으로 고칠 것")
-    # cameras 묶음의 끝과 카메라 키의 들여쓰기
-    child = None
-    end = len(lines)
-    for j in range(head + 1, len(lines)):
-        if is_note[j]:
-            continue
-        if _indent(plain[j]) == 0:
-            end = j
-            break
-        if child is None:
-            child = _indent(plain[j])
+    lay = _Layout(old, "뺄")
+    plain, is_note, head, child = lay.plain, lay.is_note, lay.head, lay.child
     found: dict[str, tuple[int, int]] = {}
-    for i in range(head + 1, end):
-        if is_note[i] or _indent(plain[i]) != child:
-            continue
-        m = _KEY_LINE.match(plain[i])
-        k = (m.group("sq") if m and m.group("sq") is not None else m.group("dq") if m and m.group("dq") is not None
-             else (m.group("pl") or "").strip() if m else None)
+    for i, k, j in lay.entries():
         if k not in keys:
             continue
-        j = i + 1                                      # 그 아래 더 깊은 줄(안쪽 주석 포함)까지
-        while j < end and (is_note[j] or _indent(plain[j]) > child):
-            j += 1
         b = j                                          # 끝의 빈 줄·얕은 주석은 다음 키(또는 묶음 설명)의 것
         while b > i + 1 and is_note[b - 1] and (not plain[b - 1].strip() or _indent(plain[b - 1]) <= child):
             b -= 1
@@ -361,9 +376,192 @@ def _remove_camera_text(old: str, keys: list[str]) -> str:
         found[k] = (a, b)
     if set(found) != set(keys):
         raise ValueError(f"등록 파일에서 줄을 찾지 못한 카메라: {', '.join(sorted(set(keys) - set(found)))} — 손으로 고칠 것")
+    lines = lay.lines
     for a, b in sorted(found.values(), reverse=True):
         del lines[a:b]
     return "".join(lines)
+
+
+def camera_fields(path: Path) -> dict[str, dict]:
+    """카메라마다 화면에서 고칠 수 있는 칸(_FIELD_ORDER)의 지금 값 — 글자(없으면 None). '고치기' 칸을 채운다."""
+    if not path.exists():
+        return {}
+    try:
+        raw = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("cameras") or {}
+    except (yaml.YAMLError, AttributeError):
+        return {}
+    return {str(k): {f: (None if a.get(f) is None else str(a.get(f))) for f in _FIELD_ORDER}
+            for k, a in raw.items() if isinstance(a, dict)}
+
+
+def _same_value(field: str, old, new: str | None) -> bool:
+    """고치기 칸의 값이 지금 값과 같은 뜻인가 — 기본값(mount unknown·tz +09:00)·빈 값·약어(KST)를 같게 본다."""
+    if field == "mount":
+        return (str(old) if old is not None else "unknown") == (new or "unknown")
+    if field == "tz":
+        try:
+            return tz_text(parse_tz(str(old) if old is not None else DEFAULT_TZ)) == tz_text(parse_tz(new or DEFAULT_TZ))
+        except ValueError:
+            return False
+    return (str(old).strip() if old is not None and str(old).strip() else None) == new
+
+
+def edit_camera(path: Path, key: str, values: dict, *, new_key: str | None = None,
+                backup_dir: Path | None = None) -> tuple[Camera, list[str]]:
+    """등록된 카메라의 칸을 고친다 (2026-11-10, 검수 UI '영상 캡처' 의 카메라 고치기).
+
+    values 에 든 칸(_FIELD_ORDER)만 보고, 지금 값과 뜻이 같은 칸은 건드리지 않는다. 다른 속성(crop 등)·주석·순서는 그대로 —
+    바뀐 칸의 줄만 글자로 고친다: 한 줄짜리 값은 그 줄을 바꾸고(줄 끝 주석은 남긴다), 없던 칸은 _FIELD_ORDER 의 자리에 넣고,
+    비운 칸은 그 줄을 뺀다(split 은 'split:' 으로 비워 둔다). new_key 는 키 줄의 이름만 바꾼다 — 폴더·파일 이름·DB 는 모르니
+    그 카메라를 쓰는 이미지가 없는지는 부르는 쪽(server)이 본다. 값 규칙은 add_camera 와 같다(시간대는 normalize_tz 꼴로).
+    다시 읽어 이 카메라만 기대대로 바뀌었을 때만 쓰고(백업은 add 와 같다), 바뀐 것이 없으면 쓰지 않는다.
+    돌려주는 것: (고친 뒤의 Camera, 바뀐 칸 이름들 — 키를 바꿨으면 'key' 포함).
+    """
+    key = str(key or "").strip()
+    new_key = str(new_key).strip() if new_key else None
+    if new_key == key:
+        new_key = None
+    if new_key is not None and not _KEY.match(new_key):
+        raise ValueError(f"키 '{new_key}' — 영문 소문자·숫자·'-' 만, 첫 글자는 영문·숫자(폴더 이름이 된다)")
+    with _EDIT_LOCK:
+        if not path.exists():
+            raise CameraMissing(f"등록 파일이 없습니다: {path}")
+        old = path.read_bytes().decode("utf-8")        # 줄끝·BOM 을 그대로 두려고 바이트로
+        before = load_cameras(path)                    # 깨진 파일이면 ValueError — 손대지 않는다
+        if key not in before:
+            raise CameraMissing(f"등록돼 있지 않은 카메라: {key}")
+        if new_key is not None and new_key in before:
+            raise CameraExists(f"카메라 '{new_key}' 는 이미 등록돼 있습니다")
+        raw_before = (yaml.safe_load(old) or {}).get("cameras") or {}
+        cur = dict(raw_before.get(key) or {})
+        edits: dict[str, str | None] = {}
+        for f in _FIELD_ORDER:
+            if f not in values:
+                continue
+            v = values[f]
+            if v is not None and not isinstance(v, str):
+                raise ValueError(f"{f}: 글자로 적을 것")
+            v = (v or "").strip()
+            if any(ord(ch) < 32 for ch in v):
+                raise ValueError(f"{f}: 한 줄로 적을 것(줄바꿈·탭 없이)")
+            v = v or None
+            if f == "tz" and v:
+                v = normalize_tz(v) or v
+                parse_tz(v)                            # 못 풀면 ValueError
+            if _same_value(f, cur.get(f), v):
+                continue
+            if f == "tz" and v == DEFAULT_TZ:
+                v = None                               # 기본값은 적지 않는다
+            edits[f] = v
+        merged = {**cur, **{f: v for f, v in edits.items() if v is not None or f == "split"}}
+        for f, v in edits.items():
+            if v is None and f != "split":
+                merged.pop(f, None)
+        if merged.get("kind") not in KINDS:
+            raise ValueError(f"kind 는 {'|'.join(KINDS)} 중 하나 (지금 {merged.get('kind')!r})")
+        if (merged.get("mount") or "unknown") not in MOUNTS:
+            raise ValueError(f"mount 는 {'|'.join(MOUNTS)} 중 하나 (지금 {merged.get('mount')!r})")
+        if merged.get("split") not in (None, *SPLITS):
+            raise ValueError(f"split 은 비우거나 {'|'.join(SPLITS)} (지금 {merged.get('split')!r})")
+        if not str(merged.get("place") or "").strip():
+            raise ValueError("place(장소 이름)를 적을 것")
+        if not edits and new_key is None:
+            return before[key], []
+        new = _edit_camera_text(old, key, edits, new_key)
+        final = new_key or key
+        tmp = path.with_name(f"{path.name}.{secrets.token_hex(3)}.tmp")
+        try:
+            tmp.write_text(new, encoding="utf-8", newline="")
+            try:
+                after = load_cameras(tmp)
+                raw_after = (yaml.safe_load(new) or {}).get("cameras") or {}
+            except (ValueError, yaml.YAMLError) as exc:
+                raise ValueError(f"고친 결과를 읽지 못해 아무것도 쓰지 않았습니다 — {exc}") from exc
+            others = set(before) - {key}
+            ok = (set(after) == others | {final}
+                  and all(after[k] == before[k] for k in others)
+                  and set(raw_after) == (set(raw_before) - {key}) | {final}
+                  and all(raw_after[k] == raw_before[k] for k in raw_before if k != key)
+                  and raw_after.get(final) == merged)
+            if not ok:
+                raise ValueError("고친 결과를 다시 읽으니 기대와 달라 아무것도 쓰지 않았습니다 — 이 카메라의 줄 모양(여러 줄 값·"
+                                 f"들여쓰기)을 {path.name} 에서 손으로 확인할 것")
+            _backup_and_swap(path, tmp, backup_dir)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return after[final], list(edits) + (["key"] if new_key else [])
+
+
+def _line_comment(text: str) -> str:
+    """'    place: x  # 메모' 의 줄 끝 주석 — 떼어도 값이 같게 읽히는 첫 ' #' 부터. 없으면 ''(따옴표 안의 # 은 주석이 아니다)."""
+    s = text.strip()
+    try:
+        whole = yaml.safe_load(s)
+    except yaml.YAMLError:
+        return ""
+    for p in range(1, len(s)):
+        if s[p] == "#" and s[p - 1] in " \t":
+            try:
+                if yaml.safe_load(s[:p]) == whole:
+                    return s[p:]
+            except yaml.YAMLError:
+                continue
+    return ""
+
+
+def _edit_camera_text(old: str, key: str, edits: dict, new_key: str | None) -> str:
+    lay = _Layout(old, "고칠")
+    plain, is_note, nl = lay.plain, lay.is_note, lay.nl
+    hit = next(((i, j) for i, k, j in lay.entries() if k == key), None)
+    if hit is None:
+        raise ValueError(f"등록 파일에서 '{key}' 의 줄을 찾지 못했습니다 — 손으로 고칠 것")
+    i, j = hit
+    # 이 카메라의 줄을 조각으로: 속성(그 줄 + 더 깊은 이어진 줄) · 그 밖(주석·빈 줄)
+    attr_ind = next((_indent(plain[k]) for k in range(i + 1, j) if not is_note[k]), (lay.child or 2) * 2)
+    chunks: list[list] = []                            # [이름 또는 None, 줄 목록]
+    k = i + 1
+    while k < j:
+        if is_note[k] or _indent(plain[k]) != attr_ind:
+            chunks.append([None, [lay.lines[k]]])
+            k += 1
+            continue
+        m = re.match(r"""^\s*([^\s:#'"][^:#]*?)\s*:(?:\s|$)""", plain[k])
+        e = k + 1
+        while e < j and not is_note[e] and _indent(plain[e]) > attr_ind:
+            e += 1
+        chunks.append([m.group(1) if m else None, lay.lines[k:e]])
+        k = e
+
+    def line(name: str, value, comment: str = "") -> str:
+        text = f"{name}:" if value is None else yaml.safe_dump({name: value}, allow_unicode=True, width=10**9).rstrip("\n")
+        return " " * attr_ind + text + (f"  {comment}" if comment else "") + nl
+
+    for name, value in edits.items():
+        pos = next((n for n, c in enumerate(chunks) if c[0] == name), None)
+        if pos is not None:
+            if value is None and name != "split":
+                del chunks[pos]                        # 비운 칸은 줄을 뺀다
+            else:
+                first = chunks[pos][1][0].rstrip("\r\n")
+                chunks[pos][1] = [line(name, value, _line_comment(first) if len(chunks[pos][1]) == 1 else "")]
+            continue
+        if value is None and name != "split":
+            continue                                   # 없던 칸을 비우기 — 할 일 없음
+        later = _FIELD_ORDER[_FIELD_ORDER.index(name) + 1:]
+        at = next((n for n, c in enumerate(chunks) if c[0] in later), None)
+        if at is None:                                 # 뒤 칸이 없으면 마지막 속성 바로 뒤(끝의 주석보다 앞)
+            at = max((n + 1 for n, c in enumerate(chunks) if c[0] is not None), default=0)
+        chunks.insert(at, [name, [line(name, value)]])
+    head_line = lay.lines[i]
+    if new_key is not None:
+        m = re.match(r"""^(\s*)('[^']*'|"[^"]*"|[^\s:#'"][^:#]*?)(\s*:.*)$""", plain[i])
+        if not m:
+            raise ValueError(f"'{key}' 의 키 줄을 읽지 못했습니다 — 손으로 고칠 것")
+        text = new_key if yaml.safe_load(new_key) == new_key else f"'{new_key}'"
+        head_line = m.group(1) + text + m.group(3) + head_line[len(head_line.rstrip("\r\n")):]
+    body = [ln for c in chunks for ln in c[1]]
+    lay.lines[i:j] = [head_line] + body
+    return "".join(lay.lines)
 
 
 def _append_camera_text(old: str, key: str, fields: dict, comment: str | None) -> str:

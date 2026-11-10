@@ -350,13 +350,17 @@
           <span class="cap-cam-col"><select id="cap-camera"></select>
             <span class="cap-cam-acts">
               <button id="cap-cam-new" class="btn btn-sm" title="새 카메라를 data/visible/cameras.yaml 에 등록합니다(이 PC 에만 있는 파일 — git 에 넣지 않습니다)">＋ 새로</button>
+              <button id="cap-cam-edit" class="btn btn-sm" title="등록된 카메라의 장소·종류·설치·분할·화면·해상도·권리·시간대(이미지가 없으면 키도)를 고칩니다 — cameras.yaml 의 그 카메라 줄만 바뀝니다">고치기…</button>
               <button id="cap-cam-del" class="btn btn-sm" title="등록된 카메라를 골라 cameras.yaml 에서 뺍니다 — DB 나 카메라 폴더에 이미지가 남아 있는 카메라는 지울 수 없습니다">지우기…</button>
             </span></span></div>
         <!-- 새 카메라 등록 (2026-11-10, provenance.add_camera): cameras.yaml 끝에 글자로 덧붙인다(주석·다른 카메라 그대로).
              수정·삭제는 파일을 손으로 고친다 -->
         <div id="cap-cam-form" class="cap-cam-form hidden">
-          <div class="cap-note">새 카메라 — <b>cameras.yaml</b> 에 더합니다(이 PC 에만 있는 파일, git 에 넣지 않음).
-            고치거나 지우려면 그 파일을 손으로 고칩니다.</div>
+          <div class="cap-note cc-add-only">새 카메라 — <b>cameras.yaml</b> 에 더합니다(이 PC 에만 있는 파일, git 에 넣지 않음).</div>
+          <div class="cap-note cc-edit-only">카메라 고치기 — <b>cameras.yaml</b> 에서 이 카메라의 줄만 고칩니다. 주석·crop 같은 다른
+            속성은 그대로이고, 바꾸기 전 파일은 backups/cameras_&lt;시각&gt;.yaml 에 남습니다.</div>
+          <label class="cap-field cc-edit-only"><span>고칠 것</span><select id="cc-target"></select></label>
+          <div id="cc-lock" class="cap-note warn cc-edit-only"></div>
           <label class="cap-field"><span>키</span><input id="cc-key" placeholder="예: hw-10" maxlength="40" autocomplete="off"
                  title="폴더·파일 이름이 되고 문서·커밋에도 그대로 남습니다 — 영문 소문자·숫자·'-' 만, 지명이 드러나지 않게 번호로"></label>
           <div id="cc-key-hint" class="dim cap-note"></div>

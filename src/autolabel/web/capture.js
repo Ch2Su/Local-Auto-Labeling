@@ -26,6 +26,8 @@ const C = {
   keepDirty: false,
   startTimer: null,
   startPending: null, // 아직 서버에 안 남긴 시작 시각 {sid, start}
+  camMode: "add",     // 카메라 칸: "add" '＋ 새로' / "edit" '고치기…' (같은 칸을 함께 쓴다)
+  camEditDirty: false,// 고치기 칸을 손댔나 — 손댄 뒤로는 새로 받은 목록으로 다시 채우지 않는다
   hintHtml: "",       // 시작 시각 안내 — 바뀔 때만 다시 쓴다(뽑는 동안 0.7초마다 그리면 누르던 버튼이 사라진다)
   xhr: null,          // 올리는 중인 요청
   committing: false,
@@ -851,13 +853,78 @@ function capKeySeries() {
 
 const CAP_KEY_RE = /^[a-z0-9][a-z0-9-]*$/;
 
+/** 등록·고치기 칸을 처음 값으로 (고치던 카메라의 값이 새 카메라에 남지 않게). */
+function capCamFormReset() {
+  for (const id of ["#cc-key", "#cc-place", "#cc-view", "#cc-rights", "#cc-res"]) $(id).value = "";
+  $("#cc-split").value = "";
+  $("#cc-kind").value = "cctv";
+  $("#cc-mount").value = "unknown";
+  $("#cc-tz").value = "+09:00";
+  $("#cc-key").disabled = false;
+  $("#cc-split").disabled = false;
+}
+
+/** '＋ 새로' — 같은 칸을 등록 모드로 연다. */
 function capCamFormOpen() {
   capCamDelClose();
-  $("#cap-cam-form").classList.remove("hidden");
+  const form = $("#cap-cam-form");
+  if (C.camMode === "edit") capCamFormReset();
+  C.camMode = "add";
+  form.classList.remove("edit");
+  $("#cc-save").textContent = "등록";
+  form.classList.remove("hidden");
   const v = C.cur && C.cur.video;
   if (!$("#cc-res").value && v && v.width && v.height) $("#cc-res").value = `${v.width}x${v.height}`;   // 지금 영상의 해상도
   capCamHint();
   $("#cc-key").focus();
+}
+
+/** '고치기…' — 같은 칸을 고치기 모드로 연다. 지금 영상이 고른 카메라(없으면 첫 카메라)를 채우고, 쓰는 곳을 새로 받아
+ *  (그새 이미지가 들어왔을 수 있다) 손대기 전이면 다시 채운다. */
+function capCamEditOpen(key) {
+  capCamDelClose();
+  if (!C.cameras.length) { toast("등록된 카메라가 없습니다", true); return; }
+  C.camMode = "edit";
+  const form = $("#cap-cam-form");
+  form.classList.add("edit");
+  form.classList.remove("hidden");
+  $("#cc-save").textContent = "고치기";
+  const sel = $("#cc-target");
+  sel.innerHTML = C.cameras.map((c) => `<option value="${esc(c.key)}">${esc(c.key)}</option>`).join("");
+  const has = (k) => k && C.cameras.some((c) => c.key === k);
+  const pick = has(key) ? key : has(C.cur && C.cur.camera) ? C.cur.camera : C.cameras[0].key;
+  sel.value = pick;
+  capCamEditFill(pick);
+  capLoadList().then(() => {
+    if (C.camMode === "edit" && sel.value === pick && !C.camEditDirty) capCamEditFill(pick);
+  }).catch(() => {});
+}
+
+/** 고칠 카메라의 지금 값을 칸에 채우고, 바꿀 수 없는 칸(쓰는 이미지가 있으면 키, 분할이 정해진 이미지가 있으면 분할)을 막는다. */
+function capCamEditFill(key) {
+  const c = C.cameras.find((x) => x.key === key);
+  if (!c) return;
+  const f = c.fields || {};
+  $("#cc-key").value = c.key;
+  $("#cc-place").value = f.place || c.place || "";
+  $("#cc-kind").value = f.kind || c.kind || "cctv";
+  $("#cc-mount").value = f.mount || c.mount || "unknown";
+  $("#cc-split").value = f.split || c.split || "";
+  $("#cc-view").value = f.view || "";
+  $("#cc-res").value = f.resolution || "";
+  $("#cc-rights").value = f.rights || "";
+  $("#cc-tz").value = f.tz || c.tz || "+09:00";
+  const files = c.files || [];
+  const used = (c.db || 0) > 0 || files.length > 0;
+  $("#cc-key").disabled = used;
+  $("#cc-split").disabled = (c.assigned || 0) > 0;
+  const notes = [];
+  if (used) notes.push(`쓰는 이미지가 있어(${[c.db ? `DB ${c.db}장` : null, files.length ? "폴더에 파일" : null].filter(Boolean).join(" · ")}) 키는 바꿀 수 없습니다`);
+  if (c.assigned) notes.push(`이미지 ${c.assigned}장이 이미 분할에 들어가 있어 고정 분할은 바꿀 수 없습니다`);
+  if (c.db) notes.push(`시간대를 바꾸면 이 카메라 이미지의 촬영 시각을 새 시간대로 다시 셉니다`);
+  $("#cc-lock").textContent = notes.join(" · ");
+  C.camEditDirty = false;
+  capCamHint();
 }
 
 function capCamFormClose() {
@@ -867,10 +934,11 @@ function capCamFormClose() {
 /** 키 칸 아래 안내 — 잘못된 꼴·이미 있는 키, 계열마다 다음 번호(누르면 채운다). */
 function capCamHint() {
   const key = $("#cc-key").value.trim();
+  const editing = C.camMode === "edit" ? $("#cc-target").value : null;
   let warn = "";
   if (key && !CAP_KEY_RE.test(key)) warn = "영문 소문자·숫자·'-' 만, 첫 글자는 영문·숫자";
-  else if (key && C.cameras.some((c) => c.key === key)) warn = "이미 등록된 키입니다";
-  const chips = capKeySeries().slice(0, 4).map((e) => `<button class="btn btn-sm chip" data-key="${esc(e.next)}" `
+  else if (key && C.cameras.some((c) => c.key === key && c.key !== editing)) warn = "이미 등록된 키입니다";
+  const chips = editing ? [] : capKeySeries().slice(0, 4).map((e) => `<button class="btn btn-sm chip" data-key="${esc(e.next)}" `
     + `title="${esc(e.prefix)}… 계열(${e.n}대)의 다음 번호 — 종류·설치도 ${esc(e.last.key)} 를 따라 채웁니다">${esc(e.next)}</button>`);
   const el = $("#cc-key-hint");
   el.innerHTML = (warn ? `<span class="warn">${esc(warn)}</span><br>` : "")
@@ -891,7 +959,55 @@ function capCamPick(key) {
   $("#cc-place").focus();
 }
 
+/** '고치기' — 보낸 칸만 서버가 본다(막힌 키·분할 칸은 보내지 않는다). */
+async function capCamEditSave() {
+  const target = $("#cc-target").value;
+  const c = C.cameras.find((x) => x.key === target);
+  if (!c) return;
+  const val = (id) => $(id).value.trim();
+  const body = {
+    place: val("#cc-place"), kind: $("#cc-kind").value, mount: $("#cc-mount").value, view: val("#cc-view"),
+    resolution: val("#cc-res"), rights: val("#cc-rights"), tz: val("#cc-tz"),
+  };
+  if (!$("#cc-split").disabled) body.split = $("#cc-split").value;
+  const newKey = val("#cc-key");
+  if (!$("#cc-key").disabled && newKey !== target) {
+    if (!CAP_KEY_RE.test(newKey)) { toast("키는 영문 소문자·숫자·'-' 만 — 예: hw-10", true); $("#cc-key").focus(); return; }
+    if (C.cameras.some((x) => x.key === newKey)) { toast(`카메라 '${newKey}' 는 이미 등록돼 있습니다`, true); return; }
+    const prefix = newKey.replace(/\d+$/, "");
+    const known = new Set(C.cameras.map((x) => x.key.replace(/\d+$/, "")));
+    if (!known.has(prefix) && !confirm(`새 계열 '${prefix || newKey}' 입니다.\n키는 폴더·파일 이름과 문서·커밋 메시지에 그대로 `
+      + "남습니다 — 지명이 드러나지 않나요? (예: hw-10 처럼 번호로)")) return;
+    body.new_key = newKey;
+  }
+  if (!body.place) { toast("장소를 적으세요", true); $("#cc-place").focus(); return; }
+  if (body.split === "test" && (c.split || "") !== "test" && !confirm(`'${target}' 를 test 로 고정할까요?\n이 카메라의 이미지는 `
+    + "평가에만 쓰이고(학습에 안 들어감) 가릴 영역을 둘 수 없습니다.")) return;
+  const btn = $("#cc-save");
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/cameras/${encodeURIComponent(target)}`, { method: "PUT", body });
+    C.cameras = r.cameras || C.cameras;
+    C.cameraError = r.camera_error || null;
+    if (C.cur && C.cur.camera === target && r.key !== target) C.cur.camera = r.key;   // 서버도 세션을 새 키로 바꿨다
+    capRenderCameras();
+    capRenderCommit();
+    if (!r.changed || !r.changed.length) { toast("바뀐 것이 없습니다"); return; }
+    capCamFormClose();
+    const names = { kind: "종류", place: "장소", mount: "설치", split: "분할", tz: "시간대", view: "화면", resolution: "해상도",
+      rights: "권리", note: "메모", key: "키" };
+    toast(`카메라 ${r.key} 를 고쳤습니다 — ${r.changed.map((n) => names[n] || n).join("·")}`
+      + (r.recalculated ? ` (촬영 시각 ${r.recalculated}장을 새 시간대로 다시 셈)` : ""));
+  } catch (err) {
+    toast(err.message, true);
+    capLoadList().then(() => { if (C.camMode === "edit") capCamEditFill($("#cc-target").value); }).catch(() => {});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function capCamSave() {
+  if (C.camMode === "edit") { await capCamEditSave(); return; }
   const val = (id) => $(id).value.trim();
   const key = val("#cc-key");
   const body = {
@@ -1092,9 +1208,17 @@ $("#cap-camera").addEventListener("change", (e) => {
 });
 $("#cap-cam-new").onclick = (e) => {
   e.currentTarget.blur();
-  if ($("#cap-cam-form").classList.contains("hidden")) capCamFormOpen();
+  if ($("#cap-cam-form").classList.contains("hidden") || C.camMode !== "add") capCamFormOpen();
   else capCamFormClose();
 };
+$("#cap-cam-edit").onclick = (e) => {
+  e.currentTarget.blur();
+  if ($("#cap-cam-form").classList.contains("hidden") || C.camMode !== "edit") capCamEditOpen();
+  else capCamFormClose();
+};
+$("#cc-target").addEventListener("change", (e) => { e.target.blur(); capCamEditFill(e.target.value); });
+// 고치는 중에 받은 목록으로 칸을 다시 채우지 않게 — 손댄 뒤로는 그대로 둔다
+$("#cap-cam-form").addEventListener("input", (e) => { if (e.target.id !== "cc-target") C.camEditDirty = true; });
 $("#cc-cancel").onclick = () => capCamFormClose();
 $("#cap-cam-del").onclick = (e) => {
   e.currentTarget.blur();

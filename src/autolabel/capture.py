@@ -279,6 +279,18 @@ class CaptureManager:
             if hit:
                 s.save()
 
+    def rename_camera(self, old: str, new: str) -> None:
+        """등록에서 키를 바꾼 카메라를 골라 둔 세션은 새 키로."""
+        with self._lock:
+            items = list(self.sessions.values())
+        for s in items:
+            with s.lock:
+                hit = s.camera == old
+                if hit:
+                    s.camera = new
+            if hit:
+                s.save()
+
     def cameras(self) -> tuple[list[dict], str | None]:
         try:
             cams = load_cameras(self.cfg.cameras)

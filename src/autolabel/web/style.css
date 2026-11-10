@@ -784,6 +784,9 @@ body.view-capture #panel-label { display: none; }
   padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
 }
 .cap-cam-form .cap-field { grid-template-columns: 50px minmax(0, 1fr); }
+/* 같은 칸을 '새로'(add)와 '고치기'(edit)가 함께 쓴다 */
+.cap-cam-form:not(.edit) .cc-edit-only, .cap-cam-form.edit .cc-add-only { display: none; }
+.cap-cam-form input:disabled, .cap-cam-form select:disabled { opacity: 0.55; cursor: not-allowed; }
 .cap-cam-form .chip { padding: 0 6px; margin: 0 2px; font-size: 11px; }
 .cap-num { width: 64px; }
 .cap-time { width: 78px; }

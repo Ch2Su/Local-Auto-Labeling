@@ -714,6 +714,34 @@ class Store:
             rows = con.execute(f"SELECT camera, COUNT(*) AS n FROM images {where} GROUP BY camera").fetchall()
         return {r["camera"]: int(r["n"]) for r in rows}
 
+    def camera_image_stats(self) -> dict[str, dict]:
+        """카메라 등록을 고치거나 지울 때 보는 수 (2026-11-10, 휴지통 포함): {카메라: {db 이미지 수, assigned 분할이 정해진
+        수, masked 가릴 영역이 있는 수}}. 분할이 정해진 이미지가 있으면 고정 분할을 바꿀 수 없다(split.py 는 정한 분할을
+        옮기지 않아 같은 카메라가 두 분할로 갈린다)."""
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT camera, COUNT(*) AS n, SUM(split IS NOT NULL) AS assigned,"
+                " SUM(EXISTS(SELECT 1 FROM masks m WHERE m.image_id = images.id)) AS masked"
+                " FROM images WHERE camera IS NOT NULL GROUP BY camera"
+            ).fetchall()
+        return {r["camera"]: {"db": int(r["n"]), "assigned": int(r["assigned"] or 0), "masked": int(r["masked"] or 0)}
+                for r in rows}
+
+    def camera_images(self, camera: str) -> list[dict]:
+        """그 카메라의 이미지 (id, path, captured_at) — 휴지통 포함. 카메라 시간대를 고친 뒤 촬영 시각을 다시 셀 때 쓴다."""
+        with self.connect() as con:
+            rows = con.execute("SELECT id, path, captured_at FROM images WHERE camera=? ORDER BY id", (camera,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_captured_at(self, pairs: list[tuple[int, str | None]]) -> int:
+        """촬영 시각만 바꾼다 — 라벨이 아니라 updated_at 은 건드리지 않는다(set_domain 과 같은 이유, 자동 라벨링의
+        (상태, updated_at) 확인도 깨지 않는다). 바꾼 행 수."""
+        if not pairs:
+            return 0
+        with _write_lock, self.connect() as con:
+            cur = con.executemany("UPDATE images SET captured_at=? WHERE id=?", [(v, i) for i, v in pairs])
+            return cur.rowcount
+
     def next_image_id(self, current_id: int, status: str = "pending") -> int | None:
         """현재 이미지 다음으로 검수할 이미지. 목록과 같은 정렬 기준을 쓴다."""
         with self.connect() as con:

@@ -38,7 +38,8 @@ from .jobs import JobManager
 from .predictor import AutoLabeler, LiveDetector
 from .masks import MAX_MASKS
 from .masks import clean as clean_masks
-from .provenance import SPLITS, CameraExists, CameraMissing, add_camera, load_cameras, remove_cameras, tz_text
+from .provenance import (SPLITS, CameraExists, CameraMissing, add_camera, camera_fields, capture_time, edit_camera,
+                         load_cameras, remove_cameras, tz_text)
 from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
@@ -226,6 +227,20 @@ class CameraIn(BaseModel):
     key: str = Field(min_length=1, max_length=40)
     kind: str = "cctv"
     place: str = Field(min_length=1, max_length=120)
+    mount: str | None = None
+    split: str | None = None
+    tz: str | None = Field(None, max_length=20)
+    view: str | None = Field(None, max_length=200)
+    resolution: str | None = Field(None, max_length=40)
+    rights: str | None = Field(None, max_length=200)
+    note: str | None = Field(None, max_length=300)
+
+
+class CameraEditIn(BaseModel):
+    # 카메라 고치기 (2026-11-10, provenance.edit_camera) — 보낸 칸만 본다. new_key 는 그 카메라를 쓰는 이미지가 없을 때만
+    new_key: str | None = Field(None, max_length=40)
+    kind: str | None = None
+    place: str | None = Field(None, max_length=120)
     mount: str | None = None
     split: str | None = None
     tz: str | None = Field(None, max_length=20)
@@ -1333,20 +1348,79 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         return {"key": cam.key, "tz": tz_text(cam.tz), "cameras": cams, "camera_error": error}
 
     def _camera_usage(keys) -> dict[str, dict]:
-        """카메라마다 그 카메라를 쓰는 것 — DB 이미지 수(휴지통 포함)와 파일이 남은 카메라 폴더(unlabeled·labeled)."""
-        db = store.camera_counts(with_trashed=True)
+        """카메라마다 그 카메라를 쓰는 것 — DB 이미지 수(휴지통 포함)·그중 분할이 정해진 수·가릴 영역이 있는 수와
+        파일이 남은 카메라 폴더(unlabeled·labeled)."""
+        stats = store.camera_image_stats()
         out = {}
         for k in keys:
             folders = [d for d in (cfg.unlabeled / k, cfg.labeled / "images" / k, cfg.labeled / "labels" / k)
                        if d.is_dir() and any(p.is_file() for p in d.rglob("*"))]
-            out[k] = {"db": db.get(k, 0), "files": [_rel(d) for d in folders]}
+            s = stats.get(k, {})
+            out[k] = {"db": s.get("db", 0), "assigned": s.get("assigned", 0), "masked": s.get("masked", 0),
+                      "files": [_rel(d) for d in folders]}
         return out
 
     def _camera_rows() -> tuple[list[dict], str | None]:
-        """화면용 등록 카메라 목록 + 쓰는 곳(db·files) — 지우기 칸이 지울 수 없는 카메라를 가린다."""
+        """화면용 등록 카메라 목록 + 쓰는 곳(db·assigned·masked·files) + 고치기 칸에 채울 지금 값(fields)."""
         cams, error = capman.cameras()
         usage = _camera_usage([c["key"] for c in cams])
-        return [{**c, **usage[c["key"]]} for c in cams], error
+        fields = camera_fields(cfg.cameras)
+        return [{**c, **usage[c["key"]], "fields": fields.get(c["key"], {})} for c in cams], error
+
+    @app.put("/api/cameras/{key}")
+    def change_camera(key: str, payload: CameraEditIn) -> dict:
+        """등록된 카메라를 고친다 (영상 캡처 탭의 '고치기…', 2026-11-10). 보낸 칸만 보고 그 줄만 고친다(provenance.edit_camera).
+        막는 것(409, 아무것도 안 바꿈): 이미지가 있는 카메라의 키 바꾸기(폴더·파일 이름·DB 가 그 키를 쓴다), 분할이 정해진
+        이미지가 있는 카메라의 고정 분할 바꾸기(split.py 는 정한 분할을 옮기지 않아 같은 카메라가 두 분할로 갈린다), 가릴 영역이
+        있는 이미지가 있는데 test 로 고정하기. 시간대를 바꾸면 그 카메라 이미지의 촬영 시각을 새 시간대로 다시 센다(파일 이름의
+        시각 — EXIF 에 시간대가 있던 것과 다시 셀 수 없는 것은 그대로). 넣기·스캔과 겹치지 않게 지우기와 같은 잠금을 쥔다."""
+        values = payload.model_dump(exclude_unset=True)
+        new_key = (values.pop("new_key", None) or "").strip() or None
+        with capman.commit_lock, ingest_lock:
+            try:
+                old = load_cameras(cfg.cameras).get(key)
+            except ValueError as exc:
+                raise HTTPException(400, f"카메라 등록 파일을 읽지 못했습니다:\n{exc}") from None
+            if old is None:
+                raise HTTPException(404, f"등록돼 있지 않은 카메라: {key}")
+            use = _camera_usage([key])[key]
+            if new_key and new_key != key and (use["db"] or use["files"]):
+                where = ", ".join(([f"DB 이미지 {use['db']}장"] if use["db"] else []) + [f"{f} 에 파일" for f in use["files"]])
+                raise HTTPException(409, f"'{key}' 를 쓰는 이미지가 있어 키를 바꿀 수 없습니다({where}) — 폴더·파일 이름·DB 가 "
+                                         "이 키를 씁니다. 키 말고 다른 칸은 고칠 수 있습니다.")
+            if "split" in values:
+                want = (values["split"] or "").strip() or None
+                if want != old.split and use["assigned"]:
+                    raise HTTPException(409, f"'{key}' 의 이미지 {use['assigned']}장이 이미 분할에 들어가 있어 고정 분할을 바꿀 수 "
+                                             "없습니다 — 바꾸면 이 카메라가 두 분할로 갈립니다(정한 분할은 옮기지 않는다).")
+                if want == "test" and want != old.split and use["masked"]:
+                    raise HTTPException(409, f"'{key}' 의 이미지 {use['masked']}장에 가릴 영역이 있어 test 로 고정할 수 없습니다 — "
+                                             "test 이미지에는 가릴 영역을 둘 수 없습니다(먼저 지울 것).")
+            try:
+                cam, changed = edit_camera(cfg.cameras, key, values, new_key=new_key,
+                                           backup_dir=cfg.db.parent / "backups")
+            except CameraMissing as exc:
+                raise HTTPException(404, str(exc)) from None
+            except CameraExists as exc:
+                raise HTTPException(409, str(exc)) from None
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from None
+            recalculated = 0
+            if "tz" in changed and use["db"]:
+                pairs = []
+                for r in store.camera_images(cam.key):
+                    v = capture_time(Path(r["path"]), cam.tz)
+                    if v is not None and v != r["captured_at"]:   # 다시 셀 수 없으면(이름에 시각 없음·파일 없음) 그대로
+                        pairs.append((r["id"], v))
+                recalculated = store.set_captured_at(pairs)
+        if "key" in changed:
+            capman.rename_camera(key, cam.key)
+        if changed:
+            print(f"[{label}] 카메라 고침: {key}{f' -> {cam.key}' if cam.key != key else ''} ({', '.join(changed)})"
+                  + (f", 촬영 시각 {recalculated}장 다시 셈" if recalculated else ""))
+        cams, error = _camera_rows()
+        return {"key": cam.key, "changed": changed, "recalculated": recalculated, "tz": tz_text(cam.tz),
+                "cameras": cams, "camera_error": error}
 
     @app.post("/api/cameras/remove")
     def unregister_cameras(payload: CameraRemoveIn) -> dict:
