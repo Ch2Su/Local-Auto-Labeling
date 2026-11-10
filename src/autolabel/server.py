@@ -10,6 +10,7 @@ import math
 import os
 import re
 import secrets
+import threading
 import unicodedata
 from collections import Counter
 from datetime import datetime
@@ -17,16 +18,19 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
+from starlette.requests import ClientDisconnect
 from starlette.responses import JSONResponse, PlainTextResponse
 
+from .capture import MAX_EVERY, MAX_FRAMES, MIN_EVERY, CaptureError, CaptureManager
 from .config import ROOT, Config, resolve
 from .export import default_export_dir, export_yolo
 from .ingest import discover_classes, ingest
@@ -194,6 +198,29 @@ class SegmentIn(BaseModel):
     cls: int = Field(0, ge=0)
 
 
+class CaptureExtractIn(BaseModel):
+    # 영상 캡처 (2026-11-10, capture.py) — 몇 초마다 한 장, 뽑을 구간(영상 안 초). 범위 확인은 CaptureManager 가 한다
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    every: float
+    t_from: float = 0.0
+    t_to: float | None = None
+
+
+class CaptureStateIn(BaseModel):
+    # 화면에서 고른 것 — 다시 열면 이어지게 남긴다. drop 은 화면이 아는 앞 upto 장 안에서 뺄 번호
+    camera: str | None = Field(None, max_length=64)
+    start: str | None = Field(None, max_length=40)
+    drop: list[int] | None = None
+    upto: int | None = Field(None, ge=0)
+
+
+class CaptureCommitIn(BaseModel):
+    camera: str = Field(min_length=1, max_length=64)
+    start: str = Field(min_length=1, max_length=40)
+    keep: list[int]
+
+
 _ID_MAX = 2**63 - 1      # SQLite INTEGER 의 상한
 
 
@@ -345,6 +372,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     bind_host 는 서버가 연 주소(labeler.py review 의 --host, 없으면 config 의 server.host) — _RequestGuard 참고."""
     store = Store(cfg.db)
     jobs = JobManager(label)          # label 은 'GPU 를 누가 쓰는 중' 안내에 쓰인다
+    # 스캔(ingest)은 '폴더 스캔' 작업과 영상 캡처의 '넣기'(작업 큐 밖, capture.py)가 함께 부른다 — 겹치지 않게
+    ingest_lock = threading.Lock()
     sam = Segmenter(cfg)
     live = LiveDetector(cfg)          # '예측 비교'(P). 처음 쓸 때 올린다
     app = FastAPI(title="Local Auto Labeling", docs_url="/api/docs")
@@ -1062,7 +1091,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     @app.post("/api/jobs/scan")
     def job_scan() -> dict:
         def work(job) -> dict:
-            report = ingest(cfg, store)
+            with ingest_lock:
+                report = ingest(cfg, store)
             discover_classes(cfg, store)
             print(report.summary())
             return {"counts": store.counts(), "classes": store.get_classes()}
@@ -1240,6 +1270,116 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         if job is None:
             raise HTTPException(404, "작업을 찾을 수 없습니다.")
         return job.to_dict()
+
+    # ------------------------------------------------------------------ 영상 캡처 (2026-11-10, capture.py)
+    # 영상을 올려 몇 초마다 한 장 뽑고, 고른 것만 unlabeled/<카메라>/ 에 넣는다. 작업 큐(jobs)를 쓰지 않는다 — 학습이
+    # 도는 몇 시간 동안에도 캡처할 수 있게. 넣기의 스캔만 '폴더 스캔' 과 같은 잠금(ingest_lock)을 쥔다.
+
+    def _capture_ingest():
+        with ingest_lock:
+            report = ingest(cfg, store)
+        print(f"[{label}] 영상 캡처 넣기 — 스캔:\n{report.summary()}")
+        return report
+
+    def _capture_blocker() -> str | None:
+        job = jobs.current()
+        if job is not None and job.status == "running" and job.kind in ("tidy", "purge"):
+            name = {"tidy": "정리", "purge": "휴지통 비우기"}[job.kind]
+            return f"'{name}' 작업이 파일을 옮기는 중입니다 — 끝난 뒤 넣으세요."
+        return None
+
+    capman = CaptureManager(cfg, ingest=_capture_ingest, blocker=_capture_blocker,
+                            known_paths=lambda: {os.path.normcase(p) for p in store.known_statuses()})
+
+    def _cap(fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except CaptureError as exc:
+            raise HTTPException(exc.status, str(exc)) from None
+
+    @app.get("/api/capture")
+    def capture_list() -> dict:
+        cams, error = capman.cameras()
+        return {"sessions": capman.list(), "cameras": cams, "camera_error": error,
+                "unlabeled": ui_paths["unlabeled"],
+                "limits": {"min_every": MIN_EVERY, "max_every": MAX_EVERY, "max_frames": MAX_FRAMES}}
+
+    @app.post("/api/capture/upload")
+    async def capture_upload(request: Request, name: str, size: int | None = None,
+                             mtime: int | None = None) -> dict:
+        """영상 파일을 본문 그대로 받는다(multipart 가 아니다 — 몇 GB 를 메모리에 올리지 않고 8MB 씩 쓴다).
+        size 는 브라우저가 아는 파일 크기(받은 것과 다르면 버린다), mtime 은 파일 수정 시각(ms) — 시작 시각 제안용."""
+        sess, dst = await run_in_threadpool(_cap, capman.begin_upload, name, size, mtime)
+        written = 0
+        try:
+            with open(dst, "wb") as f:
+                buf = bytearray()
+                async for chunk in request.stream():
+                    buf += chunk
+                    if len(buf) >= 8 << 20:
+                        await run_in_threadpool(f.write, bytes(buf))
+                        written += len(buf)
+                        buf.clear()
+                if buf:
+                    await run_in_threadpool(f.write, bytes(buf))
+                    written += len(buf)
+        except ClientDisconnect:
+            await run_in_threadpool(capman.discard, sess.sid, force=True)
+            raise HTTPException(400, "올리기가 끊겼습니다.") from None
+        except OSError as exc:
+            await run_in_threadpool(capman.discard, sess.sid, force=True)
+            raise HTTPException(500, f"영상을 쓰지 못했습니다: {exc}") from exc
+        if not written or (size is not None and written != size):
+            await run_in_threadpool(capman.discard, sess.sid, force=True)
+            raise HTTPException(400, f"받은 크기가 다릅니다({written:,} / {size:,} 바이트) — 다시 올리세요."
+                                if written else "빈 파일입니다.")
+        return await run_in_threadpool(_cap, capman.finish_upload, sess, written)
+
+    @app.get("/api/capture/{sid}")
+    def capture_get(sid: str, since: int = 0) -> dict:
+        """세션 상세 + since 번째부터의 프레임 — 뽑는 동안 화면이 새 것만 받아 간다(run 이 바뀌면 처음부터)."""
+        return _cap(capman.get, sid).detail(since)
+
+    @app.post("/api/capture/{sid}/extract")
+    def capture_extract(sid: str, payload: CaptureExtractIn) -> dict:
+        return _cap(capman.start_extract, sid, payload.every, payload.t_from, payload.t_to)
+
+    @app.post("/api/capture/{sid}/stop")
+    def capture_stop(sid: str) -> dict:
+        return _cap(capman.stop_extract, sid)
+
+    @app.put("/api/capture/{sid}/state")
+    def capture_state(sid: str, payload: CaptureStateIn) -> dict:
+        return _cap(capman.update, sid, camera=payload.camera, start=payload.start, drop=payload.drop,
+                    upto=payload.upto)
+
+    @app.post("/api/capture/{sid}/commit")
+    def capture_commit(sid: str, payload: CaptureCommitIn) -> dict:
+        return _cap(capman.commit, sid, payload.camera, payload.start, payload.keep)
+
+    @app.delete("/api/capture/{sid}")
+    def capture_discard(sid: str) -> dict:
+        return {"ok": True, "left": _cap(capman.discard, sid)}
+
+    def _capture_file(sid: str, i: int, thumb: bool):
+        s = _cap(capman.get, sid)
+        with s.lock:
+            n = len(s.frames)
+        if not 0 <= i < n:
+            raise HTTPException(404, "그런 프레임이 없습니다.")
+        path = s.frame_path(i, thumb=thumb)
+        if not path.exists():
+            raise HTTPException(410, "프레임 파일이 없습니다 — 이미 넣었을 수 있습니다.")
+        # 화면은 주소에 run 을 붙인다(?r=) — 세션·run·번호가 같으면 내용도 같아 캐시해도 된다
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.get("/api/capture/{sid}/thumb/{i}")
+    def capture_thumb(sid: str, i: int):
+        return _capture_file(sid, i, True)
+
+    @app.get("/api/capture/{sid}/frame/{i}")
+    def capture_frame(sid: str, i: int):
+        return _capture_file(sid, i, False)
 
     # ------------------------------------------------------------------ 정적
 

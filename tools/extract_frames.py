@@ -19,6 +19,9 @@ dHash 는 배경만 보고, 화면 속 작은 사람·차가 바뀐 것은 못 �
 **덮어쓰지 않는다.** 같은 이름이 있으면 건너뛴다 — 같은 영상을 다시 돌려도 결과가 그대로다.
 카메라는 `cameras.yaml` 에 먼저 등록해야 한다(scan 과 같은 검사). 영상은 읽기만 한다.
 
+검수 UI 의 '영상 캡처' 보기(2026-11-10, `src/autolabel/capture.py`)가 같은 방식으로 뽑고, 뽑은 것을 눈으로 골라 넣는다.
+이름·시작 시각·변화량 함수(`frame_name`·`parse_start`·`small_gray`·`changed_pct`)는 그 모듈 한 곳에 있다.
+
     python tools/extract_frames.py 영상.mp4 --camera pg-cross-01 --start "2026-11-03 14:00:00"
     python tools/extract_frames.py 영상.mp4 --camera pg-cross-01 --every 10 --limit 200
     python tools/extract_frames.py 영상.mp4 --camera pg-cross-01 --start "..." --dry-run   # 쓰지 않고 셈만
@@ -34,37 +37,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
+from autolabel.capture import changed_pct, frame_name, small_gray  # noqa: E402
+from autolabel.capture import parse_start as _parse_start  # noqa: E402
 from autolabel.config import Config  # noqa: E402
 from autolabel.provenance import _from_name, load_cameras  # noqa: E402
 
-_START_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y%m%d_%H%M%S")
-
 
 def parse_start(text: str) -> datetime:
-    for fmt in _START_FORMATS:
-        try:
-            return datetime.strptime(text.strip(), fmt)
-        except ValueError:
-            continue
-    raise SystemExit(f"--start '{text}' 를 읽지 못했습니다 — 예: \"2026-11-03 14:00:00\"")
-
-
-def small_gray(frame, cv2):
-    """비교용 축소 흑백 (가로 320px)."""
-    h, w = frame.shape[:2]
-    g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    return cv2.resize(g, (320, max(1, round(h * 320 / w))), interpolation=cv2.INTER_AREA)
-
-
-def changed_pct(a, b) -> float:
-    """두 축소 흑백에서 밝기가 20 넘게 바뀐 픽셀 비율(%)."""
-    import numpy as np
-
-    return float((np.abs(a.astype(np.int16) - b.astype(np.int16)) > 20).mean() * 100)
-
-
-def frame_name(camera: str, t: datetime) -> str:
-    return f"{camera}_{t:%Y%m%d_%H%M%S}_{t.microsecond // 1000:03d}.jpg"
+    try:
+        return _parse_start(text)
+    except ValueError:
+        raise SystemExit(f"--start '{text}' 를 읽지 못했습니다 — 예: \"2026-11-03 14:00:00\"") from None
 
 
 def main() -> int:
@@ -130,7 +113,7 @@ def main() -> int:
         ok, frame = cap.retrieve()
         if not ok:
             continue
-        small = small_gray(frame, cv2)
+        small = small_gray(frame)
         if args.min_change > 0 and last_small is not None and changed_pct(small, last_small) < args.min_change:
             similar += 1
             continue

@@ -164,7 +164,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/mask_images.py` | DB 이미지에 **가릴 영역**(검수 화면 `M` 과 같다 — 아래 'UI 조작')을 명령으로 넣는다 — 같은 자리를 여러 장에(`--ids 8017-8029 --rect x1,y1,x2,y2`, 한 장씩은 `--mask id:x1,y1,x2,y2`, 지금 화면 픽셀). 원본·박스·상태는 그대로. 기본은 보기만(학습에서 빠질·일부 가려질 박스), `--preview <jpg>` 칠하기 전·후 대조 그림, `--apply` 때 DB 를 뜬다, `--replace` 는 더하지 않고 바꾼다. **test 이미지는 멈춘다**. 이력 source 'mask'(검수 화면 '가릴 영역'). 11-09 오후의 첫 판은 그림 파일에 직접 칠했고(이름 끝 `_m`) 그 11장은 같은 날 되돌렸다(docs/provenance.md) |
 | `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
-| `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md |
+| `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md. 눈으로 골라 넣는 것은 검수 UI 의 **'영상 캡처' 탭**(11-10, 아래 'UI 조작') — 같은 방식·같은 이름이고, 이름·변화량 함수는 `src/autolabel/capture.py` 한 곳에 있다(`import_roadplus.py` 도 거기서 가져간다) |
 | `tools/legacy_groups.py` | legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안(DB 읽기 전용) — 사전학습 임베딩을 평균 연결로 묶어 `data/visible/legacy_groups/` 에 CSV·대조 시트. 카메라 후보는 거칠다(웹 사진과 CCTV 크롭이 한 후보에 섞이기도 한다) |
 | `tools/domain_review.py` | 도메인(CCTV·비CCTV·드론)·태그 점검(DB 읽기 전용) — 같은 태그·장면 묶음과 다른 도메인, 비슷한 이미지(임베딩 이웃)와 다른 도메인, EXIF 제조사, 태그 포함 관계·오타 후보, 같은 카메라 누수를 `data/visible/domain_review/` 에 id 목록·대조 시트로. **의심일 뿐이다** — 11-04 에 의심 이미지를 다 눈으로 보니 고칠 것은 6장이었다. 본 것은 `--mark-seen` 으로 그 폴더의 `seen.csv` 에 적고(11-04 점검분 465건), 다음부터 같은 이미지가 같은 도메인으로 같은 검사에 걸리면 목록·시트에서 뺀다(`--all` 이면 다) — 표시는 사람이 다 본 뒤에만 할 것. '일부가 빠진 태그' 표(3장 이상 장면 묶음의 절반 이상에 붙은 태그가 나머지에 빠진 곳)는 따로 — 한 태그의 줄을 다 본 뒤 `--mark-tag <태그>` 로 (이미지, `tagmiss:<태그 id>`) 를 적는다(`--mark-seen` 은 이 표를 적지 않는다) |
 | `tools/prune_seed_json.py` | 시드 COCO json 에서 파일이 없는 이미지 항목과 그 annotations 를 뺀다(scan 의 'JSON 에 있으나 파일이 없는 이미지' 를 없앤다, DB 는 안 건드림). 기본은 보기만·`--apply`. 원본 json 은 `seed_coco` 밖 `seed_json_backup/<시각>/` 에 뜨고, 다시 읽어 남은 이미지·박스가 같은지 본 뒤 다르면 되돌린다. 한 json 의 절반 넘게 없거나 id 가 겹치거나 원래 모양으로 다시 저장할 수 없으면 아무것도 쓰지 않는다(절반은 `--force`) |
@@ -275,7 +275,8 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개).
-  `classes.txt` 는 DB 옆이다. `thumbs/`(11-04)는 이미지 보기 썸네일 캐시 — 지워도 되고 백업하지 않는다.
+  `classes.txt` 는 DB 옆이다. `thumbs/`(11-04)는 이미지 보기 썸네일 캐시 — 지워도 되고 백업하지 않는다. `capture/`(11-10)는
+  영상 캡처 탭의 임시 세션(올린 영상 사본·뽑은 프레임 — 넣거나 닫으면 서버가 지운다)이라 백업하지 않는다(수 GB 일 수 있다).
 - `export/<프로젝트>/` — 내보내기 기본 폴더. 표식(`export_info.json`)이 있고 그 DB 가 지금 DB 인 폴더만 비우고 다시 쓴다. 저장소
   안의 다른 폴더로 내보내면 그 폴더에 `.gitignore`(`*`)를 둔다. `data.yaml` 은 DB 분할 그대로의 목록(`train.txt`·`val.txt`·
   `test.txt`, 미배정은 빠짐)을 가리킨다(11-05 — 전에는 train = val = images 라 test 가 섞였다).
@@ -426,6 +427,9 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   가릴 영역이 있는 이미지는 `masks=` 를 줘야 한다.
 - **가릴 영역**은 DB `masks` 표에만 있고 학습 세트·이미지 내보내기만 칠한다. test 는 칠하지 않는다. 덮는 몫은 `masks.covered` 와
   `app.js` 의 `maskCover` 가 같은 식이다 — 고치면 둘 다.
+- **영상 캡처 탭(11-10 사용자 요청, `capture.py`·`web/capture.js`)** — 영상을 서버에 사본으로 올려 몇 초마다 한 장 뽑고, 화면에서
+  고른 것만 `unlabeled/<카메라>/` 로 **옮겨** 스캔한다(원본 영상은 읽지도 않는다 — 사본만). **작업 큐 밖**이라 학습 중에도 돌고,
+  넣기의 스캔은 '폴더 스캔' 과 같은 잠금(`server.ingest_lock`)을 쥔다. 규칙은 src/autolabel/CLAUDE.md.
 - 코드를 고친 뒤에는 검수 서버를 다시 켜야 반영된다. TestClient 는 `base_url="http://127.0.0.1:7860"`.
 
 ---
@@ -446,8 +450,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    (`git show 25a3de6:CLAUDE.md`).
 5. **새 데이터 모으기 (11-10 사용자 결정 — 위 '현재 데이터 상태').** 풀 해상도 CCTV 캡처를 자르지 않고 넣고, 화면 글자·로고·
    라벨하기 애매한 곳은 가릴 영역으로 덮는다. 순서: 카메라를 `cameras.yaml` 에 등록(kind cctv) → `unlabeled/<카메라>/` 에 넣기
-   (영상은 `tools/extract_frames.py`, ROAD PLUS 녹화는 `tools/import_roadplus.py` — SD 원본이라 높이 720 으로 줄여도 잃는 것이
-   없다) → `labeler.py scan` → `label`(운영 m) → responder·cone 후보(`tools/ovd_propose.py` → `tools/import_proposals.py`) →
+   (영상은 검수 UI **'영상 캡처' 탭**(11-10 — 뽑아서 눈으로 골라 넣고 스캔까지 한다) 또는 `tools/extract_frames.py`, ROAD PLUS
+   녹화는 `tools/import_roadplus.py` — SD 원본이라 높이 720 으로 줄여도 잃는 것이 없다) → `labeler.py scan` → `label`(운영 m) → responder·cone 후보(`tools/ovd_propose.py` → `tools/import_proposals.py`) →
    검수 → 분할(카메라째 — 평가에 쓸 카메라는 `cameras.yaml` 의 `split:` 으로 먼저 정할 것) → 학습 → 새 test 로 기준선.
    - 같은 자리를 여러 장에 덮을 때는 **가릴 영역 템플릿**(11-10 — 한 장에 그린 영역을 `카메라A_1` 같은 이름으로 남겨 라벨링
      화면에서 한 장씩, 이미지 보기에서 고른 여러 장에 적용, README '가릴 영역 템플릿')이나 `tools/mask_images.py --ids … --rect …`.

@@ -57,6 +57,27 @@
   잘린 조각 박스를 버리고 `merge_cross` 로 합친 **뒤에** predict.conf·max_det 로 거른다 — 그래서 조각을 안 쓰는 작은 이미지도
   보통 모드와 아주 조금 다를 수 있다. 그림은 `ultralytics.utils.patches.imread`(Ultralytics 가 경로로 읽을 때와 같은 함수)로 읽고,
   타일 모드만 빈 이미지로 예열한다. 타일로 라벨링한 이미지는 `model_version` 끝에 `+tiles<grid>`. 예측 비교(P)는 통째 그대로다.
+- **영상 캡처 탭 (2026-11-10, 사용자 요청 — `capture.py`·`web/capture.js`, 사용법은 README '영상 캡처')** — 라벨링·이미지 보기와
+  같은 페이지의 세 번째 보기(`setView('capture')`·`body.view-capture`). 영상을 올려(`POST /api/capture/upload` — multipart 가
+  아니라 **본문 그대로** `request.stream()` 을 8MB 씩 쓴다, `size` 와 다르면·끊기면(ClientDisconnect) 지운다) 서버가 OpenCV 로
+  뽑고, 고른 것만 `unlabeled/<카메라>/<날짜>/` 로 옮겨 스캔한다.
+  - 세션 = `<DB 폴더>/capture/<YYYYMMDD_HHMMSS_hex4>/`(`video.<확장자>` 사본·`frames/`·`thumbs/`·`session.json`). 넣거나 닫으면
+    폴더째 지운다. 서버를 켤 때 `session.json` 이 없거나 '올리는 중' 이던 세션 폴더는 지우고(그 이름 꼴만), 뽑던·넣던 것은 '멈춤'.
+    세션 id 는 `SID_RE` 로만 받는다(경로 탈출 막기) — 파일은 세션·번호로만 서빙한다(`_capture_file`).
+  - **작업 큐(`jobs`)를 쓰지 않는다** — 학습 중에도 캡처하려고. 뽑기는 프로젝트에 한 번에 하나(`_extract_lock`, 나머지는 queued),
+    넣기는 하나씩(`_commit_lock`). **넣기의 `ingest` 는 `server.ingest_lock` 을 쥔다**(`job_scan` 도 같은 잠금) — 스캔을 부르는
+    새 길을 만들면 같은 잠금을 쥘 것. 정리·휴지통 비우기가 돌면 넣지 않는다(`_capture_blocker`, 409). 넣는 동안 세션은
+    `committing` 이라 다시 뽑기·닫기가 프레임을 지우지 못한다.
+  - 뽑는 방식·이름은 `tools/extract_frames.py` 와 **바이트까지 같다**(11-10 에 10장 대조) — `frame_name`·`parse_start`·`small_gray`·
+    `changed_pct` 를 capture.py 한 곳에 두고 extract_frames·import_roadplus 가 가져간다. 이름의 시각을 scan 이 `captured_at` 으로
+    읽으니(provenance `_COMPACT`) 꼴을 바꾸면 둘 다 본다. 넣을 때 같은 이름이 있으면 덮지 않는다(`_rename` — Windows rename +
+    다른 드라이브면 `xb` 복사). 시작 시각은 이름(`_from_name`) → 사람이 적은 값. 수정 시각 − 길이(`start_mtime`)는 제안만 한다.
+  - 프레임 항목 `{i, t, c, s, k}` — `c` 는 앞 장과 바뀐 픽셀 %, `s` 는 **JPEG 바이트까지 같은** 앞 프레임(멈춘 화면 — 처음부터
+    `k=false`). 화면이 남기는 빼기 목록은 `PUT …/state {drop, upto}` — `upto` 밖(화면이 아직 못 받은 뒤쪽)은 건드리지 않는다.
+  - 화면은 뽑는 동안 0.7초마다 `?since=` 로 새 프레임만 받고, `run`(다시 뽑을 때마다 +1)이 바뀌면 처음부터 받는다. 썸네일·원본
+    주소에 `?r=<run>` 을 붙여 서버가 1시간 캐시를 허락한다. 폴링 응답의 카메라·시작 시각은 받지 않는다(고치는 중인 값을 덮지 않게).
+  - **키는 app.js keydown 이 `VIEW === "capture"` 면 V 보다 먼저 `captureKey` 로만 넘긴다** — 숨은 라벨링에 Space(승인)·S·Q 가
+    먹으면 안 된다(11-10 에 확인). 크게 보기는 공용 대화상자가 아니라 `#cap-preview`(키도 captureKey).
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
   가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
   모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).

@@ -27,7 +27,7 @@
 `$dst`=새 날짜 폴더 — **이전 것을 지울지 먼저 물을 것**):
 
 ```powershell
-robocopy $src $dst /E /XJ /COPY:DAT /DCOPY:DAT /R:1 /W:1 /MT:8 /XD "$src\.venv" "$src\graft" "$src\data\visible\dataset" "$src\data\visible\thumbs" __pycache__ /XF labeling.db labeling.db-wal labeling.db-shm labeling.db-journal *.tar
+robocopy $src $dst /E /XJ /COPY:DAT /DCOPY:DAT /R:1 /W:1 /MT:8 /XD "$src\.venv" "$src\graft" "$src\data\visible\dataset" "$src\data\visible\thumbs" "$src\data\visible\capture" __pycache__ /XF labeling.db labeling.db-wal labeling.db-shm labeling.db-journal *.tar
 ```
 
 종료 코드 0–7 이 성공이고, 그 뒤 DB 를 sqlite `backup()` 으로 `$dst\data\visible\labeling.db` 에 뜬다. **되살리기는 README '새

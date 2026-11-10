@@ -14,10 +14,12 @@
   <!-- 프로젝트 탭. 목록은 /api/projects 가 준다 (projects.yaml). 하나뿐이면 숨는다. -->
   <nav class="tabs hidden" id="projects"></nav>
 
-  <!-- 보기 전환 (2026-11-04): 라벨링 ↔ 이미지 보기. 같은 페이지라 왼쪽 필터와 지금 이미지가 그대로 남는다. V 로도 바꾼다 -->
+  <!-- 보기 전환 (2026-11-04): 라벨링 ↔ 이미지 보기. 같은 페이지라 왼쪽 필터와 지금 이미지가 그대로 남는다. V 로도 바꾼다.
+       영상 캡처(2026-11-10, capture.js)는 데이터를 넣는 앞 단계라 따로 둔다 — V 로는 가지 않는다 -->
   <div class="seg" id="view-switch">
     <button class="seg-btn on" data-view="label" title="라벨링 — 한 장씩 박스를 고치고 승인합니다 (V)">라벨링</button>
     <button class="seg-btn" data-view="gallery" title="이미지 보기 — 여러 장을 한눈에 보고 골라서 태그·도메인을 한꺼번에 바꿉니다 (V)">이미지 보기</button>
+    <button class="seg-btn" data-view="capture" title="영상 캡처 — 영상 파일을 불러와 몇 초마다 한 장 뽑고, 넣을 것만 골라 데이터(미라벨)로 넣습니다">영상 캡처</button>
   </div>
 
   <div class="counts" id="counts"></div>
@@ -307,6 +309,92 @@
     </div>
   </aside>
 
+  <!-- ── 영상 캡처 (2026-11-10, capture.js · 서버 capture.py) ── 영상을 올려 몇 초마다 한 장 뽑고, 고른 것만
+       unlabeled/<카메라>/ 에 넣어 스캔한다. 영상은 서버에 사본으로 올리고(넣거나 닫으면 지운다) 원본은 건드리지 않는다 -->
+  <section class="capture" id="capture">
+    <aside class="panel cap-side">
+      <div class="panel-head cap-head-row"><span>영상</span><span class="spacer"></span>
+        <button id="cap-open" class="btn btn-sm btn-primary"
+                title="영상 파일을 고릅니다. 이 화면에 파일을 끌어다 놓아도 됩니다. 서버에 사본을 올려 뽑고, 넣거나 닫으면 사본은 지웁니다 — 원본 영상 파일은 그대로입니다">영상 불러오기…</button>
+        <input id="cap-file" type="file" hidden
+               accept="video/*,.mp4,.mkv,.avi,.mov,.ts,.m2ts,.mts,.flv,.wmv,.webm,.mpg,.mpeg,.m4v,.3gp">
+      </div>
+      <div id="cap-video" class="cap-box cap-video"></div>
+      <div id="cap-upload" class="cap-box hidden">
+        <div class="cap-bar"><i id="cap-upload-bar"></i></div>
+        <div class="cap-line"><span id="cap-upload-text" class="dim cap-note"></span><span class="spacer"></span>
+          <button id="cap-upload-cancel" class="linkbtn">취소</button></div>
+      </div>
+
+      <div class="panel-head cap-head-row"><span>캡처</span></div>
+      <div class="cap-box">
+        <label class="cap-line"><input id="cap-every" class="cap-num" type="number" min="0.2" max="3600" step="any" value="5"
+               title="몇 초마다 한 장 뽑을지 (0.2~3600초). 영상 안 시각 0·N·2N초… 에 가장 가까운 프레임을 뽑습니다">초마다 한 장</label>
+        <label class="cap-line" title="뽑을 구간 — 영상 안 시각. 90 · 1:30 · 1:02:03 처럼 적습니다. 비우면 처음부터·끝까지">구간
+          <input id="cap-from" class="cap-time" placeholder="처음" autocomplete="off"> ~
+          <input id="cap-to" class="cap-time" placeholder="끝" autocomplete="off"></label>
+        <div id="cap-estimate" class="dim cap-note"></div>
+        <div class="cap-line">
+          <button id="cap-run" class="btn" disabled>캡처 시작</button>
+          <button id="cap-stop" class="btn hidden" title="여기까지 뽑은 것은 남습니다">멈추기</button>
+        </div>
+        <div id="cap-progress" class="hidden">
+          <div class="cap-bar"><i id="cap-progress-bar"></i></div>
+          <div id="cap-progress-text" class="dim cap-note"></div>
+        </div>
+      </div>
+
+      <div class="panel-head cap-head-row"><span>넣기</span></div>
+      <div class="cap-box">
+        <label class="cap-field"><span>카메라</span><select id="cap-camera"></select></label>
+        <label class="cap-field"><span>촬영 시작</span>
+          <input id="cap-start" placeholder="2026-11-10 14:30:00" autocomplete="off"
+                 title="영상 첫 프레임의 현지 시각. 프레임 이름(= DB 촬영 시각)이 이 시각 + 영상 안 시각이 됩니다"></label>
+        <div id="cap-start-hint" class="dim cap-note"></div>
+        <div id="cap-dest" class="cap-note cap-dest"></div>
+        <div class="cap-line">
+          <button id="cap-commit" class="btn btn-primary" disabled>넣기</button>
+          <span class="spacer"></span>
+          <button id="cap-discard" class="btn btn-danger btn-sm" disabled
+                  title="이 영상을 닫습니다 — 뽑은 프레임과 올린 사본을 지웁니다(원본 영상 파일은 그대로)">영상 닫기</button>
+        </div>
+        <div id="cap-result" class="cap-result hidden"></div>
+      </div>
+
+      <div class="panel-head cap-head-row"><span>불러온 영상</span><span id="cap-sess-n" class="dim"></span></div>
+      <ul id="cap-sessions" class="cap-sessions"></ul>
+    </aside>
+
+    <div class="cap-main">
+      <div class="gallery-head">
+        <span id="cap-count" class="g-count"></span>
+        <span class="spacer"></span>
+        <button id="cap-all" class="btn btn-sm" title="모두 넣기로">전부 넣기</button>
+        <button id="cap-none" class="btn btn-sm" title="모두 빼기로">전부 빼기</button>
+        <span class="cap-sim" title="앞 장과 밝기가 크게 바뀐 픽셀이 이 비율보다 적은 장(거의 같은 화면)을 빼기로 합니다. 0.05% 아래는 사실상 같은 화면이고, 올리면 사람 한 명이 지나간 장면도 빠질 수 있습니다(tools/extract_frames.py --min-change 와 같은 값)">
+          바뀐 픽셀 <input id="cap-sim" type="number" min="0" max="100" step="any" value="0.05"> % 미만
+          <button id="cap-sim-drop" class="btn btn-sm">빼기</button></span>
+        <label class="g-size" title="칸 크기">크기 <input id="cap-size" type="range" min="140" max="380" step="20" value="220"></label>
+      </div>
+      <div class="gallery-grid cap-grid" id="cap-grid"></div>
+      <div class="g-hint">
+        클릭 = 넣기 ↔ 빼기 · <kbd>Shift</kbd>+클릭 = 앞서 누른 칸부터 그 칸과 같게 · 더블클릭·<kbd>Enter</kbd> = 크게 보기 ·
+        <kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> 옮기기 · <kbd>Space</kbd> 넣기 ↔ 빼기
+      </div>
+    </div>
+
+    <div id="cap-preview" class="cap-preview hidden">
+      <div class="cap-pv-head">
+        <span id="cap-pv-title" class="cap-pv-title"></span><span class="spacer"></span>
+        <button id="cap-pv-prev" class="btn btn-sm" title="이전 장 (←)">◀ 이전</button>
+        <button id="cap-pv-toggle" class="btn btn-sm" title="넣기 ↔ 빼기 (Space)"></button>
+        <button id="cap-pv-next" class="btn btn-sm" title="다음 장 (→)">다음 ▶</button>
+        <button id="cap-pv-close" class="linkbtn">닫기 (Esc)</button>
+      </div>
+      <div class="cap-pv-img"><img id="cap-pv-img" alt=""></div>
+    </div>
+  </section>
+
 </main>
 
 <div id="toast" class="toast hidden"></div>
@@ -324,5 +412,6 @@
 
 <script src="app.js"></script>
 <script src="gallery.js"></script>
+<script src="capture.js"></script>
 </body>
 </html>

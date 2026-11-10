@@ -42,6 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
+from autolabel.capture import frame_name  # noqa: E402,F401 — 이름 꼴은 extract_frames·영상 캡처와 한 곳에서
 from autolabel.config import Config  # noqa: E402
 from autolabel.provenance import load_cameras  # noqa: E402
 
@@ -53,10 +54,6 @@ GAP = 0.5             # 이만큼(초)까지 끊겨도 한 구간
 THUMB = (216, 144)    # 다시 튼 구간을 가릴 썸네일 크기(3:2)
 REPEAT_MEDIAN = 0.8   # 가장 가까운 앞 썸네일과의 평균 밝기 차 — 중앙값이 이보다 작고
 REPEAT_P80 = 1.2      # 80% 값도 이보다 작으면 다시 튼 구간
-
-
-def frame_name(camera: str, t: datetime) -> str:
-    return f"{camera}_{t:%Y%m%d_%H%M%S}_{t.microsecond // 1000:03d}.jpg"
 
 
 def classify(gray, np) -> str:
