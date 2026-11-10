@@ -762,10 +762,23 @@ body.view-capture #panel-label { display: none; }
   border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font: inherit; min-width: 0;
 }
 .cap-side input.bad { border-color: var(--err); }
-/* 새 카메라 등록 (2026-11-10) — 카메라 고르기 옆 '＋ 새로' 로 펼친다 */
-.cap-cam-row { display: flex; gap: 4px; min-width: 0; }
-.cap-cam-row select { flex: 1; min-width: 0; }
-.cap-cam-row .btn { flex: none; padding: 3px 7px; }
+/* 새 카메라 등록·지우기 (2026-11-10) — 카메라 고르기 아래 '＋ 새로'·'지우기…' 로 펼친다 */
+.cap-cam-field { align-items: start; }
+.cap-cam-field > span:first-child { padding-top: 4px; }
+.cap-cam-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cap-cam-acts { display: flex; gap: 4px; justify-content: flex-end; }
+.cap-cam-acts .btn { padding: 2px 7px; font-size: 11px; }
+.cap-cam-del-list {
+  list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--bg-2);
+}
+.cap-cam-del-list li { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-size: 12px; }
+.cap-cam-del-list li + li { border-top: 1px solid var(--line); }
+.cap-cam-del-list label { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; cursor: pointer; }
+.cap-cam-del-list .k { font-weight: 600; white-space: nowrap; }
+.cap-cam-del-list .m { color: var(--fg-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-cam-del-list .u { flex: none; color: var(--warn); font-size: 11px; }
+.cap-cam-del-list li.busy label { opacity: 0.55; cursor: not-allowed; }
 .cap-cam-form {
   display: flex; flex-direction: column; gap: 5px;
   padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg);

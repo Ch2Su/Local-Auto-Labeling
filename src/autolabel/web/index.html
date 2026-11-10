@@ -346,9 +346,12 @@
 
       <div class="panel-head cap-head-row"><span>넣기</span></div>
       <div class="cap-box">
-        <div class="cap-field"><span>카메라</span>
-          <span class="cap-cam-row"><select id="cap-camera"></select>
-            <button id="cap-cam-new" class="btn btn-sm" title="새 카메라를 data/visible/cameras.yaml 에 등록합니다(이 PC 에만 있는 파일 — git 에 넣지 않습니다)">＋ 새로</button></span></div>
+        <div class="cap-field cap-cam-field"><span>카메라</span>
+          <span class="cap-cam-col"><select id="cap-camera"></select>
+            <span class="cap-cam-acts">
+              <button id="cap-cam-new" class="btn btn-sm" title="새 카메라를 data/visible/cameras.yaml 에 등록합니다(이 PC 에만 있는 파일 — git 에 넣지 않습니다)">＋ 새로</button>
+              <button id="cap-cam-del" class="btn btn-sm" title="등록된 카메라를 골라 cameras.yaml 에서 뺍니다 — DB 나 카메라 폴더에 이미지가 남아 있는 카메라는 지울 수 없습니다">지우기…</button>
+            </span></span></div>
         <!-- 새 카메라 등록 (2026-11-10, provenance.add_camera): cameras.yaml 끝에 글자로 덧붙인다(주석·다른 카메라 그대로).
              수정·삭제는 파일을 손으로 고친다 -->
         <div id="cap-cam-form" class="cap-cam-form hidden">
@@ -386,6 +389,21 @@
           <div class="cap-line">
             <button id="cc-save" class="btn btn-primary btn-sm">등록</button>
             <button id="cc-cancel" class="linkbtn">취소</button>
+          </div>
+        </div>
+        <!-- 카메라 지우기 (2026-11-10, provenance.remove_cameras): 고른 카메라의 줄만 뺀다(다른 카메라·묶음 설명 주석 그대로).
+             DB(휴지통 포함)나 카메라 폴더에 이미지가 남은 카메라는 고를 수 없고 서버도 막는다 -->
+        <div id="cap-cam-del-form" class="cap-cam-form hidden">
+          <div class="cap-note">카메라 지우기 — 고른 카메라의 등록을 <b>cameras.yaml</b> 에서 뺍니다. 다른 카메라와 묶음 설명 주석은
+            그대로이고, 지우기 전 파일은 backups/cameras_&lt;시각&gt;.yaml 에 남습니다. DB 나 카메라 폴더에 이미지가 남아 있는 카메라는
+            고를 수 없습니다.</div>
+          <ul id="cap-cam-del-list" class="cap-cam-del-list"></ul>
+          <div class="cap-line">
+            <button id="cd-all" class="linkbtn" title="이미지가 남아 있지 않은(지울 수 있는) 카메라를 모두 고릅니다">모두 고르기</button>
+            <button id="cd-none" class="linkbtn">풀기</button>
+            <span class="spacer"></span>
+            <button id="cd-save" class="btn btn-danger btn-sm" disabled>지우기</button>
+            <button id="cd-cancel" class="linkbtn">취소</button>
           </div>
         </div>
         <label class="cap-field"><span>촬영 시작</span>

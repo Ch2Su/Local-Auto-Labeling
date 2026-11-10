@@ -123,9 +123,13 @@ class CameraExists(ValueError):
     """이미 등록된 키."""
 
 
+class CameraMissing(ValueError):
+    """등록 파일에 없는 키."""
+
+
 # 등록 파일에 적는 순서 (docs/provenance.md '등록 파일' 의 예와 같다). split 은 비어도 적는다(지금 파일과 같은 꼴)
 _FIELD_ORDER = ("kind", "place", "mount", "view", "resolution", "tz", "rights", "split", "note")
-_ADD_LOCK = threading.Lock()
+_EDIT_LOCK = threading.Lock()          # 등록 파일을 고치는 add_camera·remove_cameras 는 한 번에 하나
 _TOP_CAMERAS = re.compile(r"^cameras\s*:\s*(#.*)?$")
 
 
@@ -165,7 +169,7 @@ def add_camera(path: Path, key: str, attrs: dict, *, backup_dir: Path | None = N
         fields["tz"] = None                            # 기본값은 적지 않는다(지금 파일의 카메라들처럼)
     written = {k: v for k, v in fields.items() if v is not None or k == "split"}
 
-    with _ADD_LOCK:
+    with _EDIT_LOCK:
         # read_text 는 CRLF 를 LF 로 바꿔 읽는다 — 바이트로 읽어야 다시 쓸 때 기존 줄끝이 그대로 남는다
         old = path.read_bytes().decode("utf-8") if path.exists() else ""
         before = load_cameras(path)                    # 깨진 파일이면 ValueError — 손대지 않는다
@@ -188,23 +192,126 @@ def add_camera(path: Path, key: str, attrs: dict, *, backup_dir: Path | None = N
             if not same_old or raw_after.get(key) != written:
                 raise ValueError("덧붙인 결과를 다시 읽으니 기존 카메라나 새 카메라가 기대와 달라 아무것도 쓰지 않았습니다 — "
                                  f"{path.name} 의 모양(들여쓰기·'cameras:' 줄)을 손으로 확인할 것")
-            if backup_dir is not None and path.exists():
-                backup_dir.mkdir(parents=True, exist_ok=True)
-                dst = backup_dir / f"cameras_{datetime.now():%Y%m%d_%H%M%S}.yaml"
-                while dst.exists():
-                    dst = dst.with_name(f"{dst.stem}_{secrets.token_hex(2)}.yaml")
-                shutil.copy2(path, dst)
-            for attempt in range(10):
-                try:
-                    os.replace(tmp, path)
-                    break
-                except PermissionError:                # Windows: 다른 쪽이 잠깐 열어 둔 때
-                    if attempt == 9:
-                        raise
-                    time.sleep(0.05)
+            _backup_and_swap(path, tmp, backup_dir)
         finally:
             tmp.unlink(missing_ok=True)
         return after[key]
+
+
+def remove_cameras(path: Path, keys: list[str], *, backup_dir: Path | None = None) -> list[str]:
+    """cameras.yaml 에서 카메라 등록을 뺀다 (2026-11-10, 검수 UI '영상 캡처' 의 카메라 지우기).
+
+    add_camera 와 같은 방식이다 — 다시 쓰지 않고 **그 카메라의 줄만** 뺀다: 키 줄과 그 아래 더 깊이 들여쓴 줄(속성·안쪽 주석),
+    그리고 키 바로 위에 같은 들여쓰기로 붙은 주석(add_camera 의 '… 에서 등록' 같은). 맨 왼쪽의 묶음 설명 주석과 다음 키 앞의
+    주석·빈 줄은 남긴다. 뺀 결과를 다시 읽어 '그 키들만 없어지고 나머지는 속성까지 그대로' 가 아니면 아무것도 쓰지 않고,
+    쓰기 전 파일은 backup_dir 에 남긴다. 하나라도 없는 키면 CameraMissing(아무것도 안 뺀다).
+    그 카메라의 이미지가 DB·폴더에 남았는지는 부르는 쪽이 본다(이 모듈은 DB 를 모른다 — server 의 /api/cameras/remove).
+    """
+    keys = list(dict.fromkeys(str(k or "").strip() for k in keys))
+    if not keys:
+        raise ValueError("지울 카메라를 고르지 않았습니다")
+    with _EDIT_LOCK:
+        if not path.exists():
+            raise CameraMissing(f"등록 파일이 없습니다: {path}")
+        old = path.read_bytes().decode("utf-8")        # 줄끝·BOM 을 그대로 두려고 바이트로 (add_camera 와 같다)
+        before = load_cameras(path)                    # 깨진 파일이면 ValueError — 손대지 않는다
+        missing = [k for k in keys if k not in before]
+        if missing:
+            raise CameraMissing(f"등록돼 있지 않은 카메라: {', '.join(missing)}")
+        raw_before = (yaml.safe_load(old) or {}).get("cameras") or {}
+        new = _remove_camera_text(old, keys)
+        tmp = path.with_name(f"{path.name}.{secrets.token_hex(3)}.tmp")
+        try:
+            tmp.write_text(new, encoding="utf-8", newline="")
+            try:
+                after = load_cameras(tmp)
+                raw_after = (yaml.safe_load(new) or {}).get("cameras") or {}
+            except (ValueError, yaml.YAMLError) as exc:
+                raise ValueError(f"뺀 결과를 읽지 못해 아무것도 쓰지 않았습니다 — {exc}") from exc
+            gone = set(keys)
+            ok = (set(after) == set(before) - gone
+                  and all(after[k] == before[k] for k in after)
+                  and set(raw_after) == set(raw_before) - gone
+                  and all(raw_after[k] == raw_before[k] for k in raw_after))
+            if not ok:
+                raise ValueError("뺀 결과를 다시 읽으니 다른 카메라가 달라져 아무것도 쓰지 않았습니다 — "
+                                 f"{path.name} 의 모양(들여쓰기)을 손으로 확인할 것")
+            _backup_and_swap(path, tmp, backup_dir)
+        finally:
+            tmp.unlink(missing_ok=True)
+    return keys
+
+
+def _backup_and_swap(path: Path, tmp: Path, backup_dir: Path | None) -> None:
+    """쓰기 전 파일을 backup_dir/cameras_<시각>.yaml 로 남기고 tmp 로 한 번에 바꿔 끼운다."""
+    if backup_dir is not None and path.exists():
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        dst = backup_dir / f"cameras_{datetime.now():%Y%m%d_%H%M%S}.yaml"
+        while dst.exists():
+            dst = dst.with_name(f"{dst.stem}_{secrets.token_hex(2)}.yaml")
+        shutil.copy2(path, dst)
+    for attempt in range(10):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:                        # Windows: 다른 쪽이 잠깐 열어 둔 때
+            if attempt == 9:
+                raise
+            time.sleep(0.05)
+
+
+# 'cameras:' 바로 아래 한 단계의 키 줄 — `hw-01:` · `'yes':` · `"017":` · `a-1: {kind: cctv, …}`
+_KEY_LINE = re.compile(r"""^[ ]*(?:'(?P<sq>[^']*)'|"(?P<dq>[^"]*)"|(?P<pl>[^\s:#'"][^:#]*?))[ ]*:(?:[ ].*)?$""")
+
+
+def _indent(s: str) -> int:
+    return len(s) - len(s.lstrip(" "))
+
+
+def _remove_camera_text(old: str, keys: list[str]) -> str:
+    lines = old.splitlines(keepends=True)
+    plain = [ln.rstrip("\r\n") for ln in lines]
+    if plain:
+        plain[0] = plain[0].lstrip("﻿")
+    is_note = [not s.strip() or s.lstrip().startswith("#") for s in plain]
+    head = next((i for i, s in enumerate(plain) if _TOP_CAMERAS.match(s)), None)
+    if head is None:
+        raise ValueError("등록 파일에 'cameras:' 줄이 없어 뺄 수 없습니다 — 손으로 고칠 것")
+    # cameras 묶음의 끝과 카메라 키의 들여쓰기
+    child = None
+    end = len(lines)
+    for j in range(head + 1, len(lines)):
+        if is_note[j]:
+            continue
+        if _indent(plain[j]) == 0:
+            end = j
+            break
+        if child is None:
+            child = _indent(plain[j])
+    found: dict[str, tuple[int, int]] = {}
+    for i in range(head + 1, end):
+        if is_note[i] or _indent(plain[i]) != child:
+            continue
+        m = _KEY_LINE.match(plain[i])
+        k = (m.group("sq") if m and m.group("sq") is not None else m.group("dq") if m and m.group("dq") is not None
+             else (m.group("pl") or "").strip() if m else None)
+        if k not in keys:
+            continue
+        j = i + 1                                      # 그 아래 더 깊은 줄(안쪽 주석 포함)까지
+        while j < end and (is_note[j] or _indent(plain[j]) > child):
+            j += 1
+        b = j                                          # 끝의 빈 줄·얕은 주석은 다음 키(또는 묶음 설명)의 것
+        while b > i + 1 and is_note[b - 1] and (not plain[b - 1].strip() or _indent(plain[b - 1]) <= child):
+            b -= 1
+        a = i                                          # 바로 위에 같은 들여쓰기로 붙은 주석은 이 키의 것
+        while a > head + 1 and is_note[a - 1] and plain[a - 1].strip() and _indent(plain[a - 1]) == child:
+            a -= 1
+        found[k] = (a, b)
+    if set(found) != set(keys):
+        raise ValueError(f"등록 파일에서 줄을 찾지 못한 카메라: {', '.join(sorted(set(keys) - set(found)))} — 손으로 고칠 것")
+    for a, b in sorted(found.values(), reverse=True):
+        del lines[a:b]
+    return "".join(lines)
 
 
 def _append_camera_text(old: str, key: str, fields: dict, comment: str | None) -> str:

@@ -261,6 +261,24 @@ class CaptureManager:
             raise CaptureError(404, "그런 영상이 없습니다 — 이미 넣었거나 닫았을 수 있습니다.")
         return s
 
+    @property
+    def commit_lock(self) -> threading.Lock:
+        """넣기와 겹치면 안 되는 일(카메라 등록 지우기 — server)이 쥔다. 넣기는 이것을 쥔 채 ingest 잠금을 쥔다 — 같은 순서로."""
+        return self._commit_lock
+
+    def forget_cameras(self, keys) -> None:
+        """등록을 지운 카메라를 골라 둔 세션은 카메라를 비운다(넣을 때 다시 고르게)."""
+        gone = set(keys)
+        with self._lock:
+            items = list(self.sessions.values())
+        for s in items:
+            with s.lock:
+                hit = s.camera in gone
+                if hit:
+                    s.camera = None
+            if hit:
+                s.save()
+
     def cameras(self) -> tuple[list[dict], str | None]:
         try:
             cams = load_cameras(self.cfg.cameras)

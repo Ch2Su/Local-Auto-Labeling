@@ -850,6 +850,7 @@ function capKeySeries() {
 const CAP_KEY_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 function capCamFormOpen() {
+  capCamDelClose();
   $("#cap-cam-form").classList.remove("hidden");
   const v = C.cur && C.cur.video;
   if (!$("#cc-res").value && v && v.width && v.height) $("#cc-res").value = `${v.width}x${v.height}`;   // 지금 영상의 해상도
@@ -929,6 +930,82 @@ async function capCamSave() {
     toast(err.message, true);
   } finally {
     btn.disabled = false;
+  }
+}
+
+/* ───────────────────────── 카메라 지우기 (provenance.remove_cameras) ───────────────────────── */
+
+/** 지우기 칸을 연다 — 쓰는 곳(DB 이미지 수·카메라 폴더의 파일)을 새로 받아 다시 그린다. */
+function capCamDelOpen() {
+  capCamFormClose();
+  $("#cap-cam-del-form").classList.remove("hidden");
+  capCamDelRender();
+  capLoadList().then(capCamDelRender).catch(() => {});
+}
+
+function capCamDelClose() {
+  $("#cap-cam-del-form").classList.add("hidden");
+}
+
+function capCamDelKeys() {
+  return [...$("#cap-cam-del-list").querySelectorAll("input:checked")].map((x) => x.value);
+}
+
+/** 등록 카메라마다 한 줄 — 이미지가 남아 있는 카메라는 칸을 막고 이유를 보인다(서버도 다시 본다). */
+function capCamDelRender() {
+  const ul = $("#cap-cam-del-list");
+  const checked = new Set(capCamDelKeys());
+  if (!C.cameras.length) {
+    ul.innerHTML = '<li class="dim">등록된 카메라가 없습니다</li>';
+    capCamDelCount();
+    return;
+  }
+  ul.innerHTML = C.cameras.map((c) => {
+    const files = c.files || [];
+    const busy = (c.db || 0) > 0 || files.length > 0;
+    const why = [c.db ? `DB ${c.db}장` : null, files.length ? "폴더에 파일" : null].filter(Boolean).join(" · ");
+    const tail = [c.kind, c.split ? `${c.split} 고정` : null].filter(Boolean).join(" · ");
+    const title = (c.place || "") + (busy ? ` — 지울 수 없음: ${why}${files.length ? ` (${files.join(", ")})` : ""}` : "");
+    return `<li class="${busy ? "busy" : ""}" title="${esc(title)}"><label>`
+      + `<input type="checkbox" value="${esc(c.key)}"${busy ? " disabled" : checked.has(c.key) ? " checked" : ""}>`
+      + `<span class="k">${esc(c.key)}</span><span class="m">${esc(tail)}</span></label>`
+      + (busy ? `<span class="u">${esc(why)}</span>` : "") + "</li>";
+  }).join("");
+  capCamDelCount();
+}
+
+function capCamDelCount() {
+  const n = capCamDelKeys().length;
+  const b = $("#cd-save");
+  b.disabled = !n;
+  b.textContent = n ? `${n}대 지우기` : "지우기";
+}
+
+async function capCamDelSave() {
+  const keys = capCamDelKeys();
+  if (!keys.length) return;
+  const shown = keys.slice(0, 10).join(", ") + (keys.length > 10 ? ` 외 ${keys.length - 10}대` : "");
+  if (!confirm(`카메라 ${keys.length}대의 등록을 cameras.yaml 에서 지울까요?\n${shown}\n\n`
+    + "그 카메라의 장소·분할 고정 등이 파일에서 빠집니다. 지우기 전 파일은 data/visible/backups/cameras_<시각>.yaml 로 "
+    + "남으니, 되살리려면 그 줄을 다시 붙여 넣으면 됩니다.")) return;
+  const btn = $("#cd-save");
+  btn.disabled = true;
+  try {
+    const r = await api("/api/cameras/remove", { method: "POST", body: { keys } });
+    C.cameras = r.cameras || C.cameras;
+    C.cameraError = r.camera_error || null;
+    const gone = new Set(r.removed || []);
+    if (C.cur && gone.has(C.cur.camera)) C.cur.camera = null;     // 서버도 그 세션의 카메라를 비웠다(forget_cameras)
+    capRenderCameras();
+    capRenderCommit();
+    capCamDelRender();
+    capCamDelClose();
+    toast(`카메라 ${gone.size}대의 등록을 지웠습니다 (cameras.yaml)`);
+  } catch (err) {
+    toast(err.message, true);
+    capLoadList().then(capCamDelRender).catch(() => {});          // 그새 이미지가 생겼을 수 있다 — 다시 받아 막는다
+  } finally {
+    capCamDelCount();
   }
 }
 
@@ -1017,6 +1094,22 @@ $("#cap-cam-new").onclick = (e) => {
   else capCamFormClose();
 };
 $("#cc-cancel").onclick = () => capCamFormClose();
+$("#cap-cam-del").onclick = (e) => {
+  e.currentTarget.blur();
+  if ($("#cap-cam-del-form").classList.contains("hidden")) capCamDelOpen();
+  else capCamDelClose();
+};
+$("#cap-cam-del-list").addEventListener("change", capCamDelCount);
+$("#cd-all").onclick = () => {
+  $("#cap-cam-del-list").querySelectorAll("input:not(:disabled)").forEach((x) => { x.checked = true; });
+  capCamDelCount();
+};
+$("#cd-none").onclick = () => {
+  $("#cap-cam-del-list").querySelectorAll("input").forEach((x) => { x.checked = false; });
+  capCamDelCount();
+};
+$("#cd-save").onclick = (e) => { e.currentTarget.blur(); capCamDelSave(); };
+$("#cd-cancel").onclick = () => capCamDelClose();
 $("#cc-save").onclick = (e) => { e.currentTarget.blur(); capCamSave(); };
 $("#cc-key").addEventListener("input", capCamHint);
 for (const id of ["#cc-key", "#cc-place", "#cc-view", "#cc-res", "#cc-rights", "#cc-tz"]) {

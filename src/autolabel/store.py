@@ -706,12 +706,12 @@ class Store:
             cur = con.executemany("UPDATE images SET domain=? WHERE id=?", [(domain, i) for i in image_ids])
             return cur.rowcount
 
-    def camera_counts(self) -> dict[str | None, int]:
-        """카메라별 이미지 수(휴지통 제외). 출처 없는 이미지는 키 None."""
+    def camera_counts(self, with_trashed: bool = False) -> dict[str | None, int]:
+        """카메라별 이미지 수(기본은 휴지통 제외). 출처 없는 이미지는 키 None.
+        with_trashed — 카메라 등록을 지워도 되는지 볼 때(2026-11-10): 휴지통 이미지도 그 카메라를 가리킨다."""
+        where = "" if with_trashed else "WHERE status != 'trashed'"
         with self.connect() as con:
-            rows = con.execute(
-                "SELECT camera, COUNT(*) AS n FROM images WHERE status != 'trashed' GROUP BY camera"
-            ).fetchall()
+            rows = con.execute(f"SELECT camera, COUNT(*) AS n FROM images {where} GROUP BY camera").fetchall()
         return {r["camera"]: int(r["n"]) for r in rows}
 
     def next_image_id(self, current_id: int, status: str = "pending") -> int | None:

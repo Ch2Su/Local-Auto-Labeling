@@ -38,7 +38,7 @@ from .jobs import JobManager
 from .predictor import AutoLabeler, LiveDetector
 from .masks import MAX_MASKS
 from .masks import clean as clean_masks
-from .provenance import SPLITS, CameraExists, add_camera, load_cameras
+from .provenance import SPLITS, CameraExists, CameraMissing, add_camera, load_cameras, remove_cameras
 from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
@@ -233,6 +233,11 @@ class CameraIn(BaseModel):
     resolution: str | None = Field(None, max_length=40)
     rights: str | None = Field(None, max_length=200)
     note: str | None = Field(None, max_length=300)
+
+
+class CameraRemoveIn(BaseModel):
+    # 카메라 등록 지우기 (2026-11-10, provenance.remove_cameras) — 여러 대를 한 번에(파일도 한 번만 바꾼다)
+    keys: list[str] = Field(min_length=1, max_length=500)
 
 
 _ID_MAX = 2**63 - 1      # SQLite INTEGER 의 상한
@@ -1324,12 +1329,52 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
         print(f"[{label}] 카메라 등록: {cam.key} ({cam.kind}) -> {cfg.cameras}")   # 장소는 찍지 않는다
-        cams, error = capman.cameras()
+        cams, error = _camera_rows()
         return {"key": cam.key, "cameras": cams, "camera_error": error}
+
+    def _camera_usage(keys) -> dict[str, dict]:
+        """카메라마다 그 카메라를 쓰는 것 — DB 이미지 수(휴지통 포함)와 파일이 남은 카메라 폴더(unlabeled·labeled)."""
+        db = store.camera_counts(with_trashed=True)
+        out = {}
+        for k in keys:
+            folders = [d for d in (cfg.unlabeled / k, cfg.labeled / "images" / k, cfg.labeled / "labels" / k)
+                       if d.is_dir() and any(p.is_file() for p in d.rglob("*"))]
+            out[k] = {"db": db.get(k, 0), "files": [_rel(d) for d in folders]}
+        return out
+
+    def _camera_rows() -> tuple[list[dict], str | None]:
+        """화면용 등록 카메라 목록 + 쓰는 곳(db·files) — 지우기 칸이 지울 수 없는 카메라를 가린다."""
+        cams, error = capman.cameras()
+        usage = _camera_usage([c["key"] for c in cams])
+        return [{**c, **usage[c["key"]]} for c in cams], error
+
+    @app.post("/api/cameras/remove")
+    def unregister_cameras(payload: CameraRemoveIn) -> dict:
+        """카메라 등록을 cameras.yaml 에서 뺀다 (영상 캡처 탭의 '지우기', 2026-11-10). **그 카메라의 이미지가 DB(휴지통 포함)나
+        unlabeled·labeled 의 카메라 폴더에 남아 있으면 막는다**(409, 아무것도 안 뺀다) — 등록이 빠진 폴더는 scan 을 멈추고,
+        DB 행은 장소·고정 분할을 잃는다. 검사와 빼기 사이에 넣기·스캔이 끼지 않게 두 잠금을 쥔다(넣기와 같은 순서)."""
+        keys = list(dict.fromkeys(k.strip() for k in payload.keys))
+        with capman.commit_lock, ingest_lock:
+            usage = _camera_usage(keys)
+            busy = {k: u for k, u in usage.items() if u["db"] or u["files"]}
+            if busy:
+                why = "; ".join(f"{k}: " + ", ".join(([f"DB 이미지 {u['db']}장"] if u["db"] else [])
+                                                       + [f"{f} 에 파일" for f in u["files"]]) for k, u in busy.items())
+                raise HTTPException(409, f"이미지가 남아 있는 카메라는 지울 수 없습니다(아무것도 안 지움) — {why}")
+            try:
+                removed = remove_cameras(cfg.cameras, keys, backup_dir=cfg.db.parent / "backups")
+            except CameraMissing as exc:
+                raise HTTPException(404, str(exc)) from None
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from None
+        capman.forget_cameras(removed)
+        print(f"[{label}] 카메라 등록 지움: {', '.join(removed)} -> {cfg.cameras}")
+        cams, error = _camera_rows()
+        return {"removed": removed, "cameras": cams, "camera_error": error}
 
     @app.get("/api/capture")
     def capture_list() -> dict:
-        cams, error = capman.cameras()
+        cams, error = _camera_rows()
         return {"sessions": capman.list(), "cameras": cams, "camera_error": error,
                 "unlabeled": ui_paths["unlabeled"],
                 "limits": {"min_every": MIN_EVERY, "max_every": MAX_EVERY, "max_frames": MAX_FRAMES}}
