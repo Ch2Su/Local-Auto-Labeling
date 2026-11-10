@@ -52,21 +52,9 @@
 블루스크린(09-12 `0x133 DPC_WATCHDOG_VIOLATION`, Ultralytics `val` 무렵)과 버그체크 0 종료(09-16, WSL 학습을 정상 중단한
 뒤)가 있었다 — 원인은 모르고, 같은 작업을 그 뒤 여러 번 돌렸을 때는 문제없었다.
 
-**Runpod (클라우드 GPU 대여).** MCP 서버 `runpod` 는 11-02 에 뺐다(필요 없는 MCP 정리 — 그날 pod·볼륨 0개를 확인했다).
-다시 쓰려면 PowerShell 에서 아래를 돌리고 새 세션을 연다 — 키는 화면에 안 나오고 `~/.claude.json` 에 그대로 적힌다(공식
-플러그인의 OAuth 는 이 데스크톱 앱에서 안 된다). 파일 전송·SSH 는 Windows 기본 `ssh`·`scp`·`tar`(`~/.ssh/id_ed25519` 등록됨).
-`claude mcp add --scope user --transport http runpod https://mcp.getrunpod.io/ --header "Authorization: Bearer $env:RUNPOD_API_KEY"`
-- 초 단위 과금이고 멈춘 pod 도 볼륨 요금($0.20/GB/월)이 나간다. **멈춘 pod 는 다시 안 켜질 수 있다** — 결과는 바로 받고 다
-  쓰면 지운다. pod 는 스스로 못 멈춘다(pod 안의 키는 Unauthorized) — MCP 의 `pod-action stop` 이나 콘솔에서 멈춘다.
-- **고른다면 RTX 6000 Ada** — x960 b16 한 스텝이 A40 869ms / Ada 513ms / A100 423ms 라 A40 과 총비용은 같고 시간은 60%다
-  (스텝은 RAM 캐시로 잴 것 — 아니면 디코딩을 잰다). 09-18 A40 비교(300 스케줄의 60 epoch) 결과는 `runs/compare_a40/`·
-  docs/experiments.md — resume.pt 는 pod 와 함께 사라져 300 epoch 은 처음부터다(비용도 그 기준으로 말할 것).
-- 절차는 `runs/runpod/`(묶음 tar → scp → `pod_probe.sh` → `pod_compare.sh`). 묶음을 만든 `make_bundle.py` 는 저장소에 없다 —
-  DB 로 `data/visible/dataset` 을 만들어 tar 로 묶는 스크립트를 새로 짤 것.
-- 학습 전에 **`pip install --break-system-packages -U pillow` 와 `labels/*.cache` 삭제** — 이미지의 Pillow 11.0.0 은 확장자만
-  .png 인 삼성 폰 JPEG 29장을 '손상'으로 빼고 AVIF 도 못 읽는다. `/workspace` 는 네트워크 FS 라 데이터셋은 `/root` 에 풀고,
-  컨테이너 RAM 한도(A40 46.6GiB)에 ram 캐시·워커가 겹치면 SIGKILL 된다. SSH 로 `a && b && setsid nohup ... &` 처럼 목록째
-  띄우면 ssh 가 안 돌아온다(학습은 산다).
+**Runpod (클라우드 GPU 대여).** MCP 서버 `runpod` 는 11-02 에 뺐다. 다시 붙이는 명령·과금·GPU 고르기·pod 에서의 준비(Pillow·
+`/root`·RAM 한도)는 [docs/runpod.md](docs/runpod.md) — **pod 를 띄우기 전에 읽을 것.** 고른다면 RTX 6000 Ada 이고, 멈춘 pod 도 볼륨
+요금이 나가며 다시 안 켜질 수 있다.
 
 **Roboflow.** 09-28 에 claude.ai 커넥터로 붙였는데 11-02 에는 커넥터 목록에 없다(다시 쓰려면 claude.ai 커넥터 설정에서).
 **워크스페이스는 비어 있다** — 스토리지 크레딧 때문에 사용자가 09-28 에 데이터를 전부 지웠고 휴지통도 10-02 에 비웠다.
@@ -77,20 +65,8 @@
   않는다. 그래서 카테고리 이름을 먼저 우리 클래스로 바꾸고, 우리 클래스를 **빠짐없이** 라벨한 데이터인지 볼 것 — 사람이
   빠진 이미지가 승인되면 모델이 사람을 배경으로 배운다. Objects365 의 `Scooter` 는 오토바이형이고 우리 scooter 는 전동 킥보드다.
 
-**Objects365 (10-02 BAAI 에서 받음) — 11-03 에 프로젝트에서 뺐다**(사용자 결정 — 백업한 뒤 휴지통으로 보내 비웠다). 지금 DB 에
-o365 행은 없고 `data/visible/unlabeled/o365/` 도 없다. 원본은 `E:\datasets\objects365.tar`(331GB, 저장소 밖 — patch 압축 51개·json·
-`o365_index.pkl`·license.txt, 풀린 사진 없음)에 있었는데 **11-04 에는 그 폴더에 없었다**(옮겼는지 지웠는지 모름) — **`tools/import_o365.py` 는 그 tar 를 찾아 다시 풀기 전에는 못 돈다.** 다시 넣게 되면 아래를 볼 것.
-- 10-03 에 500장을 넣었었다(id 6726–7225, source·origin `o365`, 넣기 전 DB `labeling.db.bak_o365_20261003_024915`) — 뺄 때 승인 29
-  / 대기 429 / 건너뜀 42. 11-03 에 뺄 무렵 뜬 DB 백업은 `labeling.db.bak_trash_20261103_004945`·`labeling.db.bak_trash29_20261103_125351`.
-  **넣은 뒤 `labeler.py label --all` 을 쓰지 말 것** — 검수 대기 라벨을 예측으로 덮는다(웹 UI 의 자동 라벨링은
-  `include_pending: false` 라 안전하다).
-- 넣을 때의 사용자 결정: Scooter → motorcycle, isfake·isreflected 박스는 버리고, 우리 클래스에 iscrowd 가 있거나 Ambulance 가
-  있는 사진은 뺀다. O365 의 Van 은 우리 기준과 다르고(SUV·캐노피 픽업·버스 뒷면이 섞임 — 11-02 부터 car 로 넣는다) Pickup
-  Truck 에도 세단·SUV 오표기가 있으니 **검수를 거칠 것**(Van 으로 들어온 캐노피 픽업은 pickup, 버스 뒷면은 bus 로). O365 의
-  `Hoverboard`(세그웨이류)도 우리 scooter 가 아니다. 이미지는 Flickr CC 라 NonCommercial 이 섞여 있다.
-- `tools/test_baseline.py` 의 all·nodrone 은 source='o365' 를 뺀다(O365 만은 `o365`, 전부는 `all_o365`).
-  `objects365_v1_…` 이름은 연번 계열로 묶지 않는다(`grouping._INDEPENDENT` — 아니면 전부 한 묶음이 된다).
-- json(5.14GB)을 흘려 읽을 때는 객체째 잘라 `json.loads` 할 것 — 뒤쪽 주석은 필드 순서가 다르다.
+**Objects365 는 11-03 에 프로젝트에서 뺐다**(DB 에 o365 행 없음, 원본 tar 도 11-04 에는 그 자리에 없었다). 다시 넣게 되면
+[docs/provenance.md](docs/provenance.md) 'CLAUDE.md 에서 옮겨 온 메모' 의 Objects365 를 볼 것 — 넣은 뒤 `labeler.py label --all` 금지.
 
 ## git
 
@@ -251,48 +227,15 @@ scooter 1,031  truck 1,050  pickup 770
        (출동 차량으로 바꾼 90개는 대부분 S.RIDE 택시·흰 SUV 오검출 — 검수에서 원래 차종으로 되돌릴 것)
 ```
 
-- **11-07 저녁 '프로젝트에 어울리지 않는 이미지' 를 휴지통으로 보냈다**(사용자 결정, VIRAT 제외 승인 6,115장 점검 — 목록·시트는
-  git 밖 `data/visible/fit_review/`).
-  - 보낸 것 949장
-    - A 영상물 243: 영화·뮤직비디오·드라마·앨범 표지
-    - B 우리 클래스 물체가 없는 풍경·동물·빈 화면 48: 해외 라이브캠 39 등
-    - C PETS 2009 S2.L1 View_001 연속 프레임 658: 프레임 번호 8개마다 1장, 96장만 남김
-  - 이로써 test 는 802 → 693장이 됐다.
-  - 기록: 전 DB `labeling.db.bak_fittrash_20261107_201344`, 목록 `data/visible/trashed_fit_20261107_201344.txt`.
-  - **같은 날 사용자가 휴지통을 비웠다** — VIRAT 휴지통 7장과 함께 956행과 원본 파일을 지웠다(seed 701 · legacy/labeled 248 ·
-    VIRAT 7). 남은 행은 파일이 다 있다.
-    - 되살리려면 위 백업 DB 의 행과 파일이 필요하다. 파일은 사용자 클라우드 백업이나 C: `20261031`(legacy) 에서 가져온다.
-    - 그 701장은 seed COCO json 에 이름이 남아 scan 이 'JSON 에 있으나 파일이 없는 이미지' 로 알렸다. 11-08 에 json 에서 뺐다
-      (아래 `legacy/seed`).
-    - 지운 248장의 라벨 사본(legacy/labeled/labels/*.txt)도 사용자 요청으로 윈도우 휴지통에 보냈다.
-    - 그 폴더에는 그 전부터 이미지 짝이 없던 txt 3개가 남아 있다(one_10344…·two_plus_3352…·스크린샷 2026-09-13 204935).
-  - **휴지통 비우기는 원본 파일까지 지운다**(`tidy.purge_trashed`). legacy/seed 는 유일한 사본이니 비우기 전에 물을 것.
-  - 남긴 것(사용자가 정할 것): 거리 수준 비CCTV 사진 1,098(bicycle 의 40%·bus 18%·scooter 17% 가 여기), 드론 258,
-    실내 CCTV 크롭 약 120.
+- **11-07 저녁 '프로젝트에 어울리지 않는 이미지' 949장을 휴지통으로 보냈고 같은 날 사용자가 비웠다**(956행·원본 파일 삭제 —
+  경위·백업·되살리기는 docs/provenance.md 'CLAUDE.md 에서 옮겨 온 메모'). **휴지통 비우기는 원본 파일까지 지운다**
+  (`tidy.purge_trashed`) — legacy/seed 는 유일한 사본이니 비우기 전에 물을 것. 남긴 것(사용자가 정할 것): 거리 수준 비CCTV 사진
+  1,098, 드론 258, 실내 CCTV 크롭 약 120.
 
-- **11-07 에 VIRAT 프레임 550장을 검수 대기로 넣었다**(id 7229–7778, source `virat`, 카메라 `virat-XXYY` 11대 × 50,
-  도메인 CCTV, 분할 미배정 — docs/provenance.md 'VIRAT 가져오기'). 박스는 같은 날 사용자 결정으로 다시 라벨링해 운영 모델
-  + 모델이 못 찾은 VIRAT 이고, 0503 은 아래 주차장 띠(1920×650)만 잘라 `split: train` 으로 고정한 뒤 모델 예측만으로
-  다시 라벨링했다(`--model-only`). 승인 전에는 학습에 안 들어간다.
-  - 같은 날 저녁 점검에서 확실한 오류만 고쳤다(사용자 승인): 박스 211개(116장), 휴지통 6장. 이력 묶음 'VIRAT 정리 A~D',
-    백업 `labeling.db.bak_viratfix_20261107_195710`. 자세한 것은 provenance.
-  - 0500 도 잘라 x 700 오른쪽·y 270 아래(1220×810)만 쓰고 `split: train` 으로 고정했다(사용자 결정, 11-07 밤).
-    - 위쪽 인도에 겹쳐 선 오토바이 뭉치를 눈으로 가를 수 없고, 왼쪽은 나무 그늘(가린 차의 VIRAT 박스)과 막은 공사 차선이다.
-    - 폭이 줄어 640 입력에서 물체가 통째 화면보다 약 1.6배 크게 보인다(train 전용이라 평가에는 영향 없음).
-    - 백업 `labeling.db.bak_viratrecrop_20261107_210025`(y 자르기 전)·`…_215155`(x 자르기 전).
-    - 이어서 흰 밴 뒤 오토바이 라벨이 빠진 27장에 박스를 채웠다(이력 묶음 'VIRAT 정리 E', 백업 `…bak_viratmoto_20261107_215540`).
-    - 11-08 새벽 사용자가 0500 을 검수했다: 승인 26. 나머지 24장은 휴지통을 비워 행·파일이 없다.
-  - 0101 도 y 210 위를 잘라(1280×510) `split: train` 으로 고정했다(사용자 결정, 11-08).
-    - 왼쪽 위로 주차장 너머(운동장·세워 둔 트레일러·먼 인도에 앉은 사람들)가 멀리 보여 장마다 라벨이 갈렸다.
-    - 폭이 그대로라 물체 크기는 같다. 박스는 다시 라벨링하지 않고 옮겼다(`--keep-boxes`, 2,569 → 2,325).
-    - 먼 인도·도로의 VIRAT 보행자·자전거도 같이 빠졌다. 백업 `labeling.db.bak_viratrecrop_20261108_034644`.
-  - 자른 장면(0500·0101)은 박스 좌표가 바뀌어 'VIRAT 정리 A~D' 묶음 되돌리기에서 건너뛴다.
-  - 지금 VIRAT(11-08 저녁): 승인 37(0101 3 · 0500 26 · 0503 8) / 검수 대기 478. 검수 대기 박스는 모델 7,243 · VIRAT 1,000
-    — 새 운영 m 으로 407장을 다시 라벨링하고 확실한 오검출 25개를 지운 뒤다(아래 '다음에 할 일' 4).
-  - 휴지통을 비운 것은 행·파일이 없다. 그래서 0000·0002·0502 는 48장, 0101 은 46장, 0503 은 49장, 0500 은 26장이다.
-  - `import_virat.py --per-scene 50 --apply` 를 다시 돌리면 모자란 만큼 다시 채운다(지운 것과 같은 프레임을 다시 고를 수 있다).
-  - 남은 후보 목록은 git 밖 `data/visible/virat_qa/`.
-  - VIRAT 이미지는 묶음(grp)이 없어 '같은 자리 일괄 수정' 이 400 이다.
+- **VIRAT(11-07 에 550장, id 7229–7778, source `virat`, 카메라 `virat-XXYY` 11대)** — 경위·자른 장면(0503·0500·0101, `split: train`
+  고정)·정리 묶음 A~G·백업은 docs/provenance.md 'VIRAT 가져오기'·'CLAUDE.md 에서 옮겨 온 메모'. 11-08 저녁에 승인 37 / 검수 대기 478.
+  자른 장면은 'VIRAT 정리 A\~D' 묶음 되돌리기에서 건너뛰고, VIRAT 이미지는 묶음(grp)이 없어 '같은 자리 일괄 수정' 이 400 이다.
+  `import_virat.py --per-scene 50 --apply` 를 다시 돌리면 모자란 만큼 다시 채운다.
 - **클래스는 10개다** — 11-09 에 responder(8, 출동 차량)·cone(9, 라바콘)을 붙였다(사용자 결정 — DetectView 유고 단서용, 판정은
   docs/label-rules.md '출동 차량·라바콘'). **그날 박스는 아직 없고, 옛 승인 라벨에는 출동 차량이 truck·car 로, 라바콘은 배경으로 들어 있다** —
   고치기 전에 이 둘을 넣어 학습하지 말 것(후보 찾기·미리 라벨은 `tools/ovd_propose.py` → `tools/import_proposals.py`).
@@ -376,23 +319,8 @@ docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운�
 **`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라 중단할 때마다 그 시점 best 로 밀려난다** — 운영할 가중치는 늘
 `best_<이름>.pt` 로 따로 둔다.
 
-**다른 디스크 백업: `C:\local_auto_labeling_backup\20261031\`**(C: = 디스크 1, E: 와 다른 물리 디스크). `.venv`·`graft`·
-`data/visible/dataset`·`__pycache__`·`*.tar`·살아 있는 DB 파일을 뺀 전부(8,127개 5.11GB, md5 전수 대조)와 sqlite `backup()` 으로
-뜬 DB 다. 자세한 것은 그 폴더의 `BACKUP_INFO.txt`. Objects365 tar 는 들어 있지 않다. E: 의 외부 백업(09-11)은 11-02 에 사용자가
-지웠다. **그 위에 더하는 `C:\local_auto_labeling_backup\20261105\`**(11-05, 28MB — 사용자 확인): 그날의 DB 스냅샷(integrity ok,
-행 수 원본과 같음), 10-31 뒤에 생긴 이미지 3장(id 7226–7228)·`domain_review/`(seen.csv)·classes.txt·구내식당 id 목록·
-`docs/collab.md`, push 전 커밋까지 담은 `repo_main.bundle`. 이미지는 10-31 백업에 6,115장 중 6,112장이 크기까지 같게 있어 다시
-뜨지 않았다. 되살릴 때는 10-31 의 옛 폴더 구조(`seed/`·`labeled/`)를 `legacy/` 아래로 옮긴 뒤 이것을 덮는다(그 폴더의
-`BACKUP_INFO.txt`). 하루 사본·`labeling.db.bak_*`(11-02·03, 약 210MB)는 넣지 않았다. 다시 뜰 때는(PowerShell, `$src`=저장소
-`$dst`=새 날짜 폴더 — **이전 것을 지울지 먼저 물을 것**):
-
-```powershell
-robocopy $src $dst /E /XJ /COPY:DAT /DCOPY:DAT /R:1 /W:1 /MT:8 /XD "$src\.venv" "$src\graft" "$src\data\visible\dataset" "$src\data\visible\thumbs" __pycache__ /XF labeling.db labeling.db-wal labeling.db-shm labeling.db-journal *.tar
-```
-
-종료 코드 0–7 이 성공이고, 그 뒤 DB 를 sqlite `backup()` 으로 `$dst\data\visible\labeling.db` 에 뜬다. **되살리기는 README '새
-PC 에서 시작하기' 4·5단계대로 네 폴더만** 가져온다 — 백업 폴더를 통째로 덮는 `BACKUP_INFO.txt` 1단계는 저장소까지 잃었을
-때만이다(안의 `.git` 은 메일을 바꾸기 전 이력이고, 옛 문서까지 덮인다).
+**다른 디스크 백업은 `C:\local_auto_labeling_backup\20261031\` 와 그 위에 더하는 `20261105\`** 다(C: 는 E: 와 다른 물리 디스크).
+담긴 것·다시 뜨는 명령·되살리는 순서는 [docs/backup.md](docs/backup.md) — 새로 뜨기 전에 이전 날짜 폴더를 지울지 먼저 물을 것.
 
 ## WSL 학습 (`wsl/`, 웹 UI 'WSL 학습' 버튼)
 
@@ -516,92 +444,14 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 
 ## UI 조작
 
-사용자 문서·단축키는 README '검수 UI 사용법'. 작업자가 알아야 할 것만:
-- **편집은 0.6초 뒤 자동 저장된다**(`app.js` `markDirty`·`flushSave`) — UI 를 시험하면 실제 작업물이 바뀐다. 먼저
-  `GET /api/images/{id}` 로 떠 두고 끝나면 `PUT /api/images/{id}/boxes` 로 되돌릴 것. 경합 시험은 **DB 복사본**(sqlite `backup()`)
-  으로 띄운 서버에서 한다.
-- **저장은 한 번에 하나만 돈다**(`S.saving`·`S.rev`). 저장이 실패하면 이미지를 넘기거나 승인하지 않는다(`saveBeforeLeaving`).
-  응답을 기다리는 곳(SAM·예측·이미지 로드·변경 내역)은 **요청한 이미지 id 를 붙잡아 두고 바뀌었으면 결과를 버린다** — 새
-  비동기 호출을 넣을 때도 그렇게 할 것.
-- 여러 장을 연달아 고친 뒤에는 **박스가 줄어든 저장을 확인할 것**(상단 '변경 기록' 이나 `GET /api/history?shrunk=1`).
-- **박스를 바꾸는 길은 전부 `store._replace_boxes` 를 지난다**(변경 이력 `box_history` 에 그 이미지의 박스 목록 전후를 JSON 으로
-  남긴다). 새 경로도 그걸 거치게 하고, `_write_lock` 은 **부르는 쪽이** 쥔다(안에서 다시 잡으면 멈춘다).
-  - 파일을 바꾼 이미지(`store.replace_file` — VIRAT `--recrop` 은 source predict, `tools/crop_images.py` 는 crop)는 그 전 이력의
-    박스가 옛 화면 좌표다. crop 은 서버가 그 전 이력으로 되돌리기를 막지만(`store.crop_entries`), VIRAT 자르기 이력은 가려내지 못한다.
-    가릴 영역이 있는 이미지에 `masks=`(새 그림 기준으로 옮긴 영역)를 안 주면 `replace_file` 이 ValueError 를 낸다(아무것도 안 쓴다).
-- **가릴 영역 (2026-11-09, `src/autolabel/masks.py`)** — 라벨하기 애매한 물체를 검수 화면 `M` 모드로 덮는 사각형
-  (무엇을 덮는지는 docs/label-rules.md 한 곳에 적는다 — 기준을 바꾸면 거기와 화면 문구 `index.html`·`app.js` 를 볼 것).
-  DB `masks` 표(정규화 xyxy, EXIF 회전을 적용한 화면 기준)에만 있고 **원본 그림은 그대로**다. 학습 세트(`trainer.build_dataset`)와
-  이미지를 함께 내보내기(`export_yolo`)만 그 자리를 회색 114 로 칠한 JPEG 을 쓰고, 영역들의 합집합이 박스 넓이의 반 이상을 덮는
-  박스는 그 라벨 파일에서만 뺀다(DB 박스는 그대로). **test 는 칠하지 않는다** — 서버가 test 이미지(분할 test·test 고정 카메라)에
-  영역을 받지 않고(409, 지우기만 받는다) 학습 세트도 test 분할은 원본 그대로다. 원본을 직접 읽는 도구(test_baseline·label_qa·
-  test_tiles 등)는 영역을 모른다.
-  - 저장(PUT boxes)의 `masks` 는 **그 화면에서 영역을 손댄 뒤로만** 싣는다(`S.masksTouched`) — 안 실으면(옛 화면 포함) 서버가
-    그대로 둔다. 영역이 바뀐 저장은 박스가 그대로여도 이력에 남고(`box_history.masks_before·masks_after`, 박스만 바뀐 줄은 NULL),
-    되돌리기는 그 줄에 영역이 있을 때만 영역도 되돌린다. 되돌리기(Ctrl+Z) 한 칸은 박스와 영역을 함께 쌓는다.
-  - 가릴 영역 모드에서는 영역만 고르고 옮긴다(박스는 B). 덮는 몫은 `masks.covered` 와 `app.js` 의 `maskCover` 가 같은 식이다
-    (좌표 압축으로 합집합) — 고치면 둘 다.
-- DB 자동 백업(`store.backup_daily`)은 `<DB 폴더>/backups/` 에 하루 한 번, 최근 `backup.keep`(14)개 — 그 이름 꼴의 파일만 지운다.
-  **시험 서버는 `backup.keep: 0` 으로 끌 것.**
-- 같은 자리 일괄 수정(`store.same_place` → `set_class_bulk`)은 적용 때 다시 찾아 미리 본 수와 다르면 409, 묶음째 되돌리기는 그
-  뒤 손대지 않은 이미지만 되돌린다. 묶음(grp)이 정해지기 전의 새 이미지는 쓸 수 없다.
-- **예측 비교(P)** 는 운영 가중치로 한 장 추론만 하고 DB 에 쓰지 않는다(비교는 브라우저 `computeFindings`, 규칙은
-  `tools/label_qa.py` 와 같고 예측 하한만 다르다 — label_qa 0.10, P 는 `predict.conf` 0.25). 모델이 모르는 클래스(11-08 전 운영 visible-3 은
-  pickup)는 비교하지 않는다. 올릴 때 빈 이미지로 예열하는데, **자동 라벨링(`AutoLabeler`)은 예열하지 않는다** — 첫 추론이 CUDA
-  초기화로 길어지면 NMS 시간 제한에 걸려 검출이 'NMS time limit exceeded' 경고만 남기고 잘릴 수 있다(한 번 봤고 조건은 모른다).
-- **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
-  가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
-  모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).
-- '드문 클래스 먼저' 정렬·클래스 필터는 목록과 **같은 WHERE**(`_list_where`·`count_images`)로 센다 — 어긋나면 목록 묶음이 틀어진다.
-  카메라·도메인·분할 필터도 같은 WHERE 에 있다. **분할 필터는 보기만 한다**(`/api/splits`) — 웹 UI 에 분할을 바꾸는 길을 넣지 말 것
-  (분할은 `split.py` 만 쓴다, 위 '묶음 단위 계층화').
-- **목록은 '전체' 로 6천 줄을 펼칠 수 있다** — 이미지를 바꿀 때 목록을 통째로 다시 그리지 말 것(`loadImage` 는 `markCurrent()`,
-  한 장의 꼬리표는 `refreshRows()`). 통째로 다시 그리면 0.1초, 화면 밖 줄까지 다시 배치하면 0.4초가 걸려 Q·W·E 를 꾹 누르면
-  25초 멈췄다 — `li.item` 의 `content-visibility: auto` 를 빼지 말 것. 반복 입력이 겹치지 않게 `S.domainBusy` 가 막는다.
-  **그 짝으로 `li.item` 의 높이(32px)를 못 박아 둘 것** — 내용에 맡기면 건너뛴 줄(자리 표시 크기)과 그린 줄의 높이가 달라,
-  다시 그릴 때 같은 스크롤 위치가 백 줄 넘게 다른 곳을 가리킨다(11-04, 태그 이름을 바꾸면 지금 줄을 놓쳤다).
-- **Q·W·E·T·태그 칸으로 필터에서 빠진 줄도 목록을 다시 받기 전까지 제자리에 둔다**(11-04 사용자 요청 — 다시 받으면 목록이
-  움직였다). 걷어 내는 것은 목록 위 `↻ 새로 받기`(`refreshList`). 태그 이름 바꾸기·지우기도 그 줄만 고친다. 승인 등으로 다시 받을
-  때는 `keepCurrentRow()` 가 보던 자리를 화면에 그대로 두고, 다음 이미지는 **다시 받기 전 순서로** 고른다(`advanceFrom(id, before)` —
-  순번으로 고르면 그새 빠진 줄만큼 건너뛰고, '최근 수정순' 에서 승인하면 맨 위로 옮겨 간 탓에 맨 위 둘째 줄로 갔다).
-  **그런 줄이 남아 있으면 서버 쪽 묶음(100개씩…) 경계가 밀려 있다** — 묶음을 펼칠 때는 펼친 묶음을 전부 새로 받고(`toggleChunk` —
-  그 묶음만 받으면 사이의 이미지가 어느 묶음에도 안 나왔다), 다시 받은 뒤 보던·넘어갈 이미지가 닫힌 묶음으로 밀렸으면
-  `openChunkWith()` 가 그 묶음을 펼친다.
-- **화면 구성(11-04 개편)** — 작업 버튼은 상단 `데이터`·`모델` 메뉴(`.menu-item`, id 는 그대로라 onclick 도 그대로),
-  왼쪽 필터는 접히는 `필터` 칸(`renderFilterSummary` 가 한 줄 요약 — 새 필터를 넣으면 거기도 넣을 것), 태그 필터는
-  여러 개 넣고(포함) 빼는(제외) 찾기 칸(`makeTagFilter`, 11-04 — select 가 아니고 상태는 `S.tagF` 하나다. 코드로 바꾸면
-  `tagFilter.render()`, 목록은 `applyTagFilter()` 로 다시 받는다 — 받는 사이 또 바뀌면 끝난 뒤 마지막 조건으로 한 번
-  더. API 는 `tag=3,7`(모두, `tagmode=any` 면 하나라도)·`xtag=5`(빼기)·`tag=__none__`, SQL 은 `store.TagFilter`), 오른쪽은
-  `.sec` 칸 접기(`localStorage` `secClosed`). **이미지 보기(`gallery.js`)는 같은 페이지의 다른 보기다**(`setView`·`VIEW`·
-  `body.view-gallery`) — 필터·태그·`S.curTag` 를 함께 쓰고, 이미지 보기일 때 키는 `galleryKey` 로만 간다(라벨링 단축키가
-  숨은 이미지에 먹으면 안 된다 — Space 승인). 목록은 지금 필터 전부를 받고 칸은 400개씩 그린다. 여러 장 바꾸기는
-  `/api/bulk/tag`·`/api/bulk/domain`(**`/api/images/...` 밑에 두지 말 것** — `{image_id}` 경로와 겹치면 FastAPI 가 422
-  에서 멈춘다), 바꾼 뒤 `G.items`·`S.images`·`S.cur` 를 함께 고친다(`applyToRows`). 30장 넘으면 묻는다. 썸네일은
-  `/api/images/{id}/thumb?s=160|256|384` 가 `<DB 폴더>/thumbs/` 에 캐시한다(원본 수정 시각·크기가 이름에 — 백업에서 뺀다).
-- **왼쪽 목록 폭(11-07)** — 경계 손잡이(`#list-resizer`)를 끌면 app.js 가 `.layout` 의 `--left-w` 를 바꾸고(localStorage
-  `listWidth`), CSS 의 `--left-eff`(clamp)가 창 폭에 맞춰 줄인다(가운데 420px·오른쪽 270px 은 남김, 250~900px). 창 크기
-  이벤트에 기대지 말 것 — 에뮬레이션으로 창을 줄이면 resize 이벤트 없이 목록이 화면을 다 덮었다. 이미지 보기에서는
-  늘 250px 다. 왼쪽 칸 폭을 다른 곳에 숫자로 박지 말 것.
-- **태그(11-03)** — `tags`·`image_tags` 표(이미지 하나에 여러 개, 이미지를 지우면 CASCADE 로 떨어진다). 라벨이 아니라
-  `updated_at`·변경 이력에 남기지 않고, 학습·분할·`test_baseline` 은 아직 보지 않는다. 검수 UI 의 T(고른 태그 붙이고 다음,
-  `S.tagBusy`)·칸(붙이기/떼기)·✎·×·태그 필터. legacy 의 카메라·크롭 분류를 사용자가 여기에 담는다 — 분할에 쓰게 되면 태그
-  이름이 바뀔 수 있으니 id 로 가리킬 것.
-- 이미지를 밖에서 편집해 확장자·크기가 바뀌면 조용히 어긋난다 — **`labeler.py check`**(파일 없음·열리지 않음·크기 불일치·경로
-  표기), 크기만 바뀌었으면 `--fix-size`(박스 값은 그대로 둔다).
-- **사람이 보지 않은 것은 승인되지 않게 (11-05).** 승인·건너뛰기·Q·W·E·T·새로 받기는 서로 겹치지 않는다(`navBusy()` — 도는 중에
-  들어온 것은 버린다), Space·Enter·S 는 키 반복(`e.repeat`)을 버린다. 승인은 지금 이미지의 사진이 뜬 뒤에만(`S.imgId` — 로드는
-  `S.loadSeq` 로 마지막 것만, 사진이 뜨기 전에는 앞 장 그림을 두고 캔버스 입력도 받지 않는다), 휴지통 이미지는 승인하지 않는다(복원
-  먼저). 자동 라벨링이 도는 중(`S.jobKind`)에는 승인 전에 서버 박스를 다시 보고 다르면 다시 읽는다. 이미지를 바꾸는 작업
-  (자동 라벨링·휴지통 비우기·정리, `IMAGE_JOBS`)이 끝나면 `syncCurrentAfterJob` 이 지금 이미지를 맞춘다(404 면 비우고 첫 장) —
-  학습·스캔은 넣지 말 것(긴 학습이 끝날 때 되돌리기·확대가 날아간다). 서버 쪽 `AutoLabeler.run` 도 시작 때의 (상태, updated_at)
-  과 같을 때만 쓴다(`store.apply_prediction`).
-- 끄는 박스는 `drag.box` 로 붙잡고 되돌리기는 처음 바꿀 때 쌓는다(`editDragBox`), 그 박스가 없어지면 끌기를 끝낸다(`dragLost`).
-  크기 조절·새 박스는 1px 아래로 만들지 않는다(`tooSmall` — 서버는 w·h 0 을 422, 1e-4 이하를 조용히 버린다). 예측(P) 요청은
-  200ms 미뤄 마지막 장만 보내고(`S.predSeq`) 이미지 보기에서는 보내지 않는다.
-- **검수 서버는 다른 사이트에서 부르기를 막는다**(11-05, `server._RequestGuard` — 바깥 앱에 한 번). GET·HEAD·OPTIONS 가 아닌
-  요청은 `Sec-Fetch-Site` 가 same-origin·none 이 아니거나 `Origin` 이 Host 와 다르면 403, Host 가 루프백·bind 주소가 아니면 400
-  (`--host 0.0.0.0` 이면 Host 는 안 본다). 헤더 없는 요청(urllib·curl)은 통과한다. **TestClient 는 `base_url="http://127.0.0.1:7860"`**
-  으로(기본 testserver 는 400). 엔드포인트의 `-> dict` 반환 주석은 지우지 말 것 — 그 덕에 결과의 NaN 이 null 로 나간다.
+전문은 [src/autolabel/CLAUDE.md](src/autolabel/CLAUDE.md) 로 옮겼다(11-10 — 그 폴더의 파일을 다룰 때 읽힌다. `tools/` 만 고치더라도
+박스 저장·가릴 영역·검수 서버를 건드리면 먼저 읽을 것). 늘 알아야 할 것만:
+- **편집은 0.6초 뒤 자동 저장된다** — UI 를 시험하면 실제 작업물이 바뀐다. 시험은 **DB 복사본** 서버에서, `backup.keep: 0` 으로.
+- **박스를 바꾸는 길은 전부 `store._replace_boxes` 를 지난다**(변경 이력). 그림 파일을 바꿀 때는 `store.replace_file` —
+  가릴 영역이 있는 이미지는 `masks=` 를 줘야 한다.
+- **가릴 영역**은 DB `masks` 표에만 있고 학습 세트·이미지 내보내기만 칠한다. test 는 칠하지 않는다. 덮는 몫은 `masks.covered` 와
+  `app.js` 의 `maskCover` 가 같은 식이다 — 고치면 둘 다.
+- 코드를 고친 뒤에는 검수 서버를 다시 켜야 반영된다. TestClient 는 `base_url="http://127.0.0.1:7860"`.
 
 ---
 
