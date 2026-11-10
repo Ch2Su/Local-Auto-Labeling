@@ -448,6 +448,8 @@ class Store:
 
         if order == "rare":
             return self._list_rare(status, classes, empty, limit, offset, camera, domain, split, tag)
+        if order == "tag":
+            return self._list_by_tag(status, classes, empty, limit, offset, camera, domain, split, tag)
 
         order_sql = {
             "uncertainty": "i.uncertainty DESC, i.id ASC",
@@ -518,6 +520,29 @@ class Store:
             out.append(d)
         out.sort(key=lambda d: (-d["rare_score"], -d["uncertainty"], d["id"]))
         return out[offset:offset + limit]
+
+    def _list_by_tag(self, status, classes, empty, limit: int, offset: int,
+                     camera: str | None = None, domain: str | None = None,
+                     split: str | None = None, tag: int | str | TagFilter | None = None) -> list[dict]:
+        """'태그 순' 정렬 (2026-11-10 사용자 요청). 이미지의 태그를 **넓은 것부터** 이어 붙인 이름으로 줄 세운다.
+
+        넓은 것 = 붙은 이미지가 많은 것(`list_tags` 의 n, 같으면 이름순) — 태그는 나라·도시·장소, 영상 종류처럼 넓고
+        좁은 것이 섞여 붙어서, 넓은 것부터 견주면 같은 나라 안에 같은 도시·장소가 모인다(좁은 것부터 견주면 한 장소의
+        이미지가 다른 태그 하나 더 붙은 것만으로 멀리 갈린다). 같은 태그끼리는 이름순(연번·촬영 시각), 태그 없는 이미지는
+        맨 뒤. 목록 묶음(100개씩…)과 맞도록 같은 조건의 전체를 줄 세운 뒤 잘라 준다('드문 클래스 먼저' 와 같다).
+        """
+        tags = {t["id"]: (t["n"], t["name"].casefold()) for t in self.list_tags()}
+        where, args = _list_where(status, classes, empty, camera, domain, split, tag)
+        with self.connect() as con:
+            rows = [dict(r) for r in con.execute(f"SELECT {_LIST_COLS} FROM images i{where}", args).fetchall()]
+
+        def key(d: dict) -> tuple:
+            ids = [int(t) for t in d["tag_ids"].split(",")] if d.get("tag_ids") else []
+            info = sorted((tags.get(t, (0, str(t))) for t in ids), key=lambda x: (-x[0], x[1]))
+            return (not info, [name for _, name in info], d["name"].casefold(), d["id"])
+
+        rows.sort(key=key)
+        return rows[offset:offset + limit]
 
     def count_images(
         self,
