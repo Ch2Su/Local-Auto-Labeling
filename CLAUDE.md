@@ -431,8 +431,9 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   고른 것만 `unlabeled/<카메라>/` 로 **옮겨** 스캔한다(원본 영상은 읽지도 않는다 — 사본만). **작업 큐 밖**이라 학습 중에도 돌고,
   넣기의 스캔은 '폴더 스캔' 과 같은 잠금(`server.ingest_lock`)을 쥔다. 같은 탭의 `＋ 새로` 가 **`cameras.yaml` 에 카메라를
   더한다**(`provenance.add_camera` — 끝에 글자로 덧붙이고 쓰기 전 파일은 `backups/cameras_<시각>.yaml`). `지우기…` 는 그 카메라의
-  줄만 뺀다(`remove_cameras`) — **DB(휴지통 포함)나 카메라 폴더에 이미지가 남은 카메라는 서버가 막는다**. 수정은 손으로.
-  규칙은 src/autolabel/CLAUDE.md.
+  줄만 뺀다(`remove_cameras`) — **DB(휴지통 포함)나 카메라 폴더에 이미지가 남은 카메라는 서버가 막는다**. `고치기…` 는 바뀐 칸의
+  줄만 고친다(`edit_camera`) — 쓰는 이미지가 있으면 키, 분할된 이미지가 있으면 고정 분할은 막고, 시간대를 바꾸면 그 카메라 이미지의
+  촬영 시각을 다시 센다. 규칙은 src/autolabel/CLAUDE.md.
 - 코드를 고친 뒤에는 검수 서버를 다시 켜야 반영된다. TestClient 는 `base_url="http://127.0.0.1:7860"`.
 
 ---

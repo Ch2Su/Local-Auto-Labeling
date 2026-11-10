@@ -85,7 +85,16 @@
     시간대는 `normalize_tz` 가 `+09:00` 꼴로 바꿔 적는다(11-10 — KST·JST·UTC·GMT·Z·`UTC+9`·`+9`·Asia/Seoul. `parse_tz` 도 같은
     표를 써서 손으로 쓴 `tz: KST` 도 읽힌다. CST·IST·BST·AST 는 뜻이 여럿, EST·PST 는 여름에 바뀌어 이유와 함께 거절한다 — 약어를
     더할 때는 뜻이 하나뿐인지 볼 것. 화면 목록의 `tz` 는 `tz_text`).
-    수정은 하지 않는다(손으로). 장소는 서버 로그에 찍지 않는다.
+    장소는 서버 로그에 찍지 않는다.
+  - **카메라 고치기(`고치기…` → `PUT /api/cameras/{key}` → `provenance.edit_camera`, 11-10 사용자 요청).** 보낸 칸만 보고 지금 값과
+    **뜻이 같은 칸은 건드리지 않는다**(`_same_value` — mount 없음 = unknown, tz 는 `normalize_tz` 로 견줌, 빈 값 = 없음). 바뀐 칸의 줄만
+    고친다: 한 줄 값은 그 줄을 바꾸고(줄 끝 주석은 `_line_comment` — 떼어도 같게 읽히는 첫 ' #'), 없던 칸은 `_FIELD_ORDER` 자리에 넣고,
+    비운 칸은 줄을 뺀다(split 은 `split:`). 키는 키 줄의 이름만 바꾼다. 다시 읽어 그 카메라만 기대대로(`merged`) 바뀌었을 때만 쓴다 —
+    flow 한 줄 항목처럼 못 고치는 모양은 400(손으로). **server 가 막는 것(409)**: 쓰는 이미지(DB 휴지통 포함·폴더 파일)가 있는 카메라의
+    키, 분할이 정해진 이미지(`store.camera_image_stats` 의 assigned)가 있는 카메라의 고정 분할(split.py 는 정한 분할을 안 옮겨 두 분할로
+    갈린다), 가릴 영역이 있는 이미지(masked)가 있는데 test 고정. **시간대를 바꾸면** 그 카메라 이미지의 `captured_at` 을 `capture_time`
+    으로 다시 센다(`store.set_captured_at` — updated_at 은 그대로, 다시 셀 수 없으면 그대로). 지우기와 같은 두 잠금을 같은 순서로 쥔다.
+    키를 바꾸면 캡처 세션도 새 키로(`rename_camera`). 화면 목록의 `fields`(`camera_fields`)가 고치기 칸을 채운다.
   - **카메라 지우기(`지우기…` → `POST /api/cameras/remove` → `provenance.remove_cameras`, 11-10 사용자 요청).** 같은 방식으로
     **그 카메라의 줄만** 뺀다 — 키 줄, 그 아래 더 깊이 들여쓴 줄(속성·안쪽 주석), 키 바로 위에 **같은 들여쓰기로** 붙은 주석(등록
     주석). 맨 왼쪽의 묶음 설명 주석과 끝의 얕은 주석·빈 줄은 다음 키 것으로 보고 남긴다. 다시 읽어 '그 키들만 없어지고 나머지는
