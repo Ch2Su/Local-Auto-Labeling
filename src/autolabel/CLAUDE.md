@@ -33,10 +33,16 @@
     크기). 적용하면 이미지의 `masks` 로 **복사**된다(템플릿을 고치거나 지워도 적용한 이미지는 그대로). 한 장 적용은 화면이
     `S.masks` 에 더하고 평소 저장(PUT boxes, `S.masksTouched`)으로 간다 — 되돌리기·이력이 그대로 먹는다. 여러 장은 이미지 보기의
     `/api/bulk/mask-template`(add·remove) → `store.apply_mask_template`: 이미지마다 `_replace_boxes(source='bulk', batch=…, masks=…)`
-    라 일괄 수정 묶음으로 되돌린다(`revert_batch` 가 `masks_after` 가 있는 줄은 지금 영역도 적용 직후와 같을 때만 영역까지 되돌린다).
+    라 일괄 수정 묶음으로 되돌린다. `revert_batch` 는 `masks_after` 가 있고 박스 전후가 같은 줄(영역만 바꾼 줄)은 **박스를 견주지
+    않고 지금 박스를 그대로 둔 채** 영역만 되돌린다(지금 영역이 적용 직후와 같을 때만) — 템플릿을 넣은 뒤 박스를 검수한 장도
+    되돌려야 해서다. 되돌리면 영역이 새로 생기는 장이 그새 test 가 됐으면 건너뛴다.
+    **test 판정은 server 의 `mask_block` 한 곳에만 둔다** — store(`apply_mask_template(blocked=)`·`revert_batch(mask_blocked=)`)에는
+    `mask_blocker()` 로 넘긴다(store 는 cameras.yaml 을 모른다). 넘기지 않으면 store 는 막지 않는다.
     같은 자리 판정은 `masks.mask_key`(소수 7자리) — 더하기는 같은 좌표를 건너뛰고(`masks.merge`), 빼기는 같은 좌표만 뺀다
-    (`masks.subtract`). 화면의 `xyxyKey` 가 같은 규칙이다 — 고치면 둘 다. 더하기는 test(분할 test·test 고정 카메라 — store 가
-    쓰는 순간의 행으로 다시 본다)·화면 비율이 1% 넘게 다른 그림(서버가 `display_size` 로 연다)·50개 넘김을 건너뛴다.
+    (`masks.subtract`). 화면의 `xyxyKey` 가 같은 규칙이다 — 고치면 둘 다. 더하기는 test·화면 비율이 1% 넘게 다른 그림(DB 크기로
+    먼저 보고 어긋날 때만 `display_size` 로 연다)·50개 넘김을 건너뛴다. 화면은 적용 직전에 목록을 다시 받는다(`freshMaskTemplate`).
+  - `_replace_boxes` 는 **박스가 그대로면(같은 `_box_key` 목록) boxes 행을 지우고 다시 넣지 않는다**(2026-11-10) — 영역만 바꾸는
+    저장·템플릿 적용에서 박스 행 id 가 그대로 남는다. 이력은 전과 같이 남긴다.
 - DB 자동 백업(`store.backup_daily`)은 `<DB 폴더>/backups/` 에 하루 한 번, 최근 `backup.keep`(14)개 — 그 이름 꼴의 파일만 지운다.
   **시험 서버는 `backup.keep: 0` 으로 끌 것.**
 - 같은 자리 일괄 수정(`store.same_place` → `set_class_bulk`)은 적용 때 다시 찾아 미리 본 수와 다르면 409, 묶음째 되돌리기는 그

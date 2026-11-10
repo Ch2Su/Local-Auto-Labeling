@@ -1824,6 +1824,13 @@ async function loadMaskTemplates() {
   if (typeof renderGalleryMtpl === "function") renderGalleryMtpl();
 }
 
+/** 적용 직전에 목록을 다시 받아 그 템플릿의 지금 내용을 돌려준다(지워졌으면 null) — 다른 창에서 바꾸거나 지운 것을
+ *  이 화면에 남은 옛 영역으로 넣지 않게. 목록을 못 받으면 가진 것으로 한다. */
+async function freshMaskTemplate(id) {
+  await loadMaskTemplates();
+  return S.mtpls.find((t) => t.id === id) || null;
+}
+
 /** 오른쪽 '가릴 영역 템플릿' 칸. 이미지를 열 때도 다시 그린다(test 이미지면 적용을 흐리게). */
 function renderMaskTemplates() {
   const ul = $("#mtpl-list");
@@ -1857,7 +1864,15 @@ function renderMaskTemplates() {
       + "(이미 같은 자리에 있는 영역은 건너뜀, Ctrl+Z 로 되돌리기). 여러 장에는 이미지 보기에서 적용합니다.";
     const ap = li.querySelector(".ap");
     ap.title = S.maskBlock || "이 이미지에 이 템플릿의 가릴 영역을 더합니다";
-    ap.onclick = (e) => { e.stopPropagation(); e.currentTarget.blur(); applyMaskTemplate(t); };
+    ap.onclick = async (e) => {
+      e.stopPropagation();
+      e.currentTarget.blur();
+      const id = S.cur && S.cur.id;
+      const now = await freshMaskTemplate(t.id);
+      if (!S.cur || S.cur.id !== id) return;            // 받는 사이 다른 이미지로 넘어갔다
+      if (!now) { toast(`템플릿 '${t.name}' 은 지워졌습니다 (다른 창에서 지웠을 수 있습니다)`, true); return; }
+      applyMaskTemplate(now);
+    };
     li.querySelector(".ed").onclick = (e) => { e.stopPropagation(); renameMaskTemplate(t); };
     li.querySelector(".del").onclick = (e) => { e.stopPropagation(); deleteMaskTemplate(t); };
     li.onmouseenter = () => { if (S.cur && S.imgId === S.cur.id) { S.tplGhost = t.rects.map(maskFromXyxy); draw(); } };
@@ -1916,7 +1931,8 @@ async function saveMaskTemplate() {
   } catch (err) {
     if (err.status !== 409) { toast(err.message, true); return; }
     if (!confirm(`템플릿 '${name}' 이 이미 있습니다. 이 이미지의 가릴 영역 ${body.masks.length}개로 바꿀까요?\n`
-      + "(이미 적용한 이미지의 영역은 그대로입니다)")) return;
+      + "이미 적용한 이미지의 영역은 그대로 남고, 바꾼 뒤에는 '빼기' 로 옛 영역을 찾지 못합니다 — 옛 영역을 걷어 내려면 "
+      + "취소하고 이미지 보기에서 먼저 '빼기' 를 하세요(또는 다른 이름으로 저장).")) return;
     try {
       res = await api("/api/mask-templates", { method: "POST", body: { ...body, overwrite: true } });
     } catch (err2) {
@@ -1937,6 +1953,7 @@ async function renameMaskTemplate(t) {
     await api(`/api/mask-templates/${t.id}`, { method: "PUT", body: { name } });
   } catch (err) {
     toast(err.message, true);
+    if (err.status === 404) loadMaskTemplates();        // 다른 창에서 지웠다 — 줄을 걷는다
     return;
   }
   await loadMaskTemplates();
@@ -1948,6 +1965,7 @@ async function deleteMaskTemplate(t) {
     await api(`/api/mask-templates/${t.id}`, { method: "DELETE" });
   } catch (err) {
     toast(err.message, true);
+    if (err.status === 404) loadMaskTemplates();
     return;
   }
   await loadMaskTemplates();

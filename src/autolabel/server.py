@@ -382,19 +382,28 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         return store.set_boxes(image_id, boxes, uncertainty=score_of(boxes), source=source, batch=batch,
                                masks=masks)
 
-    def mask_block(row) -> str | None:
+    def mask_block(row, cams: dict | None = None) -> str | None:
         """이 이미지에 가릴 영역을 둘 수 없는 이유, 둘 수 있으면 None (2026-11-09, masks.py).
 
         test 는 평가용이라 실제 화면 그대로여야 한다 — 분할이 test 이거나, 아직 미배정이어도 cameras.yaml 에서 test 로
         고정한 카메라면 막는다. 학습 세트도 test 분할은 칠하지 않으니 여기를 빠져나간 영역이 평가를 바꾸지는 않는다.
+        **이 규칙은 여기 한 곳에만 둔다** — 여러 장을 다루는 store(apply_mask_template·revert_batch)에는 이 함수를 넘긴다
+        (mask_blocker — 등록 파일을 장마다 다시 읽지 않게 cams 를 한 번 읽어 준다). row 는 split·camera 만 있으면 된다.
         """
         if row["split"] == "test":
             return "test 이미지에는 가릴 영역을 둘 수 없습니다 — 평가는 실제 화면 그대로여야 합니다."
-        cam = _cameras()[0].get(row["camera"]) if row["camera"] else None
+        if cams is None:
+            cams = _cameras()[0]
+        cam = cams.get(row["camera"]) if row["camera"] else None
         if cam is not None and cam.split == "test":
             return (f"test 로 고정한 카메라({row['camera']})의 이미지에는 가릴 영역을 둘 수 없습니다"
                     " — 평가는 실제 화면 그대로여야 합니다.")
         return None
+
+    def mask_blocker():
+        """여러 장에 쓸 mask_block — 카메라 등록 파일을 지금 한 번만 읽는다."""
+        cams = _cameras()[0]
+        return lambda row: mask_block(row, cams)
 
     def clean_mask_input(row, masks_in: list[MaskIn] | None) -> list | None:
         """요청의 영역을 정리한다. 너무 많으면 400, test 이미지에 영역을 남기려 하면 409(지우기만은 받는다)."""
@@ -691,9 +700,11 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     def bulk_mask_template(payload: BulkMaskTemplateIn) -> dict:
         """고른 이미지들에 템플릿 영역을 더하거나(add) 뺀다(remove). 바뀐 장수와 건너뛴 이유별 장수를 돌려준다.
 
-        더하기는 test 이미지(mask_block 과 같은 규칙 — store 가 쓰는 순간의 행으로 본다)와, 화면 비율이 템플릿을 만든
-        그림과 1% 넘게 다른 이미지·열 수 없는 이미지를 건너뛴다(다른 카메라·크기의 그림을 엉뚱하게 덮지 않게). 빼기는
-        템플릿과 좌표가 같은 영역만 빼므로 비율을 보지 않는다. 바뀐 이미지마다 이력(source bulk, 같은 batch)이 남는다.
+        더하기는 test 이미지(mask_block — store 가 쓰는 순간의 행으로 본다)와, 화면 비율이 템플릿을 만든 그림과 1% 넘게
+        다른 이미지를 건너뛴다(다른 카메라·크기의 그림을 엉뚱하게 덮지 않게). 비율은 DB 의 크기로 먼저 보고, 어긋날 때만
+        파일을 열어 EXIF 회전을 적용한 크기로 다시 본다(못 열면 unreadable) — 원시 비율은 같은데 90도 도는 그림은 가리지
+        못하지만 장마다 파일을 열면 1천 장에 2초가 걸렸다. 빼기는 템플릿과 좌표가 같은 영역만 빼므로 비율을 보지 않는다.
+        바뀐 이미지마다 이력(source bulk, 같은 batch)이 남는다.
         """
         if not payload.ids:
             raise HTTPException(400, "이미지를 고르세요.")
@@ -704,24 +715,25 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         n_aspect = n_unreadable = 0
         if payload.mode == "add" and tpl["width"] and tpl["height"]:
             want = tpl["width"] / tpl["height"]
+            near = lambda ratio: abs(ratio - want) <= 0.01 * want
+            rows = store.image_sizes(ids)
             keep = []
             for i in ids:
-                row = store.get_image(i)
-                if row is not None:                     # 없는 이미지는 store 가 missing 으로 센다
-                    ratio = _display_ratio(row)
+                row = rows.get(i)                       # 없는 이미지는 store 가 missing 으로 센다
+                if row is not None and not (row["width"] and row["height"] and near(row["width"] / row["height"])):
+                    ratio = _display_ratio(row)         # 원시 크기로 어긋나면 EXIF 로 도는 그림일 수 있다
                     if ratio is None:
                         n_unreadable += 1
                         continue
-                    if abs(ratio - want) > 0.01 * want:
+                    if not near(ratio):
                         n_aspect += 1
                         continue
                 keep.append(i)
             ids = keep
-        test_cams = frozenset(k for k, c in _cameras()[0].items() if c.split == "test")
         verb = "더하기" if payload.mode == "add" else "빼기"
         batch = (f"{datetime.now():%m-%d %H:%M:%S} 가릴 영역 템플릿 '{tpl['name']}' {verb}"
                  f" (고른 {len(payload.ids)}장) #{secrets.token_hex(2)}")
-        res = store.apply_mask_template(ids, tpl["rects"], mode=payload.mode, batch=batch, test_cameras=test_cams)
+        res = store.apply_mask_template(ids, tpl["rects"], mode=payload.mode, batch=batch, blocked=mask_blocker())
         return {**res, "aspect": n_aspect, "unreadable": n_unreadable,
                 "batch": batch if res["changed"] else None}
 
@@ -922,7 +934,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     def revert_batch(payload: BatchIn) -> dict:
         """일괄 수정 한 묶음을 되돌린다. 그 뒤 또 고친 이미지는 건너뛴다."""
         try:
-            reverted, skipped = store.revert_batch(payload.batch, score=score_of)
+            reverted, skipped = store.revert_batch(payload.batch, score=score_of, mask_blocked=mask_blocker())
         except ValueError as exc:   # 되돌리면 목록에 없는 클래스가 생긴다 (클래스를 합쳐 뺀 묶음)
             raise HTTPException(409, str(exc)) from exc
         if not reverted and not skipped:

@@ -384,17 +384,23 @@ async function bulkTag(tagId, on) {
  * 바뀌는 일이라 장수와 상관없이 한 번 묻는다. */
 const GS_MTPL_KEY = `gsMtpl:${BASE}`;     // 고른 템플릿 — 탭(프로젝트)마다 템플릿 번호가 따로라 주소별로
 
+let gsMtplSig = null;                     // 지금 select 에 그려 둔 템플릿 목록 — 달라졌을 때만 option 을 다시 만든다
 function renderGalleryMtpl() {
   const sel = $("#gs-mtpl-sel");
   if (!sel) return;
-  let want = sel.value;
-  if (!want) { try { want = localStorage.getItem(GS_MTPL_KEY) || ""; } catch { /* 없으면 첫 템플릿 */ } }
-  sel.innerHTML = S.mtpls.length
-    ? S.mtpls.map((t) => `<option value="${t.id}">${esc(t.name)} (${t.rects.length}개`
-      + `${t.width ? ` · ${t.width}×${t.height}` : ""})</option>`).join("")
-    : '<option value="">템플릿 없음 — 라벨링 화면 오른쪽에서 만듭니다</option>';
-  if (S.mtpls.some((t) => String(t.id) === want)) sel.value = want;
-  $("#gs-mtpl-n").textContent = S.mtpls.length ? `${S.mtpls.length}개` : "";
+  // 고른 것이 바뀔 때마다(renderGallerySide) 불린다 — option 을 매번 갈면 펼쳐 둔 목록이 닫힌다
+  const sig = S.mtpls.map((t) => `${t.id}:${t.name}:${t.rects.length}:${t.width}x${t.height}`).join("|");
+  if (sig !== gsMtplSig) {
+    gsMtplSig = sig;
+    let want = sel.value;
+    if (!want) { try { want = localStorage.getItem(GS_MTPL_KEY) || ""; } catch { /* 없으면 첫 템플릿 */ } }
+    sel.innerHTML = S.mtpls.length
+      ? S.mtpls.map((t) => `<option value="${t.id}">${esc(t.name)} (${t.rects.length}개`
+        + `${t.width ? ` · ${t.width}×${t.height}` : ""})</option>`).join("")
+      : '<option value="">템플릿 없음 — 라벨링 화면 오른쪽에서 만듭니다</option>';
+    if (S.mtpls.some((t) => String(t.id) === want)) sel.value = want;
+    $("#gs-mtpl-n").textContent = S.mtpls.length ? `${S.mtpls.length}개` : "";
+  }
   const off = !S.mtpls.length || !G.sel.size;
   $("#gs-mtpl-add").disabled = off;
   $("#gs-mtpl-remove").disabled = off;
@@ -402,8 +408,11 @@ function renderGalleryMtpl() {
 
 async function bulkMaskTemplate(mode) {
   if (G.busy) return;
-  const t = S.mtpls.find((x) => String(x.id) === $("#gs-mtpl-sel").value);
-  if (!t) { toast("템플릿을 먼저 고르세요 (라벨링 화면 오른쪽 '가릴 영역 템플릿' 에서 만듭니다)", true); return; }
+  const picked = $("#gs-mtpl-sel").value;
+  if (!picked) { toast("템플릿을 먼저 고르세요 (라벨링 화면 오른쪽 '가릴 영역 템플릿' 에서 만듭니다)", true); return; }
+  // 다른 창에서 바꾸거나 지웠을 수 있다 — 확인창에 보일 이름·개수와 서버가 넣을 영역이 같도록 지금 것을 받는다
+  const t = await freshMaskTemplate(Number(picked));
+  if (!t) { toast("그 템플릿은 지워졌습니다 (다른 창에서 지웠을 수 있습니다)", true); return; }
   const ids = selIds();
   if (!ids.length) { toast("이미지를 먼저 고르세요 (클릭·Shift+클릭·Ctrl+A)"); return; }
   if (!confirm(`고른 ${ids.length.toLocaleString()}장${mode === "add" ? "에" : "에서"} 템플릿 '${t.name}' 의 가릴 영역`
@@ -416,7 +425,14 @@ async function bulkMaskTemplate(mode) {
   if (!(await saveBeforeLeaving())) return;
   G.busy = true;
   try {
-    const r = await api("/api/bulk/mask-template", { method: "POST", body: { ids, template_id: t.id, mode } });
+    let r;
+    try {
+      r = await api("/api/bulk/mask-template", { method: "POST", body: { ids, template_id: t.id, mode } });
+    } catch (err) {
+      toast(`템플릿을 적용하지 못했습니다: ${err.message}`, true);
+      if (err.status === 404) loadMaskTemplates();        // 그새 지워졌다 — 목록에서도 뺀다
+      return;
+    }
     const skip = [
       r.unchanged && `이미 ${mode === "add" ? "있음" : "없음"} ${r.unchanged.toLocaleString()}`,
       r.blocked && `test ${r.blocked.toLocaleString()}`,
@@ -427,9 +443,16 @@ async function bulkMaskTemplate(mode) {
     ].filter(Boolean);
     toast(`'${t.name}' ${mode === "add" ? "더하기" : "빼기"} — ${r.changed.toLocaleString()}장 바뀜`
       + (skip.length ? ` · 건너뜀: ${skip.join(", ")}` : ""), !r.changed);
-    if (S.cur && ids.includes(S.cur.id)) await reloadCurrentBoxes();
-  } catch (err) {
-    toast(`템플릿을 적용하지 못했습니다: ${err.message}`, true);
+    // 여기부터는 적용이 끝난 뒤다 — 라벨링 쪽 지금 이미지가 대상이었으면 서버 영역으로 다시 읽는다. 못 읽어도 옛 영역을
+    // 다음 저장에 싣지 않게 '영역을 손댔다' 표시부터 내린다(안 실으면 서버가 그대로 둔다).
+    if (S.cur && r.changed && ids.includes(S.cur.id)) {
+      S.masksTouched = false;
+      try {
+        await reloadCurrentBoxes();
+      } catch (err) {
+        toast(`적용은 됐지만 라벨링 화면의 지금 이미지를 다시 읽지 못했습니다 — 그 이미지를 다시 여세요 (${err.message})`, true);
+      }
+    }
   } finally {
     G.busy = false;
   }

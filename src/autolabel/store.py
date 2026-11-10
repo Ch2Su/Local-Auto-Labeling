@@ -393,6 +393,18 @@ class Store:
             row = con.execute("SELECT * FROM images WHERE id=?", (image_id,)).fetchone()
         return dict(row) if row else None
 
+    def image_sizes(self, image_ids: list[int]) -> dict[int, dict]:
+        """{id: {id, path, width, height}} — 여러 장을 한 연결로 읽는다(없는 id 는 빠진다). 크기는 DB 의 원시 크기다."""
+        ids = list(dict.fromkeys(image_ids))
+        out: dict[int, dict] = {}
+        with self.connect() as con:
+            for k in range(0, len(ids), 500):
+                part = ids[k:k + 500]
+                for r in con.execute("SELECT id, path, width, height FROM images"
+                                     f" WHERE id IN ({','.join('?' * len(part))})", part):
+                    out[int(r["id"])] = dict(r)
+        return out
+
     def delete_images(self, image_ids: list[int]) -> int:
         """이미지와 그 박스를 DB에서 지운다. (boxes 는 ON DELETE CASCADE)"""
         if not image_ids:
@@ -834,13 +846,13 @@ class Store:
             return con.execute("DELETE FROM mask_templates WHERE id=?", (template_id,)).rowcount > 0
 
     def apply_mask_template(self, image_ids: list[int], rects: list, *, mode: str, batch: str,
-                            test_cameras: frozenset[str] | set[str] = frozenset()) -> dict:
+                            blocked: Callable[[dict], object] | None = None) -> dict:
         """템플릿 영역을 이미지들에 더하거나(add) 뺀다(remove) — 한 트랜잭션, 이미지마다 이력(source='bulk', 같은 batch).
 
         더하기는 이미 같은 좌표의 영역이 있으면 그것은 건너뛰고(masks.merge), 빼기는 템플릿과 좌표가 같은 영역만 뺀다
         (masks.subtract — 손으로 옮긴 영역은 그 이미지의 것이라 남긴다). 박스는 그대로이고, 학습 라벨이 달라지는 손이라
-        updated_at 은 새로 찍는다(set_masks 와 같다). **test 이미지(분할 test·test_cameras 의 카메라)에는 더하지
-        않는다** — 서버의 mask_block 과 같은 규칙을 쓰는 순간의 행으로 다시 본다. 빼기는 test 에도 한다(지우기만은 받는다).
+        updated_at 은 새로 찍는다(set_masks 와 같다). **blocked(행 {split, camera})가 참인 이미지(test — 규칙은 서버의
+        mask_block 한 곳에 있다)에는 더하지 않는다** — 쓰는 순간의 행으로 본다. 빼기는 test 에도 한다(지우기만은 받는다).
         묶음째 되돌리기는 revert_batch(영역도 되돌린다). {changed, unchanged, blocked, full, missing} 장수를 돌려준다.
         """
         if mode not in ("add", "remove"):
@@ -854,7 +866,7 @@ class Store:
                 if row is None:
                     out["missing"] += 1
                     continue
-                if mode == "add" and (row["split"] == "test" or row["camera"] in test_cameras):
+                if mode == "add" and blocked is not None and blocked(dict(row)):
                     out["blocked"] += 1
                     continue
                 cur = [tuple(r) for r in con.execute(
@@ -994,7 +1006,8 @@ class Store:
             "SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id",
             (image_id,),
         ).fetchall()
-        boxes_changed = bool(old) and [_box_key(r) for r in old] != [_box_key(b) for b in new]
+        same = [_box_key(r) for r in old] == [_box_key(b) for b in new]
+        boxes_changed = bool(old) and not same
         old_m = None                          # 영역이 바뀔 때만 (바뀌기 전 영역 목록)
         if masks is not None:
             cur = [tuple(r) for r in con.execute(
@@ -1010,12 +1023,13 @@ class Store:
                  None if old_m is None else _masks_json(old_m),
                  None if old_m is None else _masks_json(masks)),
             )
-        con.execute("DELETE FROM boxes WHERE image_id=?", (image_id,))
-        con.executemany(
-            "INSERT INTO boxes(image_id, cls, cx, cy, w, h, conf, origin)"
-            " VALUES (?,?,?,?,?,?,?,?)",
-            [(image_id, b.cls, b.cx, b.cy, b.w, b.h, b.conf, b.origin) for b in new],
-        )
+        if not same:                          # 박스가 그대로면(영역만 바꾸는 저장·템플릿 적용) 행을 다시 쓰지 않는다
+            con.execute("DELETE FROM boxes WHERE image_id=?", (image_id,))
+            con.executemany(
+                "INSERT INTO boxes(image_id, cls, cx, cy, w, h, conf, origin)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                [(image_id, b.cls, b.cx, b.cy, b.w, b.h, b.conf, b.origin) for b in new],
+            )
         if old_m is not None:
             con.execute("DELETE FROM masks WHERE image_id=?", (image_id,))
             con.executemany("INSERT INTO masks(image_id, x1, y1, x2, y2) VALUES (?,?,?,?,?)",
@@ -1102,7 +1116,8 @@ class Store:
         return changed
 
     def revert_batch(self, batch: str, *,
-                     score: Callable[[list[Box]], float] | None = None) -> tuple[int, int]:
+                     score: Callable[[list[Box]], float] | None = None,
+                     mask_blocked: Callable[[dict], object] | None = None) -> tuple[int, int]:
         """일괄 수정 한 묶음을 되돌린다. (되돌린 이미지 수, 건너뛴 이미지 수)
 
         **그 뒤에 또 고친 이미지는 건드리지 않는다** — 지금 박스가 일괄 수정 직후와 같을
@@ -1111,7 +1126,9 @@ class Store:
         뺀 묶음(tools/merge_class.py, 2026-11-02 van → car)은 그 클래스를 먼저 되살려야 되돌린다.
         score 는 `set_class_bulk` 와 같다 — 되돌린 박스로 uncertainty 를 다시 매긴다 (2026-11-05).
         가릴 영역도 바꾼 묶음(가릴 영역 템플릿 적용, 2026-11-10 — 이력에 masks_after 가 있음)은 지금 영역도 적용 직후와
-        같을 때만 되돌리고, 영역도 그 전으로 돌린다.
+        같을 때만 되돌리고, 영역도 그 전으로 돌린다. **영역만 바꾼 줄(박스 전후가 같음)은 박스를 견주지 않고 지금 박스를
+        그대로 둔다** — 템플릿을 넣은 뒤 박스를 검수한 이미지도 영역은 되돌릴 수 있어야 한다. mask_blocked(행
+        {split, camera})가 참인 이미지(test — 서버의 mask_block)는 되돌리면 영역이 새로 생기는 경우 건너뛴다.
         """
         skipped = 0
         with _write_lock, self.connect() as con:
@@ -1126,7 +1143,10 @@ class Store:
                     (r["image_id"],),
                 ).fetchall()
                 after = _boxes_from_json(r["after"])
-                if [_box_key(b) for b in cur] != [_box_key(b) for b in after]:
+                before = _boxes_from_json(r["before"])
+                if r["masks_after"] is not None and [_box_key(b) for b in before] == [_box_key(b) for b in after]:
+                    before = [Box(**dict(b)) for b in cur]      # 영역만 바꾼 줄 — 박스는 지금 것을 그대로 둔다
+                elif [_box_key(b) for b in cur] != [_box_key(b) for b in after]:
                     skipped += 1
                     continue
                 masks_before = None             # None = 그 묶음에서 영역은 그대로였다 — 되돌릴 때도 건드리지 않는다
@@ -1137,7 +1157,14 @@ class Store:
                         skipped += 1
                         continue
                     masks_before = _masks_from_json(r["masks_before"])
-                todo.append((r["image_id"], _boxes_from_json(r["before"]), masks_before))
+                    # 되돌리면 지금 없는 영역이 생기는데 영역을 둘 수 없는 이미지(test)면 건너뛴다 — 다른 저장 길과 같다
+                    if mask_blocked is not None and set(mask_key(masks_before)) - set(mask_key(cur_m)):
+                        img = con.execute("SELECT split, camera FROM images WHERE id=?",
+                                          (r["image_id"],)).fetchone()
+                        if img is not None and mask_blocked(dict(img)):
+                            skipped += 1
+                            continue
+                todo.append((r["image_id"], before, masks_before))
             known = {c["idx"] for c in con.execute("SELECT idx FROM classes")}
             gone = sorted({b.cls for _, before, _m in todo for b in before} - known)
             if gone:
