@@ -9,7 +9,9 @@
 
 **촬영 시각은 파일 이름 → EXIF 순으로 읽고, 못 찾으면 비워 둔다.** 파일 수정 시각은 복사·다운로드 때 바뀌므로
 쓰지 않는다. 시간대가 없는 값에는 카메라의 `tz` 를 붙인다. 이 PC 의 Python 에는 IANA 시간대 자료(tzdata)가
-없어서 `Asia/Seoul` 같은 이름은 풀리지 않는다 — `+09:00` 꼴로 적는다(한국은 서머타임이 없어 고정 오프셋으로 충분).
+없어서 `America/New_York` 같은 이름은 풀리지 않는다 — `+09:00` 꼴로 적는다(한국은 서머타임이 없어 고정 오프셋으로 충분).
+뜻이 하나뿐인 약어(`KST`·`JST`·`UTC`·`GMT`·`Z`)와 `UTC+9`·`GMT-5`·`+9` 꼴, 서머타임 없는 `Asia/Seoul`·`Asia/Tokyo` 는
+`normalize_tz` 가 `+09:00` 꼴로 바꿔 받는다(2026-11-10 사용자 요청). 뜻이 여럿인 약어(`CST`·`IST` 등)는 오프셋으로 적게 한다.
 """
 
 from __future__ import annotations
@@ -34,7 +36,21 @@ SPLITS = ("train", "val", "test")
 DEFAULT_TZ = "+09:00"
 
 _KEY = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-_OFFSET = re.compile(r"^([+-])(\d{2}):?(\d{2})$")
+_OFFSET = re.compile(r"^([+-])(\d{1,2})(?::?(\d{2}))?$")      # +09:00 · +0900 · +09 · +9 · +9:30
+_PREFIXED = re.compile(r"^(?:UTC|GMT)\s*([+-]\s*[\d:]+)$", re.IGNORECASE)   # UTC+9 · GMT-05:00 (사람이 쓰는 뜻 그대로)
+# 뜻이 하나뿐인 약어·서머타임 없는 이름 → 오프셋. 'Etc/GMT+9' 는 부호가 거꾸로라(UTC-9) 받지 않는다(tzdata 도 없다).
+_TZ_ALIASES = {"KST": "+09:00", "JST": "+09:00", "UTC": "+00:00", "GMT": "+00:00", "Z": "+00:00",
+               "ASIA/SEOUL": "+09:00", "ASIA/TOKYO": "+09:00", "ETC/UTC": "+00:00"}
+# 하나로 정할 수 없는 약어 — (이유, 적을 오프셋 예). 여러 나라가 같은 약어를 쓰거나, 여름에 다른 약어(EDT·PDT)로 바뀌는데
+# 사람들이 한 해 내내 그 약어로 부르는 것
+_TZ_AMBIGUOUS = {
+    "CST": ("뜻이 여럿입니다", "+08:00 중국 · -06:00 미국 중부"),
+    "IST": ("뜻이 여럿입니다", "+05:30 인도 · +02:00 이스라엘 · +01:00 아일랜드 여름"),
+    "BST": ("뜻이 여럿입니다", "+01:00 영국 여름 · +06:00 방글라데시"),
+    "AST": ("뜻이 여럿입니다", "+03:00 아라비아 · -04:00 대서양"),
+    "EST": ("여름에는 EDT 로 바뀌어 하나로 정할 수 없습니다", "-05:00 겨울 · -04:00 여름"),
+    "PST": ("여름에는 PDT 로 바뀌어 하나로 정할 수 없습니다", "-08:00 겨울 · -07:00 여름"),
+}
 # 20260911_132342 · Screenshot_20261103-141500 · pg-cross-01_20261103_140005_120(밀리초, extract_frames 형식)
 _COMPACT = re.compile(r"(?<!\d)(20\d{2})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})(?:[_-](\d{3}))?(?!\d)")
 # 스크린샷 2026-06-08 165037 · 2026-06-08 16-50-37 · 2026-06-08_16.50.37
@@ -55,17 +71,51 @@ class Camera:
     split: str | None = None
 
 
-def parse_tz(text: str) -> tzinfo:
-    """'+09:00' 꼴 고정 오프셋. 이름(Asia/Seoul)은 tzdata 가 있을 때만 받는다."""
-    m = _OFFSET.match(str(text).strip())
+def normalize_tz(text: str) -> str | None:
+    """시간대 글을 '+09:00' 꼴로 (2026-11-10). 약어(KST·UTC·GMT…)·'UTC+9'·'+9' 꼴을 받는다.
+    고정 오프셋으로 바꿀 수 없는 글(tzdata 의 'America/New_York' 같은 이름)은 None — parse_tz 가 이름으로 다시 본다.
+    뜻이 여럿인 약어(CST·IST…)나 범위 밖(±14시간 넘게·60분 이상)은 ValueError."""
+    s = str(text or "").strip()
+    u = s.upper()
+    if u in _TZ_ALIASES:
+        return _TZ_ALIASES[u]
+    if u in _TZ_AMBIGUOUS:
+        why, examples = _TZ_AMBIGUOUS[u]
+        raise ValueError(f"시간대 약어 '{s}' 는 {why} — 그 영상에 맞는 오프셋으로 적을 것({examples})")
+    m = _PREFIXED.match(s)
     if m:
-        sign = 1 if m.group(1) == "+" else -1
-        return timezone(sign * timedelta(hours=int(m.group(2)), minutes=int(m.group(3))))
+        s = m.group(1).replace(" ", "")
+    m = _OFFSET.match(s)
+    if not m:
+        return None
+    h, mi = int(m.group(2)), int(m.group(3) or 0)
+    if h > 14 or mi >= 60 or (h == 14 and mi):
+        raise ValueError(f"시간대 '{text}' — UTC 와의 차이는 -14:00 ~ +14:00 사이여야 합니다")
+    return f"{m.group(1)}{h:02d}:{mi:02d}"
+
+
+def parse_tz(text: str) -> tzinfo:
+    """시간대 글 → tzinfo. '+09:00' 꼴·약어(KST·UTC·GMT…)·'UTC+9' 는 고정 오프셋으로(normalize_tz), 그 밖의 이름은
+    tzdata 가 있을 때만 받는다(이 PC 에는 없다)."""
+    off = normalize_tz(text)
+    if off is not None:
+        sign = 1 if off[0] == "+" else -1
+        return timezone(sign * timedelta(hours=int(off[1:3]), minutes=int(off[4:6])))
     try:
         from zoneinfo import ZoneInfo
         return ZoneInfo(str(text))
     except Exception as exc:
-        raise ValueError(f"시간대 '{text}' 를 풀 수 없습니다 — '+09:00' 꼴로 적을 것") from exc
+        raise ValueError(f"시간대 '{text}' 를 풀 수 없습니다 — '+09:00' 꼴이나 KST·UTC·GMT·'UTC+9' 로 적을 것") from exc
+
+
+def tz_text(tz: tzinfo) -> str:
+    """화면에 보일 시간대 — 고정 오프셋은 '+09:00', 이름이면 그 이름."""
+    off = tz.utcoffset(None) if isinstance(tz, timezone) else None
+    if off is None:
+        return str(getattr(tz, "key", tz))
+    total = int(off.total_seconds() // 60)
+    sign = "+" if total >= 0 else "-"
+    return f"{sign}{abs(total) // 60:02d}:{abs(total) % 60:02d}"
 
 
 def load_cameras(path: Path) -> dict[str, Camera]:
@@ -164,6 +214,8 @@ def add_camera(path: Path, key: str, attrs: dict, *, backup_dir: Path | None = N
         raise ValueError(f"split 은 비우거나 {'|'.join(SPLITS)} (지금 {fields['split']!r})")
     if not fields["place"]:
         raise ValueError("place(장소 이름)를 적을 것")
+    if fields["tz"]:
+        fields["tz"] = normalize_tz(fields["tz"]) or fields["tz"]   # 'KST'·'UTC+9' → '+09:00' 꼴로 적는다
     parse_tz(fields["tz"] or DEFAULT_TZ)               # 못 풀면 ValueError
     if fields["tz"] == DEFAULT_TZ:
         fields["tz"] = None                            # 기본값은 적지 않는다(지금 파일의 카메라들처럼)

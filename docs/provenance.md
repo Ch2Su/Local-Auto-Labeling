@@ -65,7 +65,7 @@ cameras:
     mount: pole           # pole | rooftop | wall | indoor | drone | handheld | unknown
     view: 교차로 북쪽, 부감 약 30도   # 자유 서술
     resolution: 1920x1080
-    tz: '+09:00'          # 시각 해석 기준. 기본 +09:00 (이 PC 의 Python 에 tzdata 가 없어 Asia/Seoul 같은 이름은 안 풀린다)
+    tz: '+09:00'          # 시각 해석 기준(UTC 와의 차이). 기본 +09:00. KST·JST·UTC·GMT·Z·'UTC+9'·'+9'·Asia/Seoul 도 받는다(11-10, normalize_tz) — CST·IST 처럼 뜻이 여럿이거나 EST·PST 처럼 여름에 바뀌는 약어는 오프셋으로. 그 밖의 이름(America/New_York)은 이 PC 에 tzdata 가 없어 안 풀린다
     rights: 직접 촬영      # 권리자·라이선스·사용 조건
     split:                # 비우면 자동(카메라째 한 분할). train|val|test 로 고정할 수 있다
     note:

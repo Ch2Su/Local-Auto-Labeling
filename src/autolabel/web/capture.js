@@ -584,7 +584,9 @@ function capRenderCameras() {
   const cur = C.cur ? C.cur.camera || "" : "";
   const opts = ['<option value="">카메라 고르기…</option>'];
   for (const cam of C.cameras) {
-    const tail = [cam.kind, cam.split ? `${cam.split} 고정` : null].filter(Boolean).join(" · ");
+    // 한국(+09:00)이 아닌 카메라는 시간대를 함께 보인다 — 다른 시간대 영상의 시작 시각을 KST 로 착각하지 않게
+    const tz = cam.tz && cam.tz !== "+09:00" ? `UTC${cam.tz}` : null;
+    const tail = [cam.kind, cam.split ? `${cam.split} 고정` : null, tz].filter(Boolean).join(" · ");
     opts.push(`<option value="${esc(cam.key)}" title="${esc(cam.place || "")}">${esc(cam.key)} (${esc(tail)})</option>`);
   }
   // 등록 파일에서 빠진 카메라를 골라 둔 영상 — 목록에 남겨 두고(넣을 때 서버가 막는다) 표시만 한다
@@ -925,7 +927,7 @@ async function capCamSave() {
     $("#cc-kind").value = "cctv";
     $("#cc-mount").value = "unknown";
     $("#cc-tz").value = "+09:00";
-    toast(`카메라 ${r.key} 를 등록했습니다 (cameras.yaml)`);
+    toast(`카메라 ${r.key} 를 등록했습니다 (cameras.yaml${r.tz ? `, 시간대 ${r.tz}` : ""})`);
   } catch (err) {
     toast(err.message, true);
   } finally {

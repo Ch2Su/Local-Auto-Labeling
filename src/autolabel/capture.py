@@ -42,7 +42,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .provenance import _from_name, load_cameras
+from .provenance import _from_name, load_cameras, tz_text
 
 SID_RE = re.compile(r"^\d{8}_\d{6}_[0-9a-f]{4}$")
 JPEG_QUALITY = 95            # extract_frames 의 기본값과 같다
@@ -284,7 +284,7 @@ class CaptureManager:
             cams = load_cameras(self.cfg.cameras)
         except ValueError as exc:
             return [], str(exc)
-        return [{"key": c.key, "kind": c.kind, "place": c.place, "mount": c.mount, "split": c.split}
+        return [{"key": c.key, "kind": c.kind, "place": c.place, "mount": c.mount, "split": c.split, "tz": tz_text(c.tz)}
                 for c in sorted(cams.values(), key=lambda c: c.key)], None
 
     # ----------------------------------------------------------------- 올리기

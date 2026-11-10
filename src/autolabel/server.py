@@ -38,7 +38,7 @@ from .jobs import JobManager
 from .predictor import AutoLabeler, LiveDetector
 from .masks import MAX_MASKS
 from .masks import clean as clean_masks
-from .provenance import SPLITS, CameraExists, CameraMissing, add_camera, load_cameras, remove_cameras
+from .provenance import SPLITS, CameraExists, CameraMissing, add_camera, load_cameras, remove_cameras, tz_text
 from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
@@ -1330,7 +1330,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             raise HTTPException(400, str(exc)) from None
         print(f"[{label}] 카메라 등록: {cam.key} ({cam.kind}) -> {cfg.cameras}")   # 장소는 찍지 않는다
         cams, error = _camera_rows()
-        return {"key": cam.key, "cameras": cams, "camera_error": error}
+        return {"key": cam.key, "tz": tz_text(cam.tz), "cameras": cams, "camera_error": error}
 
     def _camera_usage(keys) -> dict[str, dict]:
         """카메라마다 그 카메라를 쓰는 것 — DB 이미지 수(휴지통 포함)와 파일이 남은 카메라 폴더(unlabeled·labeled)."""
