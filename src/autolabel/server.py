@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import re
@@ -218,7 +219,8 @@ class CaptureStateIn(BaseModel):
 
 class CaptureCommitIn(BaseModel):
     camera: str = Field(min_length=1, max_length=64)
-    start: str = Field(min_length=1, max_length=40)
+    # 영상 첫 프레임의 현지 시각. 비우면 시각 없는 이름으로 넣는다(촬영 시각 '모름' — capture.notime_name, 11-10 사용자 요청)
+    start: str | None = Field(None, max_length=40)
     keep: list[int]
 
 
@@ -1460,17 +1462,23 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         size 는 브라우저가 아는 파일 크기(받은 것과 다르면 버린다), mtime 은 파일 수정 시각(ms) — 시작 시각 제안용."""
         sess, dst = await run_in_threadpool(_cap, capman.begin_upload, name, size, mtime)
         written = 0
+        digest = hashlib.sha1()             # 내용 지문 — 시각 없이 넣을 때 이름에 쓴다(capture.notime_name)
+
+        def put(f, data: bytes) -> None:
+            f.write(data)
+            digest.update(data)
+
         try:
             with open(dst, "wb") as f:
                 buf = bytearray()
                 async for chunk in request.stream():
                     buf += chunk
                     if len(buf) >= 8 << 20:
-                        await run_in_threadpool(f.write, bytes(buf))
+                        await run_in_threadpool(put, f, bytes(buf))
                         written += len(buf)
                         buf.clear()
                 if buf:
-                    await run_in_threadpool(f.write, bytes(buf))
+                    await run_in_threadpool(put, f, bytes(buf))
                     written += len(buf)
         except ClientDisconnect:
             await run_in_threadpool(capman.discard, sess.sid, force=True)
@@ -1482,7 +1490,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             await run_in_threadpool(capman.discard, sess.sid, force=True)
             raise HTTPException(400, f"받은 크기가 다릅니다({written:,} / {size:,} 바이트) — 다시 올리세요."
                                 if written else "빈 파일입니다.")
-        return await run_in_threadpool(_cap, capman.finish_upload, sess, written)
+        return await run_in_threadpool(_cap, capman.finish_upload, sess, written, digest.hexdigest())
 
     @app.get("/api/capture/{sid}")
     def capture_get(sid: str, since: int = 0) -> dict:

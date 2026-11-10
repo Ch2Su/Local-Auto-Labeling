@@ -109,6 +109,16 @@ function capName(cam, d) {
   return { day, name: `${cam}_${day}_${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}_${p(d.getUTCMilliseconds(), 3)}.jpg` };
 }
 
+/** capture.notime_name 과 같은 이름 — 촬영 시각을 모를 때 `<카메라>_v<지문>_t00h01m05s500.jpg`(영상 안 시각). */
+function capNoTimeName(cam, tag, sec) {
+  let ms = Math.max(0, Math.round(sec * 1000));
+  const h = Math.floor(ms / 3600000); ms -= h * 3600000;
+  const m = Math.floor(ms / 60000); ms -= m * 60000;
+  const s = Math.floor(ms / 1000); ms -= s * 1000;
+  const p = (x, n = 2) => String(x).padStart(n, "0");
+  return `${cam}_v${tag}_t${p(h)}h${p(m)}m${p(s)}s${p(ms, 3)}.jpg`;
+}
+
 function capWallClock(d) {
   const p = (x) => String(x).padStart(2, "0");
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
@@ -442,16 +452,20 @@ async function capCommit() {
   const cam = $("#cap-camera").value, start = $("#cap-start").value.trim();
   if (!keep.length) { toast("넣을 프레임을 고르지 않았습니다", true); return; }
   if (!cam) { toast("카메라를 고르세요", true); return; }
-  if (!capParseStart(start)) { toast("촬영 시작 시각을 읽을 수 없습니다 — 예: 2026-11-10 14:30:00", true); return; }
+  if (start && !capParseStart(start)) {
+    toast("촬영 시작 시각을 읽을 수 없습니다 — 예: 2026-11-10 14:30:00 (모르면 비워 두세요)", true);
+    return;
+  }
   const drop = C.frames.length - keep.length;
   const msg = `${keep.length}장을 ${C.unlabeled}/${cam}/ 에 넣고 스캔합니다(DB 에 미라벨로 등록).\n`
+    + (start ? "" : "촬영 시각 없이 넣습니다 — DB 촬영 시각은 '모름' 이고 나중에 이름으로 채울 수 없습니다.\n")
     + `${drop ? `안 고른 ${drop}장과 ` : ""}올린 영상 사본은 지웁니다 — 원본 영상 파일은 그대로입니다.\n\n계속할까요?`;
   if (!confirm(msg)) return;
   const sid = C.cur.sid, name = C.cur.name;
   C.committing = true;
   capRenderCommit();
   try {
-    const r = await api(`/api/capture/${sid}/commit`, { method: "POST", body: { camera: cam, start, keep } });
+    const r = await api(`/api/capture/${sid}/commit`, { method: "POST", body: { camera: cam, start: start || null, keep } });
     capShowResult(r, name);
     capReset();
     capRenderAll();
@@ -615,7 +629,9 @@ function capRenderCommit() {
   if (c) {
     const typed = startEl.value.trim();
     if (!typed) {
-      h += c.start_guess ? "" : "영상 이름에 시각이 없습니다 — 첫 프레임의 현지 시각을 적으세요.";
+      // 비워 두고 넣을 수 있다(11-10 사용자 요청) — 이름은 영상 지문 + 영상 안 시각, DB 촬영 시각은 '모름'
+      h += "촬영 시각 없이 넣습니다 — 이름은 영상 지문과 영상 안 시각이 되고 촬영 시각은 '모름' 으로 들어갑니다"
+        + "(나중에 이름으로 채울 수 없습니다). 알면 첫 프레임의 현지 시각을 적으세요.";
     } else if (!st) {
       h += "읽을 수 없습니다 — 예: 2026-11-10 14:30:00";
     } else if (typed === c.start_guess) {
@@ -636,19 +652,27 @@ function capRenderCommit() {
     const g = $("#cap-use-guess");
     if (g) g.onclick = () => capSetStart(C.cur && C.cur.start_guess);
   }
-  // 넣을 곳 미리 보기
-  if (c && cam && st && kept) {
+  // 넣을 곳 미리 보기 — 시각을 적었으면 날짜 폴더·시각 이름, 비웠으면 영상 지문 폴더·영상 안 시각 이름(capture.notime_name)
+  const noTime = !startEl.value.trim();
+  if (c && cam && kept && (st || noTime)) {
     const ks = C.frames.filter((f) => f.k);
-    const a = capName(cam, capAt(st, ks[0].t)), b = capName(cam, capAt(st, ks[ks.length - 1].t));
-    dest.textContent = `→ ${C.unlabeled}/${cam}/${a.day}/\n   ${a.name}` + (ks.length > 1 ? `\n ~ ${b.day === a.day ? "" : `${b.day}/`}${b.name}` : "");
+    if (st) {
+      const a = capName(cam, capAt(st, ks[0].t)), b = capName(cam, capAt(st, ks[ks.length - 1].t));
+      dest.textContent = `→ ${C.unlabeled}/${cam}/${a.day}/\n   ${a.name}` + (ks.length > 1 ? `\n ~ ${b.day === a.day ? "" : `${b.day}/`}${b.name}` : "");
+    } else {
+      const tag = (c.video && c.video.tag) || "????????";      // 지문은 서버가 올릴 때 셌다(옛 세션은 넣을 때 센다)
+      const a = capNoTimeName(cam, tag, ks[0].t), b = capNoTimeName(cam, tag, ks[ks.length - 1].t);
+      dest.textContent = `→ ${C.unlabeled}/${cam}/v${tag}/\n   ${a}` + (ks.length > 1 ? `\n ~ ${b}` : "") + "\n   (촬영 시각 모름)";
+    }
   } else {
     dest.textContent = "";
   }
   const btn = $("#cap-commit");
   btn.textContent = C.committing ? "넣는 중…" : `고른 ${kept}장 넣기`;
-  btn.disabled = !c || C.committing || capRunning() || !kept || !cam || !st || ["uploading", "committing"].includes(c.state);
+  const badStart = !noTime && !st;
+  btn.disabled = !c || C.committing || capRunning() || !kept || !cam || badStart || ["uploading", "committing"].includes(c.state);
   btn.title = !c ? "" : capRunning() ? "뽑는 중에는 넣을 수 없습니다 — 끝나거나 멈춘 뒤"
-    : !kept ? "넣을 프레임을 고르세요" : !cam ? "카메라를 고르세요" : !st ? "촬영 시작 시각을 적으세요"
+    : !kept ? "넣을 프레임을 고르세요" : !cam ? "카메라를 고르세요" : badStart ? "촬영 시작 시각을 고치거나 비우세요"
       : "고른 프레임을 unlabeled/<카메라>/ 로 옮기고 스캔합니다";
   $("#cap-discard").disabled = !c || C.committing || ["uploading", "committing"].includes(c ? c.state : "");
 }

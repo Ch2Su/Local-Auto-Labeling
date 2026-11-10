@@ -72,6 +72,12 @@
     `changed_pct` 를 capture.py 한 곳에 두고 extract_frames·import_roadplus 가 가져간다. 이름의 시각을 scan 이 `captured_at` 으로
     읽으니(provenance `_COMPACT`) 꼴을 바꾸면 둘 다 본다. 넣을 때 같은 이름이 있으면 덮지 않는다(`_rename` — Windows rename +
     다른 드라이브면 `xb` 복사). 시작 시각은 이름(`_from_name`) → 사람이 적은 값. 수정 시각 − 길이(`start_mtime`)는 제안만 한다.
+  - **시작 시각을 비우면(11-10 사용자 요청) 시각 없는 이름** `notime_name` = `<카메라>_v<지문 8자>_t00h01m05s500.jpg`(폴더 `v<지문>/`,
+    영상 안 시각) — `captured_at` 은 NULL. **숫자 묶음 사이마다 글자를 둔 것은 scan 이 시각으로 읽지 않게 하려는 것**이다
+    (provenance `_COMPACT`·`_DASHED` — 지문이 '20251231' 같은 숫자뿐이어도, 카메라 키에 날짜가 있어도 안 걸린다. 꼴을 바꾸면
+    `_from_name` 이 None 인지 다시 볼 것). 지문은 올릴 때 센 영상 내용 sha1(`video.sha1`, 화면에는 `video.tag`) — 같은 영상이면 같은
+    이름이라 다시 넣어도 건너뛴다. 이 기능 전에 올린 세션은 넣을 때 센다(`video_tag`). 화면의 미리 보기 `capNoTimeName` 이 같은 식
+    이다(반올림은 반을 올림 — 고치면 둘 다).
   - 프레임 항목 `{i, t, c, s, k}` — `c` 는 앞 장과 바뀐 픽셀 %, `s` 는 **JPEG 바이트까지 같은** 앞 프레임(멈춘 화면 — 처음부터
     `k=false`). 화면이 남기는 빼기 목록은 `PUT …/state {drop, upto}` — `upto` 밖(화면이 아직 못 받은 뒤쪽)은 건드리지 않는다.
   - 화면은 뽑는 동안 0.7초마다 `?since=` 로 새 프레임만 받고, `run`(다시 뽑을 때마다 +1)이 바뀌면 처음부터 받는다. 썸네일·원본

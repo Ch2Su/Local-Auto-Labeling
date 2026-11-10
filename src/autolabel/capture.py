@@ -14,9 +14,14 @@
   사본 이름은 ASCII 라, 한글 경로를 OpenCV 가 못 여는 문제도 없다. 1080p H.264 는 이 PC 의 CPU 로 초당 약 640프레임을
   푼다(VIRAT_S_000001, 11-10) — 1시간짜리 30fps 영상이면 약 3분.
 - **이름·변화량 계산은 이 모듈 한 곳에 둔다**(`frame_name`·`parse_start`·`changed_pct` — extract_frames·import_roadplus 도
-  여기서 가져간다). 이름의 시각을 scan 이 `captured_at` 으로 읽는다(provenance.py). **시작 시각을 모르면 넣지 않는다** —
-  영상 이름에 있으면 그것, 없으면 사람이 적는다. 파일 수정 시각 − 길이는 화면이 버튼으로 제안만 한다(OBS 녹화처럼 끝날 때
-  닫힌 파일에서만 맞고, 복사한 파일이면 틀린다 — provenance.py 머리말).
+  여기서 가져간다). 이름의 시각을 scan 이 `captured_at` 으로 읽는다(provenance.py). 시작 시각은 영상 이름에 있으면 그것,
+  없으면 사람이 적는다. 파일 수정 시각 − 길이는 화면이 버튼으로 제안만 한다(OBS 녹화처럼 끝날 때 닫힌 파일에서만 맞고,
+  복사한 파일이면 틀린다 — provenance.py 머리말).
+- **시작 시각을 모르면 비워 두고 넣을 수 있다**(2026-11-10 사용자 요청 — 시각 정보가 없는 영상). 그때 이름은 시각 대신
+  영상 지문과 영상 안 시각 `<카메라>_v<지문 8자>_t00h01m05s500.jpg`(`notime_name`, 폴더 `<카메라>/v<지문>/`)이고, scan 이
+  여기서 시각을 읽지 못해 DB 촬영 시각은 '모름'(NULL)이다 — **나중에 이름으로 채울 수 없다**(extract_frames 는 여전히 시각을
+  요구한다). 숫자 사이마다 글자를 넣은 것은 scan 의 시각 꼴(provenance `_COMPACT`·`_DASHED`)에 걸리지 않게 하려는 것이다.
+  지문은 올릴 때 센 영상 내용의 sha1 이라, 같은 영상을 다시 넣으면 같은 이름이 되어 건너뛴다.
 - **작업 큐(jobs.JobManager)를 쓰지 않는다.** 그 큐는 프로젝트에 작업 하나만 돌려서, 몇 시간 걸리는 학습 중에 캡처를 못
   하게 된다. 뽑기는 CPU 만 쓰는 따로 된 스레드이고, 프로젝트 안에서 한 번에 한 영상씩 뽑는다(나머지는 기다린다).
 - **넣기의 스캔은 '폴더 스캔' 작업과 같은 잠금으로 겹치지 않게 한다**(서버가 `ingest` 로 넘긴다). 정리·휴지통 비우기가
@@ -63,6 +68,16 @@ _START_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%
 def frame_name(camera: str, t: datetime) -> str:
     """`<카메라>_<YYYYMMDD_HHMMSS>_<밀리초>.jpg` — scan 이 이 시각을 `captured_at` 으로 읽는다(provenance._COMPACT)."""
     return f"{camera}_{t:%Y%m%d_%H%M%S}_{t.microsecond // 1000:03d}.jpg"
+
+
+def notime_name(camera: str, tag: str, sec: float) -> str:
+    """촬영 시각을 모를 때의 이름 `<카메라>_v<지문>_t00h01m05s500.jpg` — 영상 안 시각. 숫자 사이에 글자를 넣어 scan 이
+    시각으로 읽지 못하게 한다(읽으면 엉뚱한 captured_at 이 들어간다). 이름순이 영상 순서다."""
+    ms = int(max(0.0, sec) * 1000 + 0.5)      # 반올림(반은 올림) — 화면의 capNoTimeName(Math.round)과 같게
+    h, rest = divmod(ms, 3_600_000)
+    m, rest = divmod(rest, 60_000)
+    s, ms = divmod(rest, 1000)
+    return f"{camera}_v{tag}_t{h:02d}h{m:02d}m{s:02d}s{ms:03d}.jpg"
 
 
 def parse_start(text: str) -> datetime:
@@ -192,7 +207,10 @@ class Session:
         with self.lock:
             out = self.summary()
             since = max(0, int(since))
-            out.update(video=dict(self.video), settings=self.settings, run=self.run, pos=self.pos, error=self.error,
+            video = dict(self.video)
+            if video.get("sha1"):
+                video["tag"] = video["sha1"][:8]       # 화면이 시각 없는 이름을 미리 보여 줄 때 쓴다
+            out.update(video=video, settings=self.settings, run=self.run, pos=self.pos, error=self.error,
                        note=self.note, start=self.start, start_guess=self.start_guess, start_mtime=self.start_mtime,
                        since=since, frames=[dict(f) for f in self.frames[since:]])
             return out
@@ -325,8 +343,8 @@ class CaptureManager:
             self.sessions[sid] = s
         return s, s.video_path
 
-    def finish_upload(self, s: Session, written: int) -> dict:
-        """올린 사본을 OpenCV 로 열어 본다. 못 열면 지운다."""
+    def finish_upload(self, s: Session, written: int, sha1: str | None = None) -> dict:
+        """올린 사본을 OpenCV 로 열어 본다. 못 열면 지운다. sha1 은 올리면서 센 내용 지문(시각 없는 이름에 쓴다)."""
         import cv2
 
         cap = cv2.VideoCapture(str(s.video_path))
@@ -349,6 +367,8 @@ class CaptureManager:
         with s.lock:
             s.video.update(size=written, fps=round(fps, 3), frames=n if n > 0 else None,
                            duration=round(dur, 3) if dur else None, width=w, height=h)
+            if sha1:
+                s.video["sha1"] = sha1
             guess = _from_name(Path(s.video["name"]))
             s.start_guess = fmt_start(guess.replace(tzinfo=None)) if guess else None
             mt = s.video.get("mtime_ms")
@@ -362,6 +382,21 @@ class CaptureManager:
             s.state = "ready"
         s.save()
         return s.detail()
+
+    def video_tag(self, s: Session) -> str:
+        """영상 지문 8자(내용 sha1 앞부분) — 시각 없는 이름(`notime_name`)에 쓴다. 이 기능 전에 올린 세션은 여기서 센다."""
+        with s.lock:
+            digest = s.video.get("sha1")
+        if not digest:
+            h = hashlib.sha1()
+            with open(s.video_path, "rb") as f:
+                for chunk in iter(lambda: f.read(8 << 20), b""):
+                    h.update(chunk)
+            digest = h.hexdigest()
+            with s.lock:
+                s.video["sha1"] = digest
+            s.save()
+        return digest[:8]
 
     def _camera_from_name(self, name: str) -> str | None:
         """영상 이름이 `<등록된 카메라 키>_…` 로 시작하면 그 키 (ROAD PLUS 구간 영상처럼)."""
@@ -537,7 +572,9 @@ class CaptureManager:
         s.save()
         return s.summary()
 
-    def commit(self, sid: str, camera: str, start: str, keep: list[int]) -> dict:
+    def commit(self, sid: str, camera: str, start: str | None, keep: list[int]) -> dict:
+        """고른 프레임을 unlabeled/<카메라>/ 로 옮기고 스캔한다. start(영상 첫 프레임의 현지 시각)가 비면 시각 없는 이름
+        (`notime_name`, 폴더 v<지문>)으로 — DB 촬영 시각은 '모름' 이 된다."""
         s = self.get(sid)
         with self._commit_lock:
             with s.lock:
@@ -556,8 +593,9 @@ class CaptureManager:
             if camera not in cams:
                 raise CaptureError(400, f"카메라 '{camera}' 가 {self.cfg.cameras.name} 에 없습니다 — 먼저 등록하세요"
                                         " (docs/provenance.md).")
+            start = (start or "").strip()
             try:
-                t0 = parse_start(start)
+                t0 = parse_start(start) if start else None
             except ValueError as exc:
                 raise CaptureError(400, str(exc)) from None
             idx = sorted({int(i) for i in keep})
@@ -565,6 +603,7 @@ class CaptureManager:
                 raise CaptureError(400, "넣을 프레임을 하나도 고르지 않았습니다.")
             if idx[0] < 0 or idx[-1] >= len(frames):
                 raise CaptureError(400, "없는 프레임 번호가 있습니다 — 화면을 새로 고치세요.")
+            tag = None if t0 else self.video_tag(s)    # 시각 없이 넣을 때만 (옛 세션이면 여기서 지문을 센다)
             with s.lock:
                 if s.deleted or s.state in RUNNING or s.state in ("uploading", "committing"):
                     raise CaptureError(409, "그사이 다시 뽑기를 시작했거나 닫았습니다 — 화면을 새로 고치세요.")
@@ -577,8 +616,11 @@ class CaptureManager:
             try:
                 for i in idx:
                     src = s.frame_path(i)
-                    t = t0 + timedelta(seconds=frames[i]["t"])
-                    dst = root / f"{t:%Y%m%d}" / frame_name(camera, t)
+                    if t0 is None:
+                        dst = root / f"v{tag}" / notime_name(camera, tag, frames[i]["t"])
+                    else:
+                        t = t0 + timedelta(seconds=frames[i]["t"])
+                        dst = root / f"{t:%Y%m%d}" / frame_name(camera, t)
                     if dst.exists():
                         exists.append(dst.name)
                         continue
@@ -601,7 +643,7 @@ class CaptureManager:
 
             out = {"camera": camera, "moved": len(moved), "exists": len(exists), "missing": len(missing),
                    "exists_names": exists[:5], "dest": str(root), "first": moved[0].name if moved else None,
-                   "last": moved[-1].name if moved else None}
+                   "last": moved[-1].name if moved else None, "no_time": t0 is None}
             if moved:
                 try:
                     report = self.ingest()
