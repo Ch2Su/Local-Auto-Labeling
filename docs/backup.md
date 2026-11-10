@@ -10,7 +10,14 @@
 행 수 원본과 같음), 10-31 뒤에 생긴 이미지 3장(id 7226–7228)·`domain_review/`(seen.csv)·classes.txt·구내식당 id 목록·
 `docs/collab.md`, push 전 커밋까지 담은 `repo_main.bundle`. 이미지는 10-31 백업에 6,115장 중 6,112장이 크기까지 같게 있어 다시
 뜨지 않았다. 되살릴 때는 10-31 의 옛 폴더 구조(`seed/`·`labeled/`)를 `legacy/` 아래로 옮긴 뒤 이것을 덮는다(그 폴더의
-`BACKUP_INFO.txt`). 하루 사본·`labeling.db.bak_*`(11-02·03, 약 210MB)는 넣지 않았다. 다시 뜰 때는(PowerShell, `$src`=저장소
+`BACKUP_INFO.txt`). 하루 사본·`labeling.db.bak_*`(11-02·03, 약 210MB)는 넣지 않았다. **다시 그 위에 더하는
+`C:\local_auto_labeling_backup\20261110\`**(11-10, 파일 812개 299MB + DB 57MB — 사용자가 이미지를 크게 지우기 전, 사용자 확인):
+그때 DB 이미지 5,931장 중 10-31·11-05 백업에 없던 768장(VIRAT 515·ROAD PLUS hw-01–09 253 — legacy 5,163장은 크기까지 같게
+있었다), 자르기 전 hw-04 원본 36장(`backups/crop_20261109_154300`), 지우기 전 DB 스냅숏(`labeling.db.bak_predelete_20261110_160048`
+을 다시 `backup()`, journal_mode=delete)과 같은 시점 라벨의 텍스트 사본(`backups/labels_predelete_20261110_160048/` —
+`images.jsonl.gz` 한 줄에 이미지 하나·박스·태그·가릴 영역), `cameras.yaml`·`classes.txt`·`docs/collab.md`·`repo_main.bundle`.
+md5 는 `md5.tsv` 로 전부 원본과 같다. 원본 영상(VIRAT `E:\datasets`, hw-01–05 클립 `data/visible/videos/`)은 넣지 않았다. 되살릴
+때는 20261031 → 20261105 → 20261110 순서로 덮는다(그 폴더의 `BACKUP_INFO.txt`). 다시 뜰 때는(PowerShell, `$src`=저장소
 `$dst`=새 날짜 폴더 — **이전 것을 지울지 먼저 물을 것**):
 
 ```powershell
