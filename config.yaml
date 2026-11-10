@@ -183,6 +183,17 @@ predict:
   conf: 0.25           # 이 신뢰도 미만 예측은 버림
   iou: 0.6             # NMS IoU
   max_det: 100
+  # 타일 추론 (2026-11-10) — 웹 UI '모델 → 자동 라벨링 (타일)' 과 `labeler.py label --tiles` 에서만 쓴다(보통 자동
+  # 라벨링·예측 비교 P 는 통째 그대로). 통째 추론에 더해 긴 변이 min_side 를 넘는 이미지는 grid×grid 조각(겹침 overlap)으로도
+  # 추론하고, 조각 안쪽 경계에 닿아 잘린 박스는 버린 뒤, 조각↔통째 사이에만 cross_iou 로 겹친 것을 지운다(src/autolabel/tiling.py).
+  # 값은 11-03 측정에서 고른 것이다(옛 CCTV test, visible-3 — 통째 대비 재현율 +1.8pt·오검출 +22%·F1 같음·mAP +0.035, 3×3 은
+  # 2×2 보다 느리고 낫지 않았다 — docs/experiments.md '타일 추론').
+  tiles:
+    grid: 2
+    overlap: 0.2       # 조각끼리 겹치는 비율(조각 한 변 기준)
+    edge_px: 3         # 조각 안쪽 경계에서 이 px 안에 닿은 박스를 '잘린 것' 으로 보고 버린다
+    min_side: 800      # 긴 변이 이 값 이하인 이미지는 조각을 쓰지 않는다(통째만)
+    cross_iou: 0.3     # 조각↔통째 사이 NMS IoU (같은 쪽끼리는 위 iou 그대로)
   confident_at: 0.90   # 이 이상이면 UI에서 '확실'로 표시
 
 sam:

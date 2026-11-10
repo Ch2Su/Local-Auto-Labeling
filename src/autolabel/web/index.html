@@ -36,6 +36,7 @@
       <button class="btn menu-btn" aria-haspopup="true" aria-expanded="false">모델 <span id="model-dot" class="dot hidden" title="이어서 학습할 체크포인트가 있습니다"></span><span class="caret">▾</span></button>
       <div class="menu-list hidden">
         <button id="btn-predict"    class="menu-item" title="미라벨 이미지에 모델을 돌려 자동 라벨 생성">자동 라벨링</button>
+        <button id="btn-predict-tiles" class="menu-item" title="자동 라벨링을 타일 추론으로 — 이미지 통째에 더해, 긴 변이 800px 넘는 이미지는 2×2 조각으로도 추론해 합칩니다. 멀리 있는 작은 물체를 더 잡지만 오검출도 늘고 시간이 약 2배입니다(옛 CCTV test: 재현율 +1.8pt, 오검출 +22%, F1 같음). 설정은 config.yaml 의 predict.tiles">자동 라벨링 (타일)</button>
         <div class="menu-sep"></div>
         <button id="btn-train"      class="menu-item" title="승인된 라벨로 모델 재학습">학습</button>
         <button id="btn-resume"     class="menu-item hidden" title="중단된 학습을 이어서 진행">이어서 학습</button>

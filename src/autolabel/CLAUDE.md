@@ -51,6 +51,12 @@
   `tools/label_qa.py` 와 같고 예측 하한만 다르다 — label_qa 0.10, P 는 `predict.conf` 0.25). 모델이 모르는 클래스(11-08 전 운영 visible-3 은
   pickup)는 비교하지 않는다. 올릴 때 빈 이미지로 예열하는데, **자동 라벨링(`AutoLabeler`)은 예열하지 않는다** — 첫 추론이 CUDA
   초기화로 길어지면 NMS 시간 제한에 걸려 검출이 'NMS time limit exceeded' 경고만 남기고 잘릴 수 있다(한 번 봤고 조건은 모른다).
+- **타일 추론(2026-11-10, `tiling.py`)** 은 자동 라벨링의 선택지다(`AutoLabeler.run(tiles=True)` ← `PredictIn.tiles` ← 메뉴
+  '자동 라벨링 (타일)', CLI `label --tiles`, 설정 `predict.tiles`). **`tools/test_tiles.py` 와 같은 함수를 쓴다** — 고치면 측정도
+  바뀐다. 운영 조합은 `tiling.detect`(측정 변형 `g2+full:big` + `--cross-iou`): 성분마다 RAW_*(0.001·0.7·300)로 원검출을 받아
+  잘린 조각 박스를 버리고 `merge_cross` 로 합친 **뒤에** predict.conf·max_det 로 거른다 — 그래서 조각을 안 쓰는 작은 이미지도
+  보통 모드와 아주 조금 다를 수 있다. 그림은 `ultralytics.utils.patches.imread`(Ultralytics 가 경로로 읽을 때와 같은 함수)로 읽고,
+  타일 모드만 빈 이미지로 예열한다. 타일로 라벨링한 이미지는 `model_version` 끝에 `+tiles<grid>`. 예측 비교(P)는 통째 그대로다.
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
   가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
   모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).

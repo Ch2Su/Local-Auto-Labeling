@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
+from . import tiling
 from .config import Config
 from .scoring import image_uncertainty
 from .store import Store
@@ -24,6 +25,8 @@ class PredictReport:
     dropped_unknown_class: int = 0
     skipped_changed: int = 0     # 도는 동안 사람이 바꿔서 그대로 둔 이미지 (store.apply_prediction)
     weights: str = ""
+    tiles: dict | None = None    # 타일 추론으로 돌렸으면 그 설정 (tiling.settings)
+    tiled: int = 0               # 그중 실제로 타일을 더한 이미지(긴 변이 min_side 를 넘는 것)
     errors: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -32,6 +35,10 @@ class PredictReport:
             f"처리한 이미지 : {self.processed}장",
             f"생성된 박스   : {self.boxes}개 (검출 0인 이미지 {self.empty_images}장)",
         ]
+        if self.tiles:
+            t = self.tiles
+            lines.append(f"타일 추론     : 통째 + {t['grid']}×{t['grid']} 타일(겹침 {t['overlap']}) — 긴 변이 {t['min_side']}px"
+                         f" 넘는 {self.tiled}장에 더했고 나머지는 통째만")
         if self.skipped_changed:
             lines.append(
                 f"  건너뛴 이미지 {self.skipped_changed}장: 자동 라벨링을 시작한 뒤 사람이 승인·휴지통·수정해서 "
@@ -80,14 +87,20 @@ class AutoLabeler:
         image_ids: Iterable[int] | None = None,
         *,
         progress: ProgressFn | None = None,
+        tiles: bool = False,
     ) -> PredictReport:
         """미라벨(또는 지정한) 이미지에 추론을 돌려 pending 상태로 만든다.
 
         **시작할 때 본 뒤로 사람이 손댄 이미지는 덮지 않는다** (2026-11-05). 시작 때의 (상태, 수정 시각)을 떠 두고,
         쓸 때 `store.apply_prediction` 이 같은 트랜잭션에서 다시 견준다 — 예전에는 도는 동안 승인·휴지통·직접 수정한
         이미지가 예측 박스와 '검수 대기' 로 되돌아갔다. 건너뛴 수는 진행 로그와 report.skipped_changed 에 남는다.
+
+        tiles=True 면 타일 추론(`tiling.detect` — 통째 + 긴 변이 큰 이미지에 K×K 타일, 2026-11-10 선택지)으로 돈다.
+        작은 객체를 더 잡지만 오검출도 늘고 GPU 시간이 약 2배라 기본은 통째다(tiling 머리말·docs/experiments.md '타일 추론').
         """
         report = PredictReport(weights=self.weights)
+        tile_cfg = tiling.settings(self.cfg) if tiles else None
+        report.tiles = tile_cfg
 
         # 시작 때의 행. 모델을 올리는 몇 초 사이에 사람이 바꾼 것도 놓치지 않게 대상을 고르는 같은 순간에 뜬다.
         rows = {r["id"]: r for r in self.store.list_images(status="all", limit=10**9)}
@@ -117,6 +130,27 @@ class AutoLabeler:
         low = float(self.cfg.get("review.low_band", 0.30))
         high = float(self.cfg.get("review.high_band", 0.80))
         empty_score = float(self.cfg.get("review.empty_score", 0.60))
+        conf = float(self.cfg.get("predict.conf", 0.25))
+        iou = float(self.cfg.get("predict.iou", 0.6))
+        max_det = int(self.cfg.get("predict.max_det", 100))
+        # 추론 해상도는 학습 해상도와 달라도 된다. 최적값은 모델마다 달라서
+        # yolo26n 은 960 이(0.705 -> 0.719), yolo26s 는 640 이 가장 나았다
+        # (config.yaml 의 predict.imgsz 주석). 지정하지 않으면 학습과 같은 값.
+        imgsz = int(self.cfg.get("predict.imgsz") or self.cfg.imgsz)
+        version = Path(self.weights).name
+
+        imread = None
+        if tile_cfg:
+            import numpy as np
+            from ultralytics.utils.patches import imread   # Ultralytics 가 경로로 읽을 때와 같은 함수(같은 방향)
+
+            t = tile_cfg
+            print(f"타일 추론: 통째 + {t['grid']}×{t['grid']} 타일(겹침 {t['overlap']}, 타일↔통째 NMS {t['cross_iou']})"
+                  f" — 긴 변이 {t['min_side']}px 넘는 이미지에만 타일을 더한다", flush=True)
+            # 빈 이미지로 예열한다 — 성분마다 낮은 기준(RAW_*)으로 원검출을 받아 첫 추론이 CUDA 초기화로 길어지면
+            # NMS 시간 제한에 걸려 검출이 잘릴 수 있다(LiveDetector·test_tiles 와 같은 이유)
+            model.predict(np.zeros((64, 64, 3), np.uint8), imgsz=imgsz, device=self.cfg.device, verbose=False)
+            version += f"+tiles{t['grid']}"
 
         total = len(targets)
 
@@ -142,45 +176,46 @@ class AutoLabeler:
             if not path.exists():
                 report.errors.append(f"파일 없음: {path}")
                 continue
+            # 검출: (cx, cy, w, h 정규화, 모델 클래스, 신뢰도) 목록
             try:
-                results = model.predict(
-                    source=str(path),
-                    conf=float(self.cfg.get("predict.conf", 0.25)),
-                    iou=float(self.cfg.get("predict.iou", 0.6)),
-                    max_det=int(self.cfg.get("predict.max_det", 100)),
-                    # 추론 해상도는 학습 해상도와 달라도 된다. 최적값은 모델마다 달라서
-                    # yolo26n 은 960 이(0.705 -> 0.719), yolo26s 는 640 이 가장 나았다
-                    # (config.yaml 의 predict.imgsz 주석). 지정하지 않으면 학습과 같은 값.
-                    imgsz=int(self.cfg.get("predict.imgsz") or self.cfg.imgsz),
-                    device=self.cfg.device,
-                    verbose=False,
-                )
+                if tile_cfg:
+                    img = imread(str(path))
+                    if img is None:
+                        report.errors.append(f"{path.name}: 그림을 읽지 못함")
+                        continue
+                    det, used = tiling.detect(model, img, imgsz=imgsz, device=self.cfg.device, conf=conf, iou=iou,
+                                              max_det=max_det, **tile_cfg)
+                    ih, iw = img.shape[:2]
+                    found = [((x1 + x2) / 2 / iw, (y1 + y2) / 2 / ih, (x2 - x1) / iw, (y2 - y1) / ih, c, cf)
+                             for x1, y1, x2, y2, cf, c, *_ in det.tolist()]
+                    report.tiled += int(used)
+                else:
+                    results = model.predict(source=str(path), conf=conf, iou=iou, max_det=max_det, imgsz=imgsz,
+                                            device=self.cfg.device, verbose=False)
+                    found = [(cx, cy, w, h, c, cf)
+                             for res in results if res.boxes is not None
+                             for (cx, cy, w, h), c, cf in zip(res.boxes.xywhn.tolist(), res.boxes.cls.tolist(),
+                                                              res.boxes.conf.tolist())]
             except Exception as exc:
                 report.errors.append(f"{path.name}: {exc}")
                 continue
 
             boxes: list[Box] = []
-            for res in results:
-                if res.boxes is None:
+            for cx, cy, w, h, c, cf in found:
+                mapped = cmap.get(int(c))
+                if mapped is None:
+                    report.dropped_unknown_class += 1
                     continue
-                xywhn = res.boxes.xywhn.tolist()
-                clss = res.boxes.cls.tolist()
-                confs = res.boxes.conf.tolist()
-                for (cx, cy, w, h), c, cf in zip(xywhn, clss, confs):
-                    mapped = cmap.get(int(c))
-                    if mapped is None:
-                        report.dropped_unknown_class += 1
-                        continue
-                    box = Box(mapped, cx, cy, w, h, float(cf), "auto").clamped()
-                    if box.is_valid():
-                        boxes.append(box)
+                box = Box(mapped, cx, cy, w, h, float(cf), "auto").clamped()
+                if box.is_valid():
+                    boxes.append(box)
 
             score = image_uncertainty(
                 [b.conf for b in boxes], low=low, high=high, empty=empty_score
             )
             if not self.store.apply_prediction(
                 image_id, boxes, expect=expect, uncertainty=score,
-                model_version=Path(self.weights).name,
+                model_version=version,
             ):
                 changed(path)            # 추론하는 사이에 사람이 바꿨다
                 continue

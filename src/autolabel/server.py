@@ -141,6 +141,8 @@ class ClassesIn(BaseModel):
 class PredictIn(BaseModel):
     # 이미 검수 대기(pending)인 것까지 다시 돌릴지 여부
     include_pending: bool = False
+    # 타일 추론으로 돌릴지 (2026-11-10, 메뉴 '자동 라벨링 (타일)' — tiling.py). 기본은 통째 추론
+    tiles: bool = False
 
 
 class TrainIn(BaseModel):
@@ -1082,10 +1084,10 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             def progress(n: int, total: int, name: str) -> None:
                 job.progress = f"{n}/{total}  {name}"
 
-            report = labeler.run(ids, progress=progress)
+            report = labeler.run(ids, progress=progress, tiles=payload.tiles)
             print(report.summary())
             return {"processed": report.processed, "boxes": report.boxes,
-                    "skipped_changed": report.skipped_changed}
+                    "skipped_changed": report.skipped_changed, "tiled": report.tiled if payload.tiles else None}
 
         return _start(jobs, "predict", work)
 

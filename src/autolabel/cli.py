@@ -109,7 +109,7 @@ def cmd_label(args) -> int:
     if args.all:
         ids = [r["id"] for r in store.list_images(status="unlabeled", limit=10**9)]
         ids += [r["id"] for r in store.list_images(status="pending", limit=10**9)]
-    report = labeler.run(ids, progress=progress)
+    report = labeler.run(ids, progress=progress, tiles=args.tiles)
     print("\n" + report.summary())
     print("\n다음: python labeler.py review  로 검수하세요.")
     return 0
@@ -287,6 +287,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("label", help="미라벨 이미지에 자동 라벨 생성")
     sp.add_argument(
         "--all", action="store_true", help="이미 검수 대기 중인 이미지도 다시 추론"
+    )
+    sp.add_argument(
+        "--tiles", action="store_true",
+        # 도움말은 cp949 콘솔에서도 찍혀야 한다 — em dash·곱셈 기호를 넣으면 --help 가 UnicodeEncodeError 로 죽는다
+        help="타일 추론: 통째 + 긴 변이 큰 이미지에 KxK 조각(config 의 predict.tiles). 작은 객체를 더 잡지만 "
+             "오검출도 늘고 GPU 시간이 약 2배다",
     )
     sp.set_defaults(func=cmd_label)
 

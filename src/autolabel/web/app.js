@@ -2822,6 +2822,7 @@ async function loadState() {
     `<span>건너뜀 <b>${c.skipped}</b></span>` +
     (c.trashed ? `<span class="trash-count">휴지통 <b>${c.trashed}</b></span>` : "");
   $("#btn-predict").disabled = false;
+  $("#btn-predict-tiles").disabled = false;
   renderClassList();
   // 클래스가 바뀌면(스캔·클래스 추가) 필터 목록도 다시 그린다. 없어진 클래스는 선택에서 뺀다.
   [...S.filterClasses].filter((i) => i >= S.classes.length).forEach((i) => S.filterClasses.delete(i));
@@ -3345,6 +3346,8 @@ async function refreshWslButtons() {
 
 $("#btn-scan").onclick = () => startJob("scan");
 $("#btn-predict").onclick = () => startJob("predict", { include_pending: false });
+// 타일 추론 선택지 (2026-11-10, tiling.py) — 같은 작업(predict)이라 끝나면 지금 이미지도 맞춘다(IMAGE_JOBS)
+$("#btn-predict-tiles").onclick = () => startJob("predict", { include_pending: false, tiles: true });
 $("#btn-train").onclick = () => {
   if (confirm("승인된 라벨로 모델을 재학습합니다. GPU를 오래 점유합니다. 계속할까요?")) {
     startJob("train", {});
