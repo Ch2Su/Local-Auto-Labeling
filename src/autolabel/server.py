@@ -14,6 +14,7 @@ import unicodedata
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException
@@ -38,7 +39,7 @@ from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
 from .stopper import StopSignal
-from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, Store, TagFilter
+from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, Store, TagFilter, TemplateExists
 from .tidy import prune_missing, purge_trashed, tidy_approved
 from .trainer import find_resume_point
 from .trainer import resume_train as run_resume
@@ -108,6 +109,25 @@ class BulkTagIn(BaseModel):     # 이미지 보기 탭에서 여러 장을 골�
 class BulkDomainIn(BaseModel):
     ids: list[int]
     domain: str | None
+
+
+class MaskTemplateIn(BaseModel):    # 가릴 영역 템플릿 (2026-11-10) — 지금 이미지의 영역을 이름으로 남긴다
+    name: str
+    masks: list[MaskIn]
+    width: int | None = Field(default=None, gt=0)       # 만든 이미지의 화면 크기 — 비율이 다른 그림을 가린다
+    height: int | None = Field(default=None, gt=0)
+    image_id: int | None = None
+    overwrite: bool = False                             # 같은 이름이 있으면 409, true 면 덮어쓴다
+
+
+class TemplateNameIn(BaseModel):
+    name: str
+
+
+class BulkMaskTemplateIn(BaseModel):
+    ids: list[int]
+    template_id: int
+    mode: Literal["add", "remove"] = "add"
 
 
 class ClassIn(BaseModel):
@@ -613,6 +633,97 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         return {"ok": True, "changed": n}
+
+    # ── 가릴 영역 템플릿 (2026-11-10, 사용자 요청): 고정 카메라 화면처럼 같은 자리를 여러 장에 덮을 때 이름(카메라A_1 …)을
+    # 붙여 둔 영역 묶음. 적용하면 이미지의 영역으로 복사된다(store 의 mask_templates 주석). 한 장 적용은 검수 화면이 영역을
+    # 더해 평소처럼 저장(PUT boxes)하고, 여러 장은 이미지 보기에서 /api/bulk/mask-template — 일괄 수정 묶음(source bulk)이라
+    # 상단 변경 기록에서 묶음째 되돌린다(store.revert_batch 가 영역도 되돌린다).
+
+    @app.get("/api/mask-templates")
+    def list_mask_templates() -> dict:
+        return {"templates": store.list_mask_templates()}
+
+    @app.post("/api/mask-templates")
+    def save_mask_template(payload: MaskTemplateIn) -> dict:
+        """영역을 이름으로 남긴다. 같은 이름이 있으면 409 — overwrite=true 로 다시 보내면 덮어쓴다."""
+        if len(payload.masks) > MAX_MASKS:
+            raise HTTPException(400, f"가릴 영역은 {MAX_MASKS}개까지입니다.")
+        camera = None
+        if payload.image_id is not None and (row := store.get_image(payload.image_id)) is not None:
+            camera = row["camera"]
+        try:
+            tid, replaced = store.save_mask_template(
+                payload.name, [(m.x1, m.y1, m.x2, m.y2) for m in payload.masks],
+                width=payload.width, height=payload.height, image_id=payload.image_id, camera=camera,
+                overwrite=payload.overwrite)
+        except TemplateExists as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "id": tid, "replaced": replaced}
+
+    @app.put("/api/mask-templates/{template_id}")
+    def rename_mask_template(template_id: int, payload: TemplateNameIn) -> dict:
+        try:
+            found = store.rename_mask_template(template_id, payload.name)
+        except ValueError as exc:       # 겹치는 이름(TemplateExists)도 — 이름 바꾸기로 다른 템플릿을 덮지는 않는다
+            raise HTTPException(400, str(exc)) from exc
+        if not found:
+            raise HTTPException(404, "없는 템플릿입니다(다른 창에서 지웠을 수 있습니다).")
+        return {"ok": True}
+
+    @app.delete("/api/mask-templates/{template_id}")
+    def delete_mask_template(template_id: int) -> dict:
+        """템플릿만 지운다 — 이미 적용한 이미지의 영역은 그대로."""
+        if not store.delete_mask_template(template_id):
+            raise HTTPException(404, "없는 템플릿입니다(다른 창에서 지웠을 수 있습니다).")
+        return {"ok": True}
+
+    def _display_ratio(row) -> float | None:
+        """이 이미지의 화면(EXIF 회전 적용) 가로/세로. 파일을 못 열면 None."""
+        try:
+            w, h = display_size(Path(row["path"]))
+        except _UNREADABLE:
+            return None
+        return w / h if w and h else None
+
+    @app.post("/api/bulk/mask-template")
+    def bulk_mask_template(payload: BulkMaskTemplateIn) -> dict:
+        """고른 이미지들에 템플릿 영역을 더하거나(add) 뺀다(remove). 바뀐 장수와 건너뛴 이유별 장수를 돌려준다.
+
+        더하기는 test 이미지(mask_block 과 같은 규칙 — store 가 쓰는 순간의 행으로 본다)와, 화면 비율이 템플릿을 만든
+        그림과 1% 넘게 다른 이미지·열 수 없는 이미지를 건너뛴다(다른 카메라·크기의 그림을 엉뚱하게 덮지 않게). 빼기는
+        템플릿과 좌표가 같은 영역만 빼므로 비율을 보지 않는다. 바뀐 이미지마다 이력(source bulk, 같은 batch)이 남는다.
+        """
+        if not payload.ids:
+            raise HTTPException(400, "이미지를 고르세요.")
+        tpl = store.get_mask_template(payload.template_id)
+        if tpl is None:
+            raise HTTPException(404, "없는 템플릿입니다(다른 창에서 지웠을 수 있습니다).")
+        ids = list(dict.fromkeys(payload.ids))
+        n_aspect = n_unreadable = 0
+        if payload.mode == "add" and tpl["width"] and tpl["height"]:
+            want = tpl["width"] / tpl["height"]
+            keep = []
+            for i in ids:
+                row = store.get_image(i)
+                if row is not None:                     # 없는 이미지는 store 가 missing 으로 센다
+                    ratio = _display_ratio(row)
+                    if ratio is None:
+                        n_unreadable += 1
+                        continue
+                    if abs(ratio - want) > 0.01 * want:
+                        n_aspect += 1
+                        continue
+                keep.append(i)
+            ids = keep
+        test_cams = frozenset(k for k, c in _cameras()[0].items() if c.split == "test")
+        verb = "더하기" if payload.mode == "add" else "빼기"
+        batch = (f"{datetime.now():%m-%d %H:%M:%S} 가릴 영역 템플릿 '{tpl['name']}' {verb}"
+                 f" (고른 {len(payload.ids)}장) #{secrets.token_hex(2)}")
+        res = store.apply_mask_template(ids, tpl["rects"], mode=payload.mode, batch=batch, test_cameras=test_cams)
+        return {**res, "aspect": n_aspect, "unreadable": n_unreadable,
+                "batch": batch if res["changed"] else None}
 
     @app.get("/api/images/{image_id}")
     def get_image(image_id: int) -> dict:

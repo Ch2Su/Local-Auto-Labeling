@@ -28,6 +28,8 @@ const S = {
   msel: -1,           // 고른 가릴 영역 번호 (박스 선택 S.sel 과 함께 쓰지 않는다)
   masksTouched: false,// 이 이미지에서 영역을 손댔나 — 손댄 뒤로만 저장에 영역을 싣는다(영역을 모르는 저장이 덮지 않게)
   maskBlock: null,    // 영역을 둘 수 없는 이유(test 이미지) — 서버가 준다
+  mtpls: [],          // 가릴 영역 템플릿 [{id, name, rects(xyxy), width, height, image_id, camera}] 이름순 (2026-11-10)
+  tplGhost: null,     // 템플릿 줄에 마우스를 올린 동안 미리 보는 영역({cx, cy, w, h} 목록)
   curClass: 0,        // 새 박스에 붙일 클래스
   img: null,          // HTMLImageElement
   imgId: null,        // S.img 가 어느 이미지의 사진인가 (onload 때 정한다). S.cur.id 와 다르면 아직 안 떴다
@@ -357,6 +359,22 @@ function draw() {
       const [x, y] = toScreen(ix, iy);
       ctx.strokeRect(x, y, iw * S.view.scale, ih * S.view.scale);
       ctx.fillText(clsName(b.cls), x + 2, y + ih * S.view.scale - 3);
+    }
+    ctx.restore();
+  }
+
+  // 가릴 영역 템플릿 줄에 마우스를 올린 동안(2026-11-10): 그 템플릿의 영역을 노란 점선으로 — 적용하면 덮일 자리.
+  if (S.tplGhost) {
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255, 214, 10, 0.95)";
+    ctx.fillStyle = "rgba(255, 214, 10, 0.15)";
+    for (const m of S.tplGhost) {
+      const [ix, iy, iw, ih] = boxRect(m);
+      const [x, y] = toScreen(ix, iy);
+      ctx.fillRect(x, y, iw * S.view.scale, ih * S.view.scale);
+      ctx.strokeRect(x, y, iw * S.view.scale, ih * S.view.scale);
     }
     ctx.restore();
   }
@@ -1788,6 +1806,153 @@ async function deleteTag(t) {
   else refreshRows(hit);
 }
 
+/* ───────────────────── 가릴 영역 템플릿 (2026-11-10, 사용자 요청) ─────────────────────
+ * 고정 카메라 화면처럼 같은 자리를 여러 장에 덮을 때, 한 장에 그린 영역을 이름(예: 카메라A_1)으로 남겨 두고 다른 이미지에
+ * 더한다. 적용하면 그 이미지의 영역으로 **복사**된다 — 템플릿을 고치거나 지워도 이미 적용한 이미지는 그대로다. 여기의
+ * '적용' 은 지금 이미지에 영역을 더하고 평소처럼 자동 저장한다(Ctrl+Z 로 되돌림). 같은 좌표의 영역은 다시 더하지 않는다
+ * (서버 masks.merge 와 같은 규칙). 여러 장에는 이미지 보기의 '가릴 영역 템플릿'(gallery.js — 일괄 수정 묶음이라 변경
+ * 기록에서 묶음째 되돌린다). */
+
+/** 정규화 xyxy 한 개의 '같은 자리' 키 — 서버 masks.mask_key 처럼 소수 7자리로 (화면의 {cx, cy, w, h} 를 오가며 생기는 잡음). */
+const xyxyKey = (r) => r.map((v) => (Math.round(v * 1e7) / 1e7).toFixed(7)).join(",");
+
+async function loadMaskTemplates() {
+  let data;
+  try { data = await api("/api/mask-templates"); } catch { return; }      // 실패해도 검수는 되어야 한다
+  S.mtpls = data.templates || [];
+  renderMaskTemplates();
+  if (typeof renderGalleryMtpl === "function") renderGalleryMtpl();
+}
+
+/** 오른쪽 '가릴 영역 템플릿' 칸. 이미지를 열 때도 다시 그린다(test 이미지면 적용을 흐리게). */
+function renderMaskTemplates() {
+  const ul = $("#mtpl-list");
+  if (!ul) return;
+  // 줄을 다시 그리면 그 줄의 mouseleave 가 오지 않으니 미리 보기를 끈다. 이미지를 여는 중(사진이 뜨기 전)에는 그리지 않는다
+  if (S.tplGhost) {
+    S.tplGhost = null;
+    if (S.cur && S.imgId === S.cur.id) draw();
+  }
+  ul.innerHTML = "";
+  ul.classList.toggle("blocked", !!S.maskBlock);
+  $("#mtpl-count").textContent = S.mtpls.length ? `${S.mtpls.length}개` : "";
+  if (!S.mtpls.length) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "템플릿이 없습니다 — M 으로 영역을 그린 뒤 아래에 이름을 넣어 저장하세요";
+    ul.appendChild(li);
+    return;
+  }
+  for (const t of S.mtpls) {
+    const li = document.createElement("li");
+    li.innerHTML = '<span class="nm"></span><span class="cnt"></span>'
+      + '<button class="btn btn-sm ap">적용</button>'
+      + '<button class="linkbtn ed" title="이름 바꾸기">✎</button>'
+      + '<button class="linkbtn del" title="템플릿 지우기 (이미 적용한 이미지의 영역은 그대로)">×</button>';
+    li.querySelector(".nm").textContent = t.name;
+    li.querySelector(".cnt").textContent = `${t.rects.length}개` + (t.width ? ` · ${t.width}×${t.height}` : "");
+    li.title = `${t.name} — 가릴 영역 ${t.rects.length}개`
+      + (t.width ? `, ${t.width}×${t.height} 그림에서 만듦` : "") + (t.camera ? ` (카메라 ${t.camera})` : "")
+      + "\n마우스를 올리면 덮을 자리를 노란 점선으로 미리 봅니다. '적용' 은 이 이미지에 더합니다"
+      + "(이미 같은 자리에 있는 영역은 건너뜀, Ctrl+Z 로 되돌리기). 여러 장에는 이미지 보기에서 적용합니다.";
+    const ap = li.querySelector(".ap");
+    ap.title = S.maskBlock || "이 이미지에 이 템플릿의 가릴 영역을 더합니다";
+    ap.onclick = (e) => { e.stopPropagation(); e.currentTarget.blur(); applyMaskTemplate(t); };
+    li.querySelector(".ed").onclick = (e) => { e.stopPropagation(); renameMaskTemplate(t); };
+    li.querySelector(".del").onclick = (e) => { e.stopPropagation(); deleteMaskTemplate(t); };
+    li.onmouseenter = () => { if (S.cur && S.imgId === S.cur.id) { S.tplGhost = t.rects.map(maskFromXyxy); draw(); } };
+    li.onmouseleave = () => { if (S.tplGhost) { S.tplGhost = null; draw(); } };
+    ul.appendChild(li);
+  }
+}
+
+/** 템플릿 t 의 영역을 지금 이미지에 더한다 — 평소 편집처럼 되돌리기에 쌓고 자동 저장한다. */
+function applyMaskTemplate(t) {
+  if (!S.cur || S.imgId !== S.cur.id) { toast("이미지가 뜬 뒤에 적용하세요"); return; }
+  if (S.maskBlock) { toast(S.maskBlock, true); return; }
+  if (t.width && t.height && S.cur.width && S.cur.height) {
+    const want = t.width / t.height;
+    if (Math.abs(S.cur.width / S.cur.height - want) > 0.01 * want
+        && !confirm(`템플릿 '${t.name}' 은 ${t.width}×${t.height} 그림에서 만들었는데 이 이미지는 `
+          + `${S.cur.width}×${S.cur.height} 라 가로·세로 비율이 다릅니다 — 영역이 늘어나거나 줄어든 자리에 덮입니다.\n`
+          + "그래도 더할까요?")) return;
+  }
+  const have = new Set(S.masks.map((m) => xyxyKey(maskToXyxy(m))));
+  const add = [];
+  for (const r of t.rects) {
+    const k = xyxyKey(r);
+    if (have.has(k)) continue;
+    have.add(k);
+    add.push(maskFromXyxy(r));
+  }
+  if (!add.length) { toast(`'${t.name}' 의 영역이 이미 모두 들어 있습니다`); return; }
+  if (S.masks.length + add.length > MASK_MAX) {
+    toast(`가릴 영역은 한 장에 ${MASK_MAX}개까지입니다 (지금 ${S.masks.length}개 + 더할 ${add.length}개)`, true);
+    return;
+  }
+  pushUndo();
+  S.masks.push(...add);
+  S.masksTouched = true;
+  S.msel = -1;
+  markDirty();
+  refresh();
+  toast(`'${t.name}' — 가릴 영역 ${add.length}개를 더했습니다 (Ctrl+Z 로 되돌리기)`);
+}
+
+/** 지금 이미지의 영역을 #mtpl-name 의 이름으로 남긴다. 같은 이름이 있으면 바꿀지 묻는다. */
+async function saveMaskTemplate() {
+  const input = $("#mtpl-name");
+  const name = input.value.trim();
+  if (!S.cur || S.imgId !== S.cur.id) { toast("이미지가 뜬 뒤에 저장하세요"); return; }
+  if (!S.masks.length) { toast("이 이미지에 가릴 영역이 없습니다 — M 으로 먼저 그리세요", true); return; }
+  if (!name) { input.focus(); toast("템플릿 이름을 넣으세요 (예: 카메라A_1)"); return; }
+  const body = {
+    name, width: S.cur.width, height: S.cur.height, image_id: S.cur.id,
+    masks: S.masks.map((m) => { const [x1, y1, x2, y2] = maskToXyxy(m); return { x1, y1, x2, y2 }; }),
+  };
+  let res;
+  try {
+    res = await api("/api/mask-templates", { method: "POST", body });
+  } catch (err) {
+    if (err.status !== 409) { toast(err.message, true); return; }
+    if (!confirm(`템플릿 '${name}' 이 이미 있습니다. 이 이미지의 가릴 영역 ${body.masks.length}개로 바꿀까요?\n`
+      + "(이미 적용한 이미지의 영역은 그대로입니다)")) return;
+    try {
+      res = await api("/api/mask-templates", { method: "POST", body: { ...body, overwrite: true } });
+    } catch (err2) {
+      toast(err2.message, true);
+      return;
+    }
+  }
+  input.value = "";
+  input.blur();
+  await loadMaskTemplates();
+  toast(`템플릿 '${name}' ${res.replaced ? "바꿈" : "저장"} — 가릴 영역 ${body.masks.length}개`);
+}
+
+async function renameMaskTemplate(t) {
+  const name = prompt(`템플릿 '${t.name}' 의 새 이름`, t.name);
+  if (name == null || name.trim() === t.name) return;
+  try {
+    await api(`/api/mask-templates/${t.id}`, { method: "PUT", body: { name } });
+  } catch (err) {
+    toast(err.message, true);
+    return;
+  }
+  await loadMaskTemplates();
+}
+
+async function deleteMaskTemplate(t) {
+  if (!confirm(`템플릿 '${t.name}' 을 지웁니다. 이미 적용한 이미지의 가릴 영역은 그대로입니다. 되돌릴 수 없습니다. 지울까요?`)) return;
+  try {
+    await api(`/api/mask-templates/${t.id}`, { method: "DELETE" });
+  } catch (err) {
+    toast(err.message, true);
+    return;
+  }
+  await loadMaskTemplates();
+}
+
 /* ── 카메라(출처) 필터 ── docs/provenance.md
  * 카메라가 붙은 이미지가 하나도 없으면(legacy 뿐이면) 숨긴다. 고른 카메라가 사라지면 '전체' 로. */
 async function loadCameras() {
@@ -2616,6 +2781,7 @@ async function reloadCurrentBoxes() {
   S.sel = -1;
   S.msel = -1;
   S.undo = [];
+  renderMaskTemplates();
   setHistCount(meta.n_history);
   refresh();
   if (S.histOpen) loadHistory();
@@ -2793,6 +2959,7 @@ async function loadImage(id) {
   S.msel = -1;
   S.masksTouched = false;
   S.maskBlock = meta.mask_block || null;
+  renderMaskTemplates();                                // test 이미지면 적용을 흐리게, 미리 보기는 끈다
   if (S.mode === "mask" && S.maskBlock) {               // test 이미지 — 영역을 그릴 수 없으니 새 박스 모드로
     S.mode = "box";
     renderMode();
@@ -3299,6 +3466,12 @@ $("#filter-split").onchange = () => {
 };
 // 태그 필터 — 여러 개 넣고 빼기, 찾기 칸 (2026-11-04 사용자 요청, makeTagFilter)
 tagFilter = makeTagFilter($("#filter-tags"));
+$("#btn-mtpl-save").onclick = (e) => { e.currentTarget.blur(); saveMaskTemplate(); };
+$("#mtpl-name").addEventListener("keydown", (e) => {
+  if (e.isComposing || e.keyCode === 229) return;     // 한글 조합 중의 Enter (#new-tag 와 같다)
+  if (e.key === "Enter") saveMaskTemplate();
+  if (e.key === "Escape") e.target.blur();
+});
 $("#btn-add-tag").onclick = () => createTag();
 $("#new-tag").addEventListener("keydown", (e) => {
   // 한글 조합 중의 Enter 는 조합을 끝내는 몫이다 — 받으면 조합을 끝내는 Enter 와 그 뒤 Enter 로 두 번 만들려 했다 (2026-11-05)
@@ -3628,6 +3801,7 @@ async function loadProjects() {
   loadProjects();       // 실패해도 검수는 되어야 하므로 기다리지 않는다
   try {
     await loadState();
+    loadMaskTemplates();  // 가릴 영역 템플릿 — 실패해도 검수는 되어야 하므로 기다리지 않는다
     loadSamStatus();      // 실패해도 검수는 되어야 하므로 기다리지 않는다
     refreshResumeButton();
     refreshWslButtons();  // 같은 이유. WSL 이 잠들어 있으면 깨우는 데 몇 초 걸린다

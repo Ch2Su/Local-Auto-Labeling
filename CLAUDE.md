@@ -449,7 +449,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    (영상은 `tools/extract_frames.py`, ROAD PLUS 녹화는 `tools/import_roadplus.py` — SD 원본이라 높이 720 으로 줄여도 잃는 것이
    없다) → `labeler.py scan` → `label`(운영 m) → responder·cone 후보(`tools/ovd_propose.py` → `tools/import_proposals.py`) →
    검수 → 분할(카메라째 — 평가에 쓸 카메라는 `cameras.yaml` 의 `split:` 으로 먼저 정할 것) → 학습 → 새 test 로 기준선.
-   - 고정 카메라의 화면 글자처럼 같은 자리를 여러 장에 덮을 때는 `tools/mask_images.py --ids … --rect …`.
+   - 같은 자리를 여러 장에 덮을 때는 **가릴 영역 템플릿**(11-10 — 한 장에 그린 영역을 `카메라A_1` 같은 이름으로 남겨 라벨링
+     화면에서 한 장씩, 이미지 보기에서 고른 여러 장에 적용, README '가릴 영역 템플릿')이나 `tools/mask_images.py --ids … --rect …`.
    - `cameras.yaml` 의 VIRAT 카메라 3대(0503·0500·0101)에는 아직 `crop:` 이 있다 — VIRAT 을 풀 해상도로 다시 넣는다면
      (`tools/import_virat.py`, 영상은 `E:\datasets`) 그 칸을 빼고 가릴 영역으로 덮는다. MOT17 은 보류(가려진 부분까지 몸 전체로
      그린 라벨이다 — 공개 데이터셋 조사는 docs/provenance.md '공개 데이터셋').

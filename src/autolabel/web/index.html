@@ -220,6 +220,19 @@
       </div>
     </section>
 
+    <!-- 가릴 영역 템플릿 (2026-11-10): 같은 자리를 여러 장에 덮을 때 이름을 붙여 둔 영역 묶음. 적용하면 이 이미지의 영역으로
+         복사된다(템플릿을 고치거나 지워도 이미 적용한 이미지는 그대로). 여러 장에는 이미지 보기 오른쪽에서 -->
+    <section class="sec" data-sec="mtpl">
+      <div class="panel-head sec-head"><span class="caret">▾</span><span>가릴 영역 템플릿</span><span id="mtpl-count" class="dim"></span></div>
+      <div class="sec-body">
+        <ul id="mtpl-list" class="tag-list mtpl-list"></ul>
+        <div class="add-class">
+          <input id="mtpl-name" type="text" placeholder="이름 (예: 카메라A_1)" maxlength="40" autocomplete="off">
+          <button id="btn-mtpl-save" class="btn btn-sm" title="이 이미지의 가릴 영역 전부를 이 이름의 템플릿으로 남깁니다. 같은 이름이 있으면 바꿀지 묻습니다 (Enter)">지금 영역 저장</button>
+        </div>
+      </div>
+    </section>
+
     <section class="sec grow" data-sec="boxes">
       <div class="panel-head sec-head"><span class="caret">▾</span><span>박스</span><span id="box-count" class="dim"></span>
         <span class="spacer"></span>
@@ -272,6 +285,13 @@
       <button class="btn btn-sm" data-gdomain="cctv" title="고른 이미지를 모두 CCTV 로 (Q)">CCTV <kbd>Q</kbd></button>
       <button class="btn btn-sm" data-gdomain="noncctv" title="고른 이미지를 모두 비CCTV 로 (W)">비CCTV <kbd>W</kbd></button>
       <button class="btn btn-sm" data-gdomain="drone" title="고른 이미지를 모두 드론으로 (E)">드론 <kbd>E</kbd></button>
+    </div>
+    <!-- 가릴 영역 템플릿 (2026-11-10): 고른 이미지 모두에 더하거나 뺀다. 일괄 수정 묶음이라 상단 '변경 기록' 에서 되돌린다 -->
+    <div class="panel-head"><span>가릴 영역 템플릿</span><span id="gs-mtpl-n" class="dim"></span></div>
+    <div class="gs-mtpl">
+      <select id="gs-mtpl-sel" title="고른 이미지에 더하거나 뺄 템플릿 (라벨링 화면 오른쪽에서 만듭니다)"></select>
+      <button id="gs-mtpl-add" class="btn btn-sm" title="고른 이미지 모두에 이 템플릿의 가릴 영역을 더합니다. test 이미지와 화면 비율이 다른 이미지는 건너뛰고, 이미 같은 자리에 있는 영역은 다시 넣지 않습니다">더하기</button>
+      <button id="gs-mtpl-remove" class="btn btn-sm" title="고른 이미지 모두에서 이 템플릿과 좌표가 같은 가릴 영역을 뺍니다 (손으로 옮긴 영역은 남습니다)">빼기</button>
     </div>
     <!-- 칸: 고른 이미지 모두에 붙어 있으면 ✓, 일부면 −. 누르면 모두에 붙이고, 모두에 붙어 있었으면 모두에서 뗀다.
          줄을 누르면 T 로 붙일 태그로 고른다(라벨링과 같은 태그) -->

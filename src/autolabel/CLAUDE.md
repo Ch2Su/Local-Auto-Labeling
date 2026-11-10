@@ -29,6 +29,14 @@
     되돌리기는 그 줄에 영역이 있을 때만 영역도 되돌린다. 되돌리기(Ctrl+Z) 한 칸은 박스와 영역을 함께 쌓는다.
   - 가릴 영역 모드에서는 영역만 고르고 옮긴다(박스는 B). 덮는 몫은 `masks.covered` 와 `app.js` 의 `maskCover` 가 같은 식이다
     (좌표 압축으로 합집합) — 고치면 둘 다.
+  - **가릴 영역 템플릿 (2026-11-10, 사용자 요청)** — 이름 붙인 영역 묶음(DB `mask_templates`, 정규화 xyxy JSON + 만든 그림의 화면
+    크기). 적용하면 이미지의 `masks` 로 **복사**된다(템플릿을 고치거나 지워도 적용한 이미지는 그대로). 한 장 적용은 화면이
+    `S.masks` 에 더하고 평소 저장(PUT boxes, `S.masksTouched`)으로 간다 — 되돌리기·이력이 그대로 먹는다. 여러 장은 이미지 보기의
+    `/api/bulk/mask-template`(add·remove) → `store.apply_mask_template`: 이미지마다 `_replace_boxes(source='bulk', batch=…, masks=…)`
+    라 일괄 수정 묶음으로 되돌린다(`revert_batch` 가 `masks_after` 가 있는 줄은 지금 영역도 적용 직후와 같을 때만 영역까지 되돌린다).
+    같은 자리 판정은 `masks.mask_key`(소수 7자리) — 더하기는 같은 좌표를 건너뛰고(`masks.merge`), 빼기는 같은 좌표만 뺀다
+    (`masks.subtract`). 화면의 `xyxyKey` 가 같은 규칙이다 — 고치면 둘 다. 더하기는 test(분할 test·test 고정 카메라 — store 가
+    쓰는 순간의 행으로 다시 본다)·화면 비율이 1% 넘게 다른 그림(서버가 `display_size` 로 연다)·50개 넘김을 건너뛴다.
 - DB 자동 백업(`store.backup_daily`)은 `<DB 폴더>/backups/` 에 하루 한 번, 최근 `backup.keep`(14)개 — 그 이름 꼴의 파일만 지운다.
   **시험 서버는 `backup.keep: 0` 으로 끌 것.**
 - 같은 자리 일괄 수정(`store.same_place` → `set_class_bulk`)은 적용 때 다시 찾아 미리 본 수와 다르면 409, 묶음째 되돌리기는 그

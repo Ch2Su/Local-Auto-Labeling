@@ -19,8 +19,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
+from .masks import MAX_MASKS
 from .masks import clean as clean_masks
 from .masks import mask_key
+from .masks import merge as merge_masks
+from .masks import subtract as subtract_masks
 from .yolo_io import Box
 
 STATUSES = ("unlabeled", "pending", "approved", "skipped", "trashed")
@@ -126,6 +129,22 @@ CREATE TABLE IF NOT EXISTS masks (
     y2       REAL    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_masks_image ON masks(image_id);
+
+-- 가릴 영역 템플릿 (2026-11-10, 사용자 요청). 고정 카메라 화면처럼 같은 자리를 여러 장에 덮을 때 이름(예: 카메라A_1)을
+-- 붙여 둔 영역 묶음. 적용하면 이미지의 masks 로 **복사**된다 — 템플릿을 고치거나 지워도 이미 적용한 이미지는 그대로다.
+-- rects 는 masks 와 같은 화면 기준 정규화 xyxy 의 JSON. width·height 는 만든 이미지의 화면 크기 — 비율이 다른 그림에
+-- 잘못 적용하는 것을 막는 데 쓴다. id 는 AUTOINCREMENT(지운 번호가 새 템플릿에 붙지 않게 — 태그와 같은 이유).
+CREATE TABLE IF NOT EXISTS mask_templates (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL UNIQUE,
+    rects      TEXT    NOT NULL,
+    width      INTEGER,
+    height     INTEGER,
+    image_id   INTEGER,
+    camera     TEXT,
+    created_at TEXT    NOT NULL,
+    updated_at TEXT    NOT NULL
+);
 """
 
 # 이력에 남기는 박스 한 개의 모양. 순서를 바꾸면 옛 이력을 못 읽는다.
@@ -177,6 +196,11 @@ NO_DOMAIN = "__none__"   # 도메인 필터에서 '미분류' 를 뜻하는 값
 NO_SPLIT = "__none__"    # 분할 필터에서 '미배정'(다음 학습·split 때 배정)을 뜻하는 값
 NO_TAG = "__none__"      # 태그 필터에서 '태그 없음' 을 뜻하는 값
 TAG_NAME_MAX = 40
+TEMPLATE_NAME_MAX = 40   # 가릴 영역 템플릿 이름
+
+
+class TemplateExists(ValueError):
+    """같은 이름의 가릴 영역 템플릿이 있다 — 덮어쓸지 사람에게 물어야 한다(서버 409)."""
 
 
 @dataclass(frozen=True)
@@ -215,6 +239,16 @@ def clean_tag_name(name: str) -> str:
         raise ValueError("태그 이름을 넣어 주세요.")
     if len(name) > TAG_NAME_MAX:
         raise ValueError(f"태그 이름은 {TAG_NAME_MAX}자까지입니다.")
+    return name
+
+
+def clean_template_name(name: str) -> str:
+    """가릴 영역 템플릿 이름 다듬기 (태그 이름과 같은 규칙). 비었거나 너무 길면 ValueError."""
+    name = " ".join(str(name or "").split())
+    if not name:
+        raise ValueError("템플릿 이름을 넣어 주세요 (예: 카메라A_1).")
+    if len(name) > TEMPLATE_NAME_MAX:
+        raise ValueError(f"템플릿 이름은 {TEMPLATE_NAME_MAX}자까지입니다.")
     return name
 
 
@@ -737,6 +771,108 @@ class Store:
             con.execute("UPDATE images SET updated_at=? WHERE id=?", (_now(), image_id))
         return True
 
+    # ------------------------------------------------- 가릴 영역 템플릿 (2026-11-10)
+
+    @staticmethod
+    def _template_row(r: sqlite3.Row) -> dict:
+        out = dict(r)
+        out["rects"] = [list(map(float, x)) for x in json.loads(r["rects"])]
+        return out
+
+    def list_mask_templates(self) -> list[dict]:
+        """가릴 영역 템플릿 전부(이름순)."""
+        with self.connect() as con:
+            rows = con.execute("SELECT * FROM mask_templates ORDER BY name COLLATE NOCASE, id").fetchall()
+        return [self._template_row(r) for r in rows]
+
+    def get_mask_template(self, template_id: int) -> dict | None:
+        with self.connect() as con:
+            r = con.execute("SELECT * FROM mask_templates WHERE id=?", (template_id,)).fetchone()
+        return self._template_row(r) if r else None
+
+    def save_mask_template(self, name: str, rects: list, *, width: int | None, height: int | None,
+                           image_id: int | None = None, camera: str | None = None,
+                           overwrite: bool = False) -> tuple[int, bool]:
+        """영역 묶음을 이름으로 남긴다. (템플릿 id, 덮어썼나).
+
+        같은 이름이 있으면 overwrite 가 아닌 한 TemplateExists(사람에게 물을 일) — 덮어써도 이미 적용한 이미지의
+        영역은 그대로다(복사해 넣었으므로). 영역이 없거나 한 장 한도(MAX_MASKS)를 넘으면 ValueError.
+        """
+        name = clean_template_name(name)
+        rects = clean_masks(rects)
+        if not rects:
+            raise ValueError("템플릿에 넣을 가릴 영역이 없습니다 — 먼저 M 으로 영역을 그리세요.")
+        if len(rects) > MAX_MASKS:
+            raise ValueError(f"가릴 영역은 {MAX_MASKS}개까지입니다.")
+        now = _now()
+        with _write_lock, self.connect() as con:
+            row = con.execute("SELECT id FROM mask_templates WHERE name=?", (name,)).fetchone()
+            if row and not overwrite:
+                raise TemplateExists(f"같은 이름의 템플릿이 있습니다: {name}")
+            vals = (_masks_json(rects), width, height, image_id, camera)
+            if row:
+                con.execute("UPDATE mask_templates SET rects=?, width=?, height=?, image_id=?, camera=?,"
+                            " updated_at=? WHERE id=?", (*vals, now, row["id"]))
+                return int(row["id"]), True
+            return int(con.execute(
+                "INSERT INTO mask_templates(name, rects, width, height, image_id, camera, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?)", (name, *vals, now, now)).lastrowid), False
+
+    def rename_mask_template(self, template_id: int, name: str) -> bool:
+        """이름을 바꾼다. 없는 템플릿이면 False, 다른 템플릿과 이름이 겹치면 TemplateExists."""
+        name = clean_template_name(name)
+        with _write_lock, self.connect() as con:
+            other = con.execute("SELECT id FROM mask_templates WHERE name=?", (name,)).fetchone()
+            if other and int(other["id"]) != template_id:
+                raise TemplateExists(f"같은 이름의 템플릿이 있습니다: {name}")
+            return con.execute("UPDATE mask_templates SET name=?, updated_at=? WHERE id=?",
+                               (name, _now(), template_id)).rowcount > 0
+
+    def delete_mask_template(self, template_id: int) -> bool:
+        """템플릿만 지운다 — 이미 적용한 이미지의 영역은 그대로."""
+        with _write_lock, self.connect() as con:
+            return con.execute("DELETE FROM mask_templates WHERE id=?", (template_id,)).rowcount > 0
+
+    def apply_mask_template(self, image_ids: list[int], rects: list, *, mode: str, batch: str,
+                            test_cameras: frozenset[str] | set[str] = frozenset()) -> dict:
+        """템플릿 영역을 이미지들에 더하거나(add) 뺀다(remove) — 한 트랜잭션, 이미지마다 이력(source='bulk', 같은 batch).
+
+        더하기는 이미 같은 좌표의 영역이 있으면 그것은 건너뛰고(masks.merge), 빼기는 템플릿과 좌표가 같은 영역만 뺀다
+        (masks.subtract — 손으로 옮긴 영역은 그 이미지의 것이라 남긴다). 박스는 그대로이고, 학습 라벨이 달라지는 손이라
+        updated_at 은 새로 찍는다(set_masks 와 같다). **test 이미지(분할 test·test_cameras 의 카메라)에는 더하지
+        않는다** — 서버의 mask_block 과 같은 규칙을 쓰는 순간의 행으로 다시 본다. 빼기는 test 에도 한다(지우기만은 받는다).
+        묶음째 되돌리기는 revert_batch(영역도 되돌린다). {changed, unchanged, blocked, full, missing} 장수를 돌려준다.
+        """
+        if mode not in ("add", "remove"):
+            raise ValueError(f"알 수 없는 적용 방식: {mode}")
+        rects = clean_masks(rects)
+        out = {"changed": 0, "unchanged": 0, "blocked": 0, "full": 0, "missing": 0}
+        with _write_lock, self.connect() as con:
+            now = _now()
+            for image_id in dict.fromkeys(image_ids):          # 같은 id 가 두 번 와도 한 번만
+                row = con.execute("SELECT split, camera FROM images WHERE id=?", (image_id,)).fetchone()
+                if row is None:
+                    out["missing"] += 1
+                    continue
+                if mode == "add" and (row["split"] == "test" or row["camera"] in test_cameras):
+                    out["blocked"] += 1
+                    continue
+                cur = [tuple(r) for r in con.execute(
+                    "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
+                new = merge_masks(cur, rects) if mode == "add" else subtract_masks(cur, rects)
+                if mask_key(new) == mask_key(cur):
+                    out["unchanged"] += 1
+                    continue
+                if len(new) > MAX_MASKS:
+                    out["full"] += 1
+                    continue
+                boxes = [Box(**dict(r)) for r in con.execute(
+                    "SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id", (image_id,))]
+                self._replace_boxes(con, image_id, boxes, source="bulk", batch=batch, masks=new)
+                con.execute("UPDATE images SET updated_at=? WHERE id=?", (now, image_id))
+                out["changed"] += 1
+        return out
+
     def set_boxes(
         self,
         image_id: int,
@@ -974,11 +1110,13 @@ class Store:
         되돌릴 박스가 클래스 목록에 없는 번호를 쓰면 아무것도 바꾸지 않고 ValueError — 클래스를 합쳐
         뺀 묶음(tools/merge_class.py, 2026-11-02 van → car)은 그 클래스를 먼저 되살려야 되돌린다.
         score 는 `set_class_bulk` 와 같다 — 되돌린 박스로 uncertainty 를 다시 매긴다 (2026-11-05).
+        가릴 영역도 바꾼 묶음(가릴 영역 템플릿 적용, 2026-11-10 — 이력에 masks_after 가 있음)은 지금 영역도 적용 직후와
+        같을 때만 되돌리고, 영역도 그 전으로 돌린다.
         """
         skipped = 0
         with _write_lock, self.connect() as con:
             rows = con.execute(
-                "SELECT image_id, before, after FROM box_history"
+                "SELECT image_id, before, after, masks_before, masks_after FROM box_history"
                 " WHERE batch=? AND source='bulk' ORDER BY id", (batch,),
             ).fetchall()
             todo = []
@@ -991,14 +1129,23 @@ class Store:
                 if [_box_key(b) for b in cur] != [_box_key(b) for b in after]:
                     skipped += 1
                     continue
-                todo.append((r["image_id"], _boxes_from_json(r["before"])))
+                masks_before = None             # None = 그 묶음에서 영역은 그대로였다 — 되돌릴 때도 건드리지 않는다
+                if r["masks_after"] is not None:
+                    cur_m = [tuple(m) for m in con.execute(
+                        "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (r["image_id"],))]
+                    if mask_key(cur_m) != mask_key(_masks_from_json(r["masks_after"])):
+                        skipped += 1
+                        continue
+                    masks_before = _masks_from_json(r["masks_before"])
+                todo.append((r["image_id"], _boxes_from_json(r["before"]), masks_before))
             known = {c["idx"] for c in con.execute("SELECT idx FROM classes")}
-            gone = sorted({b.cls for _, before in todo for b in before} - known)
+            gone = sorted({b.cls for _, before, _m in todo for b in before} - known)
             if gone:
                 raise ValueError(f"되돌리면 클래스 목록에 없는 {', '.join(map(str, gone))}번 박스가 생깁니다"
                                  " — '클래스 추가' 로 그 클래스를 먼저 되살리세요.")
-            for image_id, before in todo:
-                self._replace_boxes(con, image_id, before, source="revert", batch=f"취소: {batch}")
+            for image_id, before, masks_before in todo:
+                self._replace_boxes(con, image_id, before, source="revert", batch=f"취소: {batch}",
+                                    masks=masks_before)
                 if score is not None:
                     con.execute("UPDATE images SET updated_at=?, uncertainty=? WHERE id=?",
                                 (_now(), float(score(before)), image_id))

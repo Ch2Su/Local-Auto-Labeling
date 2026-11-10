@@ -378,11 +378,69 @@ async function bulkTag(tagId, on) {
   }
 }
 
+/* 가릴 영역 템플릿 (2026-11-10, 사용자 요청) — 고른 이미지 모두에 템플릿 영역을 더하거나 뺀다(app.js 의 템플릿 칸에서
+ * 만든 것, S.mtpls). 서버가 이미지마다 이력을 남기는 일괄 수정 묶음이라 상단 '변경 기록' → '일괄 수정 묶음' 에서 묶음째
+ * 되돌린다. 더하기는 test 이미지·화면 비율이 템플릿과 다른 이미지를 서버가 건너뛰고 그 장수를 알려 준다. 학습 라벨이
+ * 바뀌는 일이라 장수와 상관없이 한 번 묻는다. */
+const GS_MTPL_KEY = `gsMtpl:${BASE}`;     // 고른 템플릿 — 탭(프로젝트)마다 템플릿 번호가 따로라 주소별로
+
+function renderGalleryMtpl() {
+  const sel = $("#gs-mtpl-sel");
+  if (!sel) return;
+  let want = sel.value;
+  if (!want) { try { want = localStorage.getItem(GS_MTPL_KEY) || ""; } catch { /* 없으면 첫 템플릿 */ } }
+  sel.innerHTML = S.mtpls.length
+    ? S.mtpls.map((t) => `<option value="${t.id}">${esc(t.name)} (${t.rects.length}개`
+      + `${t.width ? ` · ${t.width}×${t.height}` : ""})</option>`).join("")
+    : '<option value="">템플릿 없음 — 라벨링 화면 오른쪽에서 만듭니다</option>';
+  if (S.mtpls.some((t) => String(t.id) === want)) sel.value = want;
+  $("#gs-mtpl-n").textContent = S.mtpls.length ? `${S.mtpls.length}개` : "";
+  const off = !S.mtpls.length || !G.sel.size;
+  $("#gs-mtpl-add").disabled = off;
+  $("#gs-mtpl-remove").disabled = off;
+}
+
+async function bulkMaskTemplate(mode) {
+  if (G.busy) return;
+  const t = S.mtpls.find((x) => String(x.id) === $("#gs-mtpl-sel").value);
+  if (!t) { toast("템플릿을 먼저 고르세요 (라벨링 화면 오른쪽 '가릴 영역 템플릿' 에서 만듭니다)", true); return; }
+  const ids = selIds();
+  if (!ids.length) { toast("이미지를 먼저 고르세요 (클릭·Shift+클릭·Ctrl+A)"); return; }
+  if (!confirm(`고른 ${ids.length.toLocaleString()}장${mode === "add" ? "에" : "에서"} 템플릿 '${t.name}' 의 가릴 영역`
+    + ` ${t.rects.length}개를 ${mode === "add" ? "더합니다" : "뺍니다"}.\n`
+    + (mode === "add"
+      ? "test 이미지와, 화면 비율이 템플릿을 만든 그림과 다른 이미지는 건너뜁니다. 이미 같은 자리에 있는 영역은 다시 넣지 않습니다.\n"
+      : "템플릿과 좌표가 같은 영역만 뺍니다 — 손으로 옮긴 영역은 남습니다.\n")
+    + "상단 '변경 기록' → '일괄 수정 묶음' 에서 묶음째 되돌릴 수 있습니다. 계속할까요?")) return;
+  // 라벨링 쪽 지금 이미지의 저장부터 끝낸다 — 늦게 끝난 그 저장이 서버에서 바꾼 영역을 덮지 않게
+  if (!(await saveBeforeLeaving())) return;
+  G.busy = true;
+  try {
+    const r = await api("/api/bulk/mask-template", { method: "POST", body: { ids, template_id: t.id, mode } });
+    const skip = [
+      r.unchanged && `이미 ${mode === "add" ? "있음" : "없음"} ${r.unchanged.toLocaleString()}`,
+      r.blocked && `test ${r.blocked.toLocaleString()}`,
+      r.aspect && `비율 다름 ${r.aspect.toLocaleString()}`,
+      r.full && `영역 50개 넘음 ${r.full.toLocaleString()}`,
+      r.unreadable && `파일 못 엶 ${r.unreadable.toLocaleString()}`,
+      r.missing && `없는 이미지 ${r.missing.toLocaleString()}`,
+    ].filter(Boolean);
+    toast(`'${t.name}' ${mode === "add" ? "더하기" : "빼기"} — ${r.changed.toLocaleString()}장 바뀜`
+      + (skip.length ? ` · 건너뜀: ${skip.join(", ")}` : ""), !r.changed);
+    if (S.cur && ids.includes(S.cur.id)) await reloadCurrentBoxes();
+  } catch (err) {
+    toast(`템플릿을 적용하지 못했습니다: ${err.message}`, true);
+  } finally {
+    G.busy = false;
+  }
+}
+
 /* ───────────────────────── 오른쪽 ───────────────────────── */
 
 function renderGallerySide() {
   const n = G.sel.size;
   $("#gs-n").textContent = n ? `${n.toLocaleString()}장` : "없음";
+  renderGalleryMtpl();
 
   // 미리 보기: 지금 칸(없으면 고른 것 가운데 첫 장)
   const pv = $("#gs-preview");
@@ -530,6 +588,12 @@ $("#g-open").onclick = (e) => { e.currentTarget.blur(); openSelInLabel(); };
 document.querySelectorAll("[data-gdomain]").forEach((b) => {
   b.onclick = () => { b.blur(); bulkDomain(b.dataset.gdomain); };
 });
+$("#gs-mtpl-sel").addEventListener("change", (e) => {
+  try { localStorage.setItem(GS_MTPL_KEY, e.target.value); } catch { /* 저장 못 해도 그만 */ }
+  e.target.blur();                  // 포커스가 남으면 ↑·↓ 가 템플릿을 바꾼다
+});
+$("#gs-mtpl-add").onclick = (e) => { e.currentTarget.blur(); bulkMaskTemplate("add"); };
+$("#gs-mtpl-remove").onclick = (e) => { e.currentTarget.blur(); bulkMaskTemplate("remove"); };
 $("#gs-tag-q").addEventListener("input", renderGallerySide);
 $("#gs-tag-q").addEventListener("keydown", (e) => {
   if (e.key === "Escape") { e.target.value = ""; renderGallerySide(); e.target.blur(); }

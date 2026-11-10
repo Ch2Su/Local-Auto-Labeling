@@ -725,5 +725,16 @@ body.view-gallery .filters-head .caret { visibility: hidden; }
 .gs-preview .empty { color: var(--fg-dim); }
 .gs-domain { display: flex; gap: 4px; flex-wrap: wrap; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .gs-domain .btn.on { border-color: var(--accent); background: var(--accent-2); }
+/* 가릴 영역 템플릿 (2026-11-10) — 라벨링 오른쪽 칸(.mtpl-list, 태그 목록 모양)과 이미지 보기의 일괄 적용(.gs-mtpl) */
+.mtpl-list li { cursor: default; }
+.mtpl-list .ap { flex: none; padding: 1px 7px; font-size: 11px; }
+.mtpl-list.blocked .ap { opacity: 0.45; }
+.gs-mtpl { display: flex; gap: 4px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.gs-mtpl select {
+  flex: 1; min-width: 0;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 3px 4px; font: inherit;
+}
+.gs-mtpl .btn { flex: none; }
 .gs-tags { flex: 1; max-height: none; min-height: 0; }
 .gs-tags .cnt b { color: var(--accent); font-weight: 600; }

@@ -59,6 +59,27 @@ def mask_key(rects: Iterable[Sequence[float]]) -> list[tuple]:
     return [tuple(round(float(v), 7) for v in r) for r in rects]
 
 
+# 가릴 영역 템플릿 (2026-11-10, 사용자 요청) — 이름을 붙여 둔 영역 묶음을 이미지에 더하고 뺀다. 적용하면 이미지의
+# 영역으로 **복사**되므로, 빼기는 템플릿과 좌표가 같은(mask_key) 영역만 뺀다 — 손으로 옮긴 영역은 그 이미지의 것이다.
+# 검수 화면의 한 장 적용(app.js applyMaskTemplate)도 같은 규칙이다.
+
+def merge(cur: Sequence[Sequence[float]], add: Sequence[Sequence[float]]) -> list[Rect]:
+    """cur 뒤에 add 가운데 cur 에 없는(같은 좌표가 아닌) 영역만 붙인다. 순서는 그대로."""
+    seen = set(mask_key(cur))
+    out = [tuple(map(float, r)) for r in cur]
+    for r, k in zip(add, mask_key(add)):
+        if k not in seen:
+            seen.add(k)
+            out.append(tuple(map(float, r)))
+    return out
+
+
+def subtract(cur: Sequence[Sequence[float]], rem: Sequence[Sequence[float]]) -> list[Rect]:
+    """cur 에서 rem 과 좌표가 같은 영역을 뺀다."""
+    gone = set(mask_key(rem))
+    return [tuple(map(float, r)) for r, k in zip(cur, mask_key(cur)) if k not in gone]
+
+
 def covered(box, rects: Sequence[Rect]) -> float:
     """박스 넓이 가운데 영역들의 **합집합**이 덮는 몫(0~1). 겹친 영역을 두 번 세지 않는다.
 
