@@ -14,7 +14,12 @@
 
 from __future__ import annotations
 
+import os
 import re
+import secrets
+import shutil
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
@@ -112,6 +117,145 @@ def load_cameras(path: Path) -> dict[str, Camera]:
     if errors:
         raise ValueError(f"{path} 에 고칠 곳이 있습니다:\n  " + "\n  ".join(errors))
     return out
+
+
+class CameraExists(ValueError):
+    """이미 등록된 키."""
+
+
+# 등록 파일에 적는 순서 (docs/provenance.md '등록 파일' 의 예와 같다). split 은 비어도 적는다(지금 파일과 같은 꼴)
+_FIELD_ORDER = ("kind", "place", "mount", "view", "resolution", "tz", "rights", "split", "note")
+_ADD_LOCK = threading.Lock()
+_TOP_CAMERAS = re.compile(r"^cameras\s*:\s*(#.*)?$")
+
+
+def add_camera(path: Path, key: str, attrs: dict, *, backup_dir: Path | None = None,
+               comment: str | None = None) -> Camera:
+    """cameras.yaml 의 `cameras:` 묶음 끝에 카메라 하나를 더한다 (2026-11-10, 검수 UI '영상 캡처' 의 새 카메라).
+
+    사람이 손으로 쓰는 파일이라(묶음마다 설명 주석·순서·`crop` 같은 다른 속성) 통째로 다시 쓰지 않고 **글자로 덧붙인다**.
+    쓰기 전에 붙인 결과를 다시 읽어 '기존 카메라는 속성까지 그대로이고 새 키 하나만 늘었다' 가 아니면 아무것도 쓰지 않는다.
+    등록 파일이 이미 깨져 있으면(load_cameras 의 ValueError) 손대지 않는다. 쓰기 전 파일은 backup_dir 에
+    `cameras_<시각>.yaml` 로 남기고, 바꿔 끼우기는 한 번에 한다(scan 이 반쯤 쓴 파일을 읽지 않게).
+    값 규칙은 load_cameras 와 같다(키 꼴·kind·mount·split·place·tz). 수정·삭제는 하지 않는다 — 파일을 손으로 고친다.
+    """
+    key = str(key or "").strip()
+    if not _KEY.match(key):
+        raise ValueError(f"키 '{key}' — 영문 소문자·숫자·'-' 만, 첫 글자는 영문·숫자(폴더 이름이 된다)")
+    fields: dict = {}
+    for name in _FIELD_ORDER:
+        v = attrs.get(name)
+        if v is not None and not isinstance(v, str):
+            raise ValueError(f"{name}: 글자로 적을 것")
+        v = (v or "").strip()
+        if any(ord(ch) < 32 for ch in v):
+            raise ValueError(f"{name}: 한 줄로 적을 것(줄바꿈·탭 없이)")
+        fields[name] = v or None
+    if fields["kind"] not in KINDS:
+        raise ValueError(f"kind 는 {'|'.join(KINDS)} 중 하나 (지금 {fields['kind']!r})")
+    fields["mount"] = fields["mount"] or "unknown"
+    if fields["mount"] not in MOUNTS:
+        raise ValueError(f"mount 는 {'|'.join(MOUNTS)} 중 하나 (지금 {fields['mount']!r})")
+    if fields["split"] is not None and fields["split"] not in SPLITS:
+        raise ValueError(f"split 은 비우거나 {'|'.join(SPLITS)} (지금 {fields['split']!r})")
+    if not fields["place"]:
+        raise ValueError("place(장소 이름)를 적을 것")
+    parse_tz(fields["tz"] or DEFAULT_TZ)               # 못 풀면 ValueError
+    if fields["tz"] == DEFAULT_TZ:
+        fields["tz"] = None                            # 기본값은 적지 않는다(지금 파일의 카메라들처럼)
+    written = {k: v for k, v in fields.items() if v is not None or k == "split"}
+
+    with _ADD_LOCK:
+        # read_text 는 CRLF 를 LF 로 바꿔 읽는다 — 바이트로 읽어야 다시 쓸 때 기존 줄끝이 그대로 남는다
+        old = path.read_bytes().decode("utf-8") if path.exists() else ""
+        before = load_cameras(path)                    # 깨진 파일이면 ValueError — 손대지 않는다
+        if key in before:
+            raise CameraExists(f"카메라 '{key}' 는 이미 등록돼 있습니다")
+        raw_before = (yaml.safe_load(old) or {}).get("cameras") or {}
+        new = _append_camera_text(old, key, written, comment)
+        tmp = path.with_name(f"{path.name}.{secrets.token_hex(3)}.tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(new, encoding="utf-8", newline="")
+            try:
+                after = load_cameras(tmp)
+                raw_after = (yaml.safe_load(new) or {}).get("cameras") or {}
+            except (ValueError, yaml.YAMLError) as exc:
+                raise ValueError(f"덧붙인 결과를 읽지 못해 아무것도 쓰지 않았습니다 — {exc}") from exc
+            same_old = (set(after) == set(before) | {key}
+                        and all(after[k] == before[k] for k in before)
+                        and all(raw_after.get(k) == v for k, v in raw_before.items()))
+            if not same_old or raw_after.get(key) != written:
+                raise ValueError("덧붙인 결과를 다시 읽으니 기존 카메라나 새 카메라가 기대와 달라 아무것도 쓰지 않았습니다 — "
+                                 f"{path.name} 의 모양(들여쓰기·'cameras:' 줄)을 손으로 확인할 것")
+            if backup_dir is not None and path.exists():
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                dst = backup_dir / f"cameras_{datetime.now():%Y%m%d_%H%M%S}.yaml"
+                while dst.exists():
+                    dst = dst.with_name(f"{dst.stem}_{secrets.token_hex(2)}.yaml")
+                shutil.copy2(path, dst)
+            for attempt in range(10):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError:                # Windows: 다른 쪽이 잠깐 열어 둔 때
+                    if attempt == 9:
+                        raise
+                    time.sleep(0.05)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return after[key]
+
+
+def _append_camera_text(old: str, key: str, fields: dict, comment: str | None) -> str:
+    """`cameras:` 묶음의 끝(다음 맨 위 키가 있으면 그 앞, 그 키에 붙은 주석·빈 줄보다 앞)에 항목 글자를 넣는다.
+    들여쓰기는 첫 카메라의 것을 따른다(없으면 2·4칸). 줄끝(CRLF·LF)도 파일을 따른다."""
+    nl = "\r\n" if "\r\n" in old else "\n"
+    lines = old.splitlines(keepends=True)
+    plain = [ln.rstrip("\r\n") for ln in lines]
+    if plain:
+        plain[0] = plain[0].lstrip("﻿")           # 메모장이 붙인 BOM — 글자는 그대로 두고 판별만 뺀다
+    is_note = [not s.strip() or s.lstrip().startswith("#") for s in plain]
+    head = next((i for i, s in enumerate(plain) if _TOP_CAMERAS.match(s)), None)
+    if head is None:
+        if not all(is_note):
+            raise ValueError("등록 파일에 'cameras:' 줄이 없거나 'cameras: {}' 처럼 한 줄로 적혀 있어 덧붙일 수 없습니다 — "
+                             "손으로 고칠 것")
+        lines.append(("" if not lines or lines[-1].endswith("\n") else nl) + "cameras:" + nl)
+        plain.append("cameras:")
+        is_note.append(False)
+        head = len(lines) - 1
+    child = attr = None
+    end = len(lines)
+    for j in range(head + 1, len(lines)):
+        if is_note[j]:
+            continue
+        ind = len(plain[j]) - len(plain[j].lstrip(" "))
+        if ind == 0:
+            end = j                                    # 다음 맨 위 키(또는 문서 끝 표시)
+            break
+        if child is None:
+            child = ind
+        elif attr is None and ind > child:
+            attr = ind
+    child = child or 2
+    attr = attr or child * 2
+    at = end
+    if end < len(lines):
+        while at > head + 1 and is_note[at - 1]:
+            at -= 1
+    elif lines and not lines[-1].endswith("\n"):
+        lines[-1] += nl
+    key_text = key if yaml.safe_load(key) == key else f"'{key}'"     # 'yes'·'123' 같은 키도 글자로 읽히게
+    block = []
+    if comment:
+        block.append(" " * child + "# " + " ".join(comment.split()))
+    block.append(" " * child + key_text + ":")
+    for name, v in fields.items():
+        text = f"{name}:" if v is None else yaml.safe_dump({name: v}, allow_unicode=True, width=10**9).rstrip("\n")
+        block.append(" " * attr + text)
+    lines[at:at] = [b + nl for b in block]
+    return "".join(lines)
 
 
 def is_camera_key(key: str | None) -> bool:

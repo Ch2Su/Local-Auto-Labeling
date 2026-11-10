@@ -607,7 +607,7 @@ function capRenderCommit() {
   // 시작 시각 안내
   let h = "";
   if (C.cameraError) h += `<span class="warn">카메라 등록 파일을 읽지 못했습니다: ${esc(C.cameraError)}</span><br>`;
-  else if (c && !C.cameras.length) h += '<span class="warn">등록된 카메라가 없습니다 — cameras.yaml 에 먼저 등록하세요(docs/provenance.md).</span><br>';
+  else if (c && !C.cameras.length) h += '<span class="warn">등록된 카메라가 없습니다 — 위의 \'＋ 새로\' 로 등록하세요.</span><br>';
   if (c) {
     const typed = startEl.value.trim();
     if (!typed) {
@@ -826,6 +826,112 @@ function capClosePreview() {
   $("#cap-preview").classList.add("hidden");
 }
 
+/* ───────────────────────── 새 카메라 등록 (provenance.add_camera) ───────────────────────── */
+
+/** 등록된 키를 '접두어 + 번호' 계열로 보고 계열마다 다음 번호(hw-01…hw-09 → hw-10). 공개 데이터셋(kind dataset)만 있는
+ *  계열(virat-…)은 새 수집과 상관없어 뺀다. 카메라가 많은 계열부터. */
+function capKeySeries() {
+  const by = new Map();
+  for (const c of C.cameras) {
+    const m = c.key.match(/^(.*?)(\d+)$/);
+    if (!m || !m[1]) continue;
+    const e = by.get(m[1]) || { prefix: m[1], max: -1, width: 0, n: 0, last: null, dataset: true };
+    const num = Number(m[2]);
+    if (num >= e.max) { e.max = num; e.last = c; }
+    e.width = Math.max(e.width, m[2].length);
+    e.n++;
+    if (c.kind !== "dataset") e.dataset = false;
+    by.set(m[1], e);
+  }
+  return [...by.values()].filter((e) => !e.dataset).sort((a, b) => b.n - a.n)
+    .map((e) => ({ ...e, next: e.prefix + String(e.max + 1).padStart(e.width, "0") }));
+}
+
+const CAP_KEY_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+function capCamFormOpen() {
+  $("#cap-cam-form").classList.remove("hidden");
+  const v = C.cur && C.cur.video;
+  if (!$("#cc-res").value && v && v.width && v.height) $("#cc-res").value = `${v.width}x${v.height}`;   // 지금 영상의 해상도
+  capCamHint();
+  $("#cc-key").focus();
+}
+
+function capCamFormClose() {
+  $("#cap-cam-form").classList.add("hidden");
+}
+
+/** 키 칸 아래 안내 — 잘못된 꼴·이미 있는 키, 계열마다 다음 번호(누르면 채운다). */
+function capCamHint() {
+  const key = $("#cc-key").value.trim();
+  let warn = "";
+  if (key && !CAP_KEY_RE.test(key)) warn = "영문 소문자·숫자·'-' 만, 첫 글자는 영문·숫자";
+  else if (key && C.cameras.some((c) => c.key === key)) warn = "이미 등록된 키입니다";
+  const chips = capKeySeries().slice(0, 4).map((e) => `<button class="btn btn-sm chip" data-key="${esc(e.next)}" `
+    + `title="${esc(e.prefix)}… 계열(${e.n}대)의 다음 번호 — 종류·설치도 ${esc(e.last.key)} 를 따라 채웁니다">${esc(e.next)}</button>`);
+  const el = $("#cc-key-hint");
+  el.innerHTML = (warn ? `<span class="warn">${esc(warn)}</span><br>` : "")
+    + (chips.length ? `다음 번호: ${chips.join("")}<br>` : "")
+    + "지명이 드러나지 않게 번호로 — 키는 폴더·파일 이름과 문서·커밋에 그대로 남습니다.";
+  el.querySelectorAll("[data-key]").forEach((b) => { b.onclick = () => capCamPick(b.dataset.key); });
+  $("#cc-key").classList.toggle("bad", !!warn);
+}
+
+function capCamPick(key) {
+  $("#cc-key").value = key;
+  const e = capKeySeries().find((x) => x.next === key);
+  if (e && e.last) {
+    $("#cc-kind").value = e.last.kind;
+    $("#cc-mount").value = e.last.mount || "unknown";
+  }
+  capCamHint();
+  $("#cc-place").focus();
+}
+
+async function capCamSave() {
+  const val = (id) => $(id).value.trim();
+  const key = val("#cc-key");
+  const body = {
+    key, place: val("#cc-place"), kind: $("#cc-kind").value, mount: $("#cc-mount").value,
+    split: $("#cc-split").value || null, view: val("#cc-view") || null, resolution: val("#cc-res") || null,
+    rights: val("#cc-rights") || null, tz: val("#cc-tz") || null,
+  };
+  if (!CAP_KEY_RE.test(key)) { toast("키는 영문 소문자·숫자·'-' 만 — 예: hw-10", true); $("#cc-key").focus(); return; }
+  if (C.cameras.some((c) => c.key === key)) { toast(`카메라 '${key}' 는 이미 등록돼 있습니다`, true); return; }
+  if (!body.place) { toast("장소를 적으세요 — 이 PC 의 cameras.yaml 에만 남습니다", true); $("#cc-place").focus(); return; }
+  const prefix = key.replace(/\d+$/, "");
+  const known = new Set(C.cameras.map((c) => c.key.replace(/\d+$/, "")));
+  if (!known.has(prefix) && !confirm(`새 계열 '${prefix || key}' 입니다.\n키는 폴더·파일 이름과 문서·커밋 메시지에 그대로 `
+    + "남습니다 — 지명이 드러나지 않나요? (예: hw-10 처럼 번호로)")) return;
+  if (body.split === "test" && !confirm(`'${key}' 를 test 로 고정할까요?\n이 카메라의 이미지는 평가에만 쓰이고(학습에 안 들어감) `
+    + "가릴 영역을 둘 수 없습니다. 나중에 train 으로 옮기면 그때까지 잰 test 점수와 견줄 수 없게 됩니다.")) return;
+  const btn = $("#cc-save");
+  btn.disabled = true;
+  try {
+    const r = await api("/api/cameras", { method: "POST", body });
+    C.cameras = r.cameras || C.cameras;
+    C.cameraError = r.camera_error || null;
+    if (C.cur) {
+      C.cur.camera = r.key;
+      api(`/api/capture/${C.cur.sid}/state`, { method: "PUT", body: { camera: r.key } }).catch(() => {});
+    }
+    capRenderCameras();
+    capRenderCommit();
+    capCamFormClose();
+    // 다음 등록에 앞 카메라의 값이 모르는 새 남지 않게 처음 값으로 (계열 번호를 누르면 그 계열 것을 다시 채운다)
+    for (const id of ["#cc-key", "#cc-place", "#cc-view", "#cc-rights", "#cc-res"]) $(id).value = "";
+    $("#cc-split").value = "";
+    $("#cc-kind").value = "cctv";
+    $("#cc-mount").value = "unknown";
+    $("#cc-tz").value = "+09:00";
+    toast(`카메라 ${r.key} 를 등록했습니다 (cameras.yaml)`);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* ───────────────────────── 키 ───────────────────────── */
 
 /** 영상 캡처의 단축키 (app.js keydown 이 넘긴다 — 입력 칸·대화상자는 거기서 먼저 걸렀다). */
@@ -905,6 +1011,21 @@ $("#cap-camera").addEventListener("change", (e) => {
   capRenderCommit();
   api(`/api/capture/${C.cur.sid}/state`, { method: "PUT", body: { camera: e.target.value } }).catch(() => {});
 });
+$("#cap-cam-new").onclick = (e) => {
+  e.currentTarget.blur();
+  if ($("#cap-cam-form").classList.contains("hidden")) capCamFormOpen();
+  else capCamFormClose();
+};
+$("#cc-cancel").onclick = () => capCamFormClose();
+$("#cc-save").onclick = (e) => { e.currentTarget.blur(); capCamSave(); };
+$("#cc-key").addEventListener("input", capCamHint);
+for (const id of ["#cc-key", "#cc-place", "#cc-view", "#cc-res", "#cc-rights", "#cc-tz"]) {
+  $(id).addEventListener("keydown", (e) => {
+    if (e.isComposing || e.keyCode === 229) return;          // 한글 조합 중의 Enter
+    if (e.key === "Enter") { e.preventDefault(); capCamSave(); }
+    else if (e.key === "Escape") capCamFormClose();
+  });
+}
 $("#cap-start").addEventListener("input", capStartChanged);
 $("#cap-start").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) e.target.blur(); });
 $("#cap-commit").onclick = (e) => { e.currentTarget.blur(); capCommit(); };

@@ -346,7 +346,48 @@
 
       <div class="panel-head cap-head-row"><span>넣기</span></div>
       <div class="cap-box">
-        <label class="cap-field"><span>카메라</span><select id="cap-camera"></select></label>
+        <div class="cap-field"><span>카메라</span>
+          <span class="cap-cam-row"><select id="cap-camera"></select>
+            <button id="cap-cam-new" class="btn btn-sm" title="새 카메라를 data/visible/cameras.yaml 에 등록합니다(이 PC 에만 있는 파일 — git 에 넣지 않습니다)">＋ 새로</button></span></div>
+        <!-- 새 카메라 등록 (2026-11-10, provenance.add_camera): cameras.yaml 끝에 글자로 덧붙인다(주석·다른 카메라 그대로).
+             수정·삭제는 파일을 손으로 고친다 -->
+        <div id="cap-cam-form" class="cap-cam-form hidden">
+          <div class="cap-note">새 카메라 — <b>cameras.yaml</b> 에 더합니다(이 PC 에만 있는 파일, git 에 넣지 않음).
+            고치거나 지우려면 그 파일을 손으로 고칩니다.</div>
+          <label class="cap-field"><span>키</span><input id="cc-key" placeholder="예: hw-10" maxlength="40" autocomplete="off"
+                 title="폴더·파일 이름이 되고 문서·커밋에도 그대로 남습니다 — 영문 소문자·숫자·'-' 만, 지명이 드러나지 않게 번호로"></label>
+          <div id="cc-key-hint" class="dim cap-note"></div>
+          <label class="cap-field"><span>장소</span><input id="cc-place" placeholder="실제 장소 이름 (좌표 말고)" maxlength="120" autocomplete="off"></label>
+          <label class="cap-field"><span>종류</span><select id="cc-kind">
+            <option value="cctv">cctv — 고정 카메라</option>
+            <option value="screen">screen — 웹 뷰어 등 화면 캡처</option>
+            <option value="phone">phone — 폰·손으로 찍음</option>
+            <option value="dataset">dataset — 공개 데이터셋 장면</option>
+          </select></label>
+          <label class="cap-field"><span>설치</span><select id="cc-mount">
+            <option value="unknown">unknown — 모름</option>
+            <option value="pole">pole — 기둥</option>
+            <option value="rooftop">rooftop — 옥상</option>
+            <option value="wall">wall — 벽</option>
+            <option value="indoor">indoor — 실내</option>
+            <option value="drone">drone — 드론</option>
+            <option value="handheld">handheld — 손에 듦</option>
+          </select></label>
+          <label class="cap-field" title="같은 카메라는 train·val·test 중 한쪽에만 들어갑니다. 비우면 자동(카메라째 계층화). test 로 고정하면 평가 전용이 되고 가릴 영역을 둘 수 없습니다"><span>분할</span><select id="cc-split">
+            <option value="">자동</option>
+            <option value="train">train 고정</option>
+            <option value="val">val 고정</option>
+            <option value="test">test 고정 (평가 전용)</option>
+          </select></label>
+          <label class="cap-field"><span>화면</span><input id="cc-view" placeholder="예: 교차로 북쪽, 부감 약 30도" maxlength="200" autocomplete="off"></label>
+          <label class="cap-field"><span>해상도</span><input id="cc-res" placeholder="예: 1920x1080" maxlength="40" autocomplete="off"></label>
+          <label class="cap-field"><span>권리</span><input id="cc-rights" placeholder="권리자·라이선스·사용 조건" maxlength="200" autocomplete="off"></label>
+          <label class="cap-field" title="촬영 시각을 해석할 시간대 — '+09:00' 꼴"><span>시간대</span><input id="cc-tz" value="+09:00" maxlength="20" autocomplete="off"></label>
+          <div class="cap-line">
+            <button id="cc-save" class="btn btn-primary btn-sm">등록</button>
+            <button id="cc-cancel" class="linkbtn">취소</button>
+          </div>
+        </div>
         <label class="cap-field"><span>촬영 시작</span>
           <input id="cap-start" placeholder="2026-11-10 14:30:00" autocomplete="off"
                  title="영상 첫 프레임의 현지 시각. 프레임 이름(= DB 촬영 시각)이 이 시각 + 영상 안 시각이 됩니다"></label>

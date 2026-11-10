@@ -762,10 +762,20 @@ body.view-capture #panel-label { display: none; }
   border: 1px solid var(--line); border-radius: 4px; padding: 3px 5px; font: inherit; min-width: 0;
 }
 .cap-side input.bad { border-color: var(--err); }
+/* 새 카메라 등록 (2026-11-10) — 카메라 고르기 옆 '＋ 새로' 로 펼친다 */
+.cap-cam-row { display: flex; gap: 4px; min-width: 0; }
+.cap-cam-row select { flex: 1; min-width: 0; }
+.cap-cam-row .btn { flex: none; padding: 3px 7px; }
+.cap-cam-form {
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg);
+}
+.cap-cam-form .cap-field { grid-template-columns: 50px minmax(0, 1fr); }
+.cap-cam-form .chip { padding: 0 6px; margin: 0 2px; font-size: 11px; }
 .cap-num { width: 64px; }
 .cap-time { width: 78px; }
 .cap-note { font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
-.cap-note.warn { color: var(--warn); }
+.cap-note.warn, .cap-note .warn { color: var(--warn); }
 .cap-note .linkbtn { font-size: 11px; padding: 0; }
 .cap-dest { font-family: ui-monospace, Consolas, monospace; color: var(--fg-dim); white-space: pre-wrap; }
 .cap-bar { height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }

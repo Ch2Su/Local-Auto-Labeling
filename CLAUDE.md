@@ -429,7 +429,9 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   `app.js` 의 `maskCover` 가 같은 식이다 — 고치면 둘 다.
 - **영상 캡처 탭(11-10 사용자 요청, `capture.py`·`web/capture.js`)** — 영상을 서버에 사본으로 올려 몇 초마다 한 장 뽑고, 화면에서
   고른 것만 `unlabeled/<카메라>/` 로 **옮겨** 스캔한다(원본 영상은 읽지도 않는다 — 사본만). **작업 큐 밖**이라 학습 중에도 돌고,
-  넣기의 스캔은 '폴더 스캔' 과 같은 잠금(`server.ingest_lock`)을 쥔다. 규칙은 src/autolabel/CLAUDE.md.
+  넣기의 스캔은 '폴더 스캔' 과 같은 잠금(`server.ingest_lock`)을 쥔다. 같은 탭의 `＋ 새로` 가 **`cameras.yaml` 에 카메라를
+  더한다**(`provenance.add_camera` — 끝에 글자로 덧붙이고 쓰기 전 파일은 `backups/cameras_<시각>.yaml`, 수정·삭제는 손으로).
+  규칙은 src/autolabel/CLAUDE.md.
 - 코드를 고친 뒤에는 검수 서버를 다시 켜야 반영된다. TestClient 는 `base_url="http://127.0.0.1:7860"`.
 
 ---
@@ -449,7 +451,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    11-10 에 비웠다 — 남아 있던 일(label_qa 로 작은 차 판정 거르기·VIRAT 검수·분할 재배정)은 옛 데이터와 함께 끝났다
    (`git show 25a3de6:CLAUDE.md`).
 5. **새 데이터 모으기 (11-10 사용자 결정 — 위 '현재 데이터 상태').** 풀 해상도 CCTV 캡처를 자르지 않고 넣고, 화면 글자·로고·
-   라벨하기 애매한 곳은 가릴 영역으로 덮는다. 순서: 카메라를 `cameras.yaml` 에 등록(kind cctv) → `unlabeled/<카메라>/` 에 넣기
+   라벨하기 애매한 곳은 가릴 영역으로 덮는다. 순서: 카메라를 `cameras.yaml` 에 등록(kind cctv — 영상 캡처 탭의 `＋ 새로` 나
+   손으로) → `unlabeled/<카메라>/` 에 넣기
    (영상은 검수 UI **'영상 캡처' 탭**(11-10 — 뽑아서 눈으로 골라 넣고 스캔까지 한다) 또는 `tools/extract_frames.py`, ROAD PLUS
    녹화는 `tools/import_roadplus.py` — SD 원본이라 높이 720 으로 줄여도 잃는 것이 없다) → `labeler.py scan` → `label`(운영 m) → responder·cone 후보(`tools/ovd_propose.py` → `tools/import_proposals.py`) →
    검수 → 분할(카메라째 — 평가에 쓸 카메라는 `cameras.yaml` 의 `split:` 으로 먼저 정할 것) → 학습 → 새 test 로 기준선.

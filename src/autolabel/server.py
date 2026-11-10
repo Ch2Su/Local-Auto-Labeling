@@ -38,7 +38,7 @@ from .jobs import JobManager
 from .predictor import AutoLabeler, LiveDetector
 from .masks import MAX_MASKS
 from .masks import clean as clean_masks
-from .provenance import SPLITS, load_cameras
+from .provenance import SPLITS, CameraExists, add_camera, load_cameras
 from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
@@ -219,6 +219,20 @@ class CaptureCommitIn(BaseModel):
     camera: str = Field(min_length=1, max_length=64)
     start: str = Field(min_length=1, max_length=40)
     keep: list[int]
+
+
+class CameraIn(BaseModel):
+    # 새 카메라 (2026-11-10, provenance.add_camera — 영상 캡처 탭의 '＋ 새로'). 값 규칙은 add_camera 가 본다(load_cameras 와 같다)
+    key: str = Field(min_length=1, max_length=40)
+    kind: str = "cctv"
+    place: str = Field(min_length=1, max_length=120)
+    mount: str | None = None
+    split: str | None = None
+    tz: str | None = Field(None, max_length=20)
+    view: str | None = Field(None, max_length=200)
+    resolution: str | None = Field(None, max_length=40)
+    rights: str | None = Field(None, max_length=200)
+    note: str | None = Field(None, max_length=300)
 
 
 _ID_MAX = 2**63 - 1      # SQLite INTEGER 의 상한
@@ -1296,6 +1310,22 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             return fn(*args, **kwargs)
         except CaptureError as exc:
             raise HTTPException(exc.status, str(exc)) from None
+
+    @app.post("/api/cameras")
+    def register_camera(payload: CameraIn) -> dict:
+        """새 카메라를 cameras.yaml 끝에 더한다 (영상 캡처 탭의 '＋ 새로', 2026-11-10). 주석·다른 카메라는 그대로 두고,
+        쓰기 전 파일은 `<DB 폴더>/backups/cameras_<시각>.yaml`. 수정·삭제는 하지 않는다(파일을 손으로)."""
+        try:
+            cam = add_camera(cfg.cameras, payload.key, payload.model_dump(exclude={"key"}),
+                             backup_dir=cfg.db.parent / "backups",
+                             comment=f"{datetime.now():%Y-%m-%d %H:%M} 검수 UI '영상 캡처' 에서 등록")
+        except CameraExists as exc:
+            raise HTTPException(409, str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        print(f"[{label}] 카메라 등록: {cam.key} ({cam.kind}) -> {cfg.cameras}")   # 장소는 찍지 않는다
+        cams, error = capman.cameras()
+        return {"key": cam.key, "cameras": cams, "camera_error": error}
 
     @app.get("/api/capture")
     def capture_list() -> dict:
