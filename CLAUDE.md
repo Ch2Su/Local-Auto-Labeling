@@ -529,7 +529,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   - 파일을 바꾼 이미지(`store.replace_file` — VIRAT `--recrop` 은 source predict, `tools/crop_images.py` 는 crop)는 그 전 이력의
     박스가 옛 화면 좌표다. crop 은 서버가 그 전 이력으로 되돌리기를 막지만(`store.crop_entries`), VIRAT 자르기 이력은 가려내지 못한다.
     가릴 영역이 있는 이미지에 `masks=`(새 그림 기준으로 옮긴 영역)를 안 주면 `replace_file` 이 ValueError 를 낸다(아무것도 안 쓴다).
-- **가릴 영역 (2026-11-09, `src/autolabel/masks.py`)** — 사람을 포함해 라벨하기 애매한 물체(가를 수 없는 무리·조각만 보이는 사람 등 — 위 '라벨 기준')를 검수 화면 `M` 모드로 덮는 사각형.
+- **가릴 영역 (2026-11-09, `src/autolabel/masks.py`)** — 라벨하기 애매한 물체를 검수 화면 `M` 모드로 덮는 사각형
+  (무엇을 덮는지는 docs/label-rules.md 한 곳에 적는다 — 기준을 바꾸면 거기와 화면 문구 `index.html`·`app.js` 를 볼 것).
   DB `masks` 표(정규화 xyxy, EXIF 회전을 적용한 화면 기준)에만 있고 **원본 그림은 그대로**다. 학습 세트(`trainer.build_dataset`)와
   이미지를 함께 내보내기(`export_yolo`)만 그 자리를 회색 114 로 칠한 JPEG 을 쓰고, 영역들의 합집합이 박스 넓이의 반 이상을 덮는
   박스는 그 라벨 파일에서만 뺀다(DB 박스는 그대로). **test 는 칠하지 않는다** — 서버가 test 이미지(분할 test·test 고정 카메라)에
@@ -654,7 +655,10 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    09-18 A40 비교(docs/experiments.md — s640 대조 0.6515 → l960 0.7264·x960 0.7243, 크기와 해상도를 함께 바꿔 어느 쪽 덕인지는 모름).
    - 시점: 옛 승인 605장·hw train 검수(responder·cone)가 끝난 뒤 10클래스로 한 번에 — 그 전에 돌리면 8클래스 모델이 나온다.
    - 같은 데이터로 m640(로컬, 약 2.7시간)·l960·x960(Runpod RTX 6000 Ada — 09-20 가격으로 약 2시간·2달러, 약 4시간·3–4달러, 추정)을
-     끝까지 학습해, test 클래스별 점수와 conf 0.25 에서의 놓친 박스·헛 박스 수로 고른다. 로컬 8GB 는 l 640 b8·x 640 b5 까지라 960 은 못 돈다.
+     끝까지 학습해, test 클래스별 점수와 conf 0.25 에서의 놓친 박스·헛 박스 수로 고른다. 로컬 8GB 에서 l·x 는 640 까지라(l b8·x b5)
+     l960·x960 은 못 돈다 — m960 b4 는 들어가니, 해상도 효과와 모델 크기 효과를 가르려면 로컬 m960 을 대조로 더할 수 있다.
+   - `weights/` 에 `yolo26x.pt` 가 없다 — 먼저 받아 `weights/` 에 두고 pod 에도 같이 올린다. 960 모델을 `tools/test_baseline.py` 로
+     잴 때는 `--imgsz 960` 을 준다(기본은 `predict.imgsz` 가 아니라 `model.imgsz` 640 이다).
    - pod 를 띄우기 전에 그때 가격·시간을 말하고 허락받는다(Runpod MCP 는 다시 붙여야 한다). 데이터셋 tar 스크립트는 새로 짠다(위 'Runpod').
    - 고른 모델은 `models/best_<이름>.pt` 로 두고 `best.pt` 로 올린다. 960 이면 `predict.imgsz` 도 960 으로 바꾸고, 학습 중 P(CPU)는
      m 보다 몇 배 느려진다. 웹 UI 학습 버튼(config `model.base`)은 m640 그대로 둬 로컬 반복용으로 쓴다. 그 뒤로 `best.pt` 는

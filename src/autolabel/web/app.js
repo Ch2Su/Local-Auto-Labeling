@@ -1067,7 +1067,7 @@ function renderBoxList() {
       } else {
         el.textContent = `⚠ ${Math.round(cv * 100)}% 가림`;
         el.title = "가릴 영역이 이 박스의 일부를 덮습니다 — 학습 때 이 물체에 회색 조각이 붙은 채로 배웁니다."
-          + " 영역을 박스 밖으로 좁히거나, 그 자리는 칠하지 말고 잘라 내세요 (tools/crop_images.py).";
+          + " 조금 겹치는 것은 괜찮습니다. 크게 덮인다면 영역을 좁히거나, 그림 가장자리면 잘라 내세요 (tools/crop_images.py).";
       }
     }
     li.onclick = (e) => {
