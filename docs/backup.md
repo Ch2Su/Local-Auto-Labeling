@@ -12,12 +12,18 @@
 뜨지 않았다. 되살릴 때는 10-31 의 옛 폴더 구조(`seed/`·`labeled/`)를 `legacy/` 아래로 옮긴 뒤 이것을 덮는다(그 폴더의
 `BACKUP_INFO.txt`). 하루 사본·`labeling.db.bak_*`(11-02·03, 약 210MB)는 넣지 않았다. **다시 그 위에 더하는
 `C:\local_auto_labeling_backup\20261110\`**(11-10, 파일 812개 299MB + DB 57MB — 사용자가 이미지를 크게 지우기 전, 사용자 확인):
-그때 DB 이미지 5,931장 중 10-31·11-05 백업에 없던 768장(VIRAT 515·ROAD PLUS hw-01–09 253 — legacy 5,163장은 크기까지 같게
-있었다), 자르기 전 hw-04 원본 36장(`backups/crop_20261109_154300`), 지우기 전 DB 스냅숏(`labeling.db.bak_predelete_20261110_160048`
-을 다시 `backup()`, journal_mode=delete)과 같은 시점 라벨의 텍스트 사본(`backups/labels_predelete_20261110_160048/` —
-`images.jsonl.gz` 한 줄에 이미지 하나·박스·태그·가릴 영역), `cameras.yaml`·`classes.txt`·`docs/collab.md`·`repo_main.bundle`.
-md5 는 `md5.tsv` 로 전부 원본과 같다. 원본 영상(VIRAT `E:\datasets`, hw-01–05 클립 `data/visible/videos/`)은 넣지 않았다. 되살릴
-때는 20261031 → 20261105 → 20261110 순서로 덮는다(그 폴더의 `BACKUP_INFO.txt`). 다시 뜰 때는(PowerShell, `$src`=저장소
+그때 DB 이미지 5,931장 중 10-31·11-05 백업에 없던 768장(VIRAT 515·ROAD PLUS hw-01–09 253 — legacy 5,160장·스크린샷 3장은
+크기까지 같게 있었다), 자르기 전 hw-04 원본 36장(`backups/crop_20261109_154300`), 비우기 직전 DB(`labeling.db` — 16:26 마지막
+저장을 `backup()`, journal_mode=delete. 처음 뜬 16:00 판은 `labeling.db.bak_predelete_20261110_160048`)와 16:00 시점 라벨의
+텍스트 사본(`backups/labels_predelete_20261110_160048/` — `images.jsonl.gz` 한 줄에 이미지 하나·박스·태그·가릴 영역),
+`cameras.yaml`·`classes.txt`·`docs/collab.md`·`repo_main.bundle`. md5 는 `md5.tsv` 로 전부 원본과 같다. 원본 영상(VIRAT
+`E:\datasets`, ROAD PLUS hw-01–05 구간 영상)은 넣지 않았다. 되살릴 때는 20261031 → 20261105 → 20261110 순서로 덮는다(그
+폴더의 `BACKUP_INFO.txt`).
+
+**같은 날 E: 의 옛 데이터를 비웠다**(사용자 결정 — 풀 해상도 CCTV 캡처로 처음부터 다시 모은다). 옛 `data/visible/` 는 프로젝트
+밖 **`E:\local_auto_labeling_archive\20261110\`** 로 옮겼다(같은 디스크, 5.4GB — 그 폴더의 `ARCHIVE_INFO.txt`). 거기에는 C: 에
+없는 ROAD PLUS 구간 영상(`data/visible/videos/`)과 작업별 DB 사본·하루 사본·분석 결과까지 있다. 보관 폴더가 남아 있으면 그쪽을
+옮겨 오는 것이 더 쉽다. **11-10 뒤에 새로 모은 데이터는 아직 C: 에 없다.** 다시 뜰 때는(PowerShell, `$src`=저장소
 `$dst`=새 날짜 폴더 — **이전 것을 지울지 먼저 물을 것**):
 
 ```powershell

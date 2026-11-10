@@ -740,7 +740,9 @@ CCTV = 그 밖의 seed). 뜻이 바뀌었으므로 `cctv`·`drone`·`noncctv`·`
 규칙으로 잰 기록과 섞이지 않습니다.
 
 `all`·`nodrone` 이 Objects365 를 빼는 것은 2026-10-03 부터입니다. `all` 은 이름표가 그대로라 `--history` 에서 옛
-기록과 이어지지만 새 수집분도 담으므로, 09-27 기준선과 같은 범위로 견주려면 `legacy` 를 봅니다.
+기록과 이어지지만 새 수집분도 담으므로, 09-27 기준선과 같은 범위로 견주려면 `legacy` 를 봅니다. **2026-11-10 에 이미지를
+전부 비우고 새로 모으기 시작했으므로**(옛 데이터는 `E:\local_auto_labeling_archive\20261110\`), 그 뒤의 기록은 test 가 다른
+이미지라 그 전 기록과 견주지 않습니다 — `--history` 에서는 시각으로 가릅니다.
 
 ```bash
 .venv\Scripts\python.exe tools/test_baseline.py --domains --note "메모"
