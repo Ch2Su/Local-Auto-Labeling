@@ -437,7 +437,7 @@ async function bulkMaskTemplate(mode) {
       r.unchanged && `이미 ${mode === "add" ? "있음" : "없음"} ${r.unchanged.toLocaleString()}`,
       r.blocked && `test ${r.blocked.toLocaleString()}`,
       r.aspect && `비율 다름 ${r.aspect.toLocaleString()}`,
-      r.full && `영역 50개 넘음 ${r.full.toLocaleString()}`,
+      r.full && `영역 ${MASK_MAX}개 넘음 ${r.full.toLocaleString()}`,
       r.unreadable && `파일 못 엶 ${r.unreadable.toLocaleString()}`,
       r.missing && `없는 이미지 ${r.missing.toLocaleString()}`,
     ].filter(Boolean);

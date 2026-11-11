@@ -206,9 +206,11 @@ function tooSmall(b) {
 const maskFromXyxy = ([x1, y1, x2, y2]) => ({ cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: x2 - x1, h: y2 - y1 });
 const maskToXyxy = (m) => [m.cx - m.w / 2, m.cy - m.h / 2, m.cx + m.w / 2, m.cy + m.h / 2];
 const MASK_DROP = 0.5;      // masks.DROP — 이만큼 넘게 가려진 박스는 학습 라벨에서 빠진다
-const MASK_MAX = 50;        // masks.MAX_MASKS
+const MASK_MAX = 500;       // masks.MAX_MASKS (11-11 에 50 → 500)
 
-/** 박스 넓이 가운데 가릴 영역들의 **합집합**이 덮는 몫(0~1). 서버 masks.covered 와 같은 식이다(좌표 압축) — 고치면 둘 다. */
+/** 박스 넓이 가운데 가릴 영역들의 **합집합**이 덮는 몫(0~1). 서버 masks.covered 와 같은 식이다(좌표 압축 — 영역마다 제 칸에
+ *  표시하고 표시된 칸의 넓이를 줄·칸 순서로 더한다. 11-11 전에는 칸마다 모든 영역을 견줘 영역 수의 세제곱이었다) — 고치면 둘 다.
+ *  그릴 때마다(끄는 동안 매 프레임) 박스마다 부른다. */
 function maskCover(b, masks = S.masks) {
   const bx1 = b.cx - b.w / 2, by1 = b.cy - b.h / 2, bx2 = b.cx + b.w / 2, by2 = b.cy + b.h / 2;
   const area = (bx2 - bx1) * (by2 - by1);
@@ -222,14 +224,18 @@ function maskCover(b, masks = S.masks) {
   if (!parts.length) return 0;
   const xs = [...new Set(parts.flatMap((p) => [p[0], p[2]]))].sort((u, v) => u - v);
   const ys = [...new Set(parts.flatMap((p) => [p[1], p[3]]))].sort((u, v) => u - v);
+  const xi = new Map(xs.map((v, i) => [v, i])), yi = new Map(ys.map((v, j) => [v, j]));
+  const ny = ys.length - 1;
+  const cell = new Uint8Array((xs.length - 1) * ny);     // 칸 (i, j) 가 덮였나 — 줄 i 마다 ny 칸
+  for (const [a, t, c, d] of parts) {
+    const j1 = yi.get(t), j2 = yi.get(d);
+    for (let i = xi.get(a), i2 = xi.get(c); i < i2; i++) cell.fill(1, i * ny + j1, i * ny + j2);
+  }
   let inside = 0;
   for (let i = 0; i < xs.length - 1; i++) {
-    const mx = (xs[i] + xs[i + 1]) / 2;
-    for (let j = 0; j < ys.length - 1; j++) {
-      const my = (ys[j] + ys[j + 1]) / 2;
-      if (parts.some((p) => p[0] <= mx && mx < p[2] && p[1] <= my && my < p[3])) {
-        inside += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]);
-      }
+    const dx = xs[i + 1] - xs[i], row = i * ny;
+    for (let j = 0; j < ny; j++) {
+      if (cell[row + j]) inside += dx * (ys[j + 1] - ys[j]);
     }
   }
   return Math.min(1, inside / area);

@@ -31,7 +31,8 @@ from PIL import Image, ImageOps
 
 GRAY = 114                  # Ultralytics 레터박스·모자이크 바탕과 같은 회색
 DROP = 0.5                  # 박스 넓이의 이만큼 이상이 가려지면 학습 라벨에서 뺀다
-MAX_MASKS = 50              # 한 장에 둘 수 있는 영역 수 (실수로 수천 개가 들어오지 않게)
+MAX_MASKS = 500             # 한 장에 둘 수 있는 영역 수 — 실수로 수천 개가 들어오지 않게만 막는다(11-11 에 50 → 500,
+                            # 사용자 요청: 애매한 물체를 하나씩 촘촘히 덮으려고. app.js 의 MASK_MAX 도 같이)
 MIN_SIDE = 1e-4             # 이보다 좁은 영역은 버린다(박스의 yolo_io.Box.is_valid 와 같은 하한)
 
 Rect = tuple[float, float, float, float]
@@ -83,8 +84,12 @@ def subtract(cur: Sequence[Sequence[float]], rem: Sequence[Sequence[float]]) -> 
 def covered(box, rects: Sequence[Rect]) -> float:
     """박스 넓이 가운데 영역들의 **합집합**이 덮는 몫(0~1). 겹친 영역을 두 번 세지 않는다.
 
-    좌표 압축으로 정확히 잰다 — 영역이 많아야 몇 개라 칸 수가 작다. 정규화 좌표로 재도 비율은 같다(가로·세로를 각각
-    늘려도 넓이 비는 그대로다). 웹 화면(app.js 의 maskCover)도 같은 식이다 — 고치면 둘 다 고칠 것.
+    좌표 압축으로 정확히 잰다 — 박스에 걸친 영역들의 경계로 칸을 나눠, 영역마다 제 칸에 표시한 뒤 표시된 칸의 넓이를
+    줄(i)·칸(j) 순서로 더한다. 11-11 전에는 칸마다 모든 영역을 견줘 한 박스에 걸친 영역 p 개에 p³ 이었다(한도를 500 으로
+    올리며 바꿈 — 실측: 영역 200개가 걸친 박스 하나 0.95초 → 7ms, 500개 13초 → 57ms. 값은 옛 식과 같다 — 무작위 6천
+    건에서 차이 1e-15 이하). 합은 sum() 이 아니라 차례로 더한다 — 3.12+ 의 sum() 은 보정 합이라 화면(JS)과 끝자리가
+    달라진다. 정규화 좌표로 재도 비율은 같다(가로·세로를 각각 늘려도 넓이 비는 그대로다). 웹 화면(app.js 의 maskCover)도
+    같은 식이다 — 고치면 둘 다 고칠 것.
     """
     bx1, by1 = box.cx - box.w / 2, box.cy - box.h / 2
     bx2, by2 = box.cx + box.w / 2, box.cy + box.h / 2
@@ -100,13 +105,21 @@ def covered(box, rects: Sequence[Rect]) -> float:
         return 0.0
     xs = sorted({v for p in parts for v in (p[0], p[2])})
     ys = sorted({v for p in parts for v in (p[1], p[3])})
+    xi = {v: i for i, v in enumerate(xs)}
+    yi = {v: j for j, v in enumerate(ys)}
+    ny = len(ys) - 1
+    cell = bytearray((len(xs) - 1) * ny)        # 칸 (i, j) 가 덮였나 — 줄 i 마다 ny 칸
+    for a, t, c, d in parts:
+        j1, j2 = yi[t], yi[d]
+        for i in range(xi[a], xi[c]):
+            cell[i * ny + j1:i * ny + j2] = b"\x01" * (j2 - j1)
     inside = 0.0
     for i in range(len(xs) - 1):
-        mx = (xs[i] + xs[i + 1]) / 2
-        for j in range(len(ys) - 1):
-            my = (ys[j] + ys[j + 1]) / 2
-            if any(p[0] <= mx < p[2] and p[1] <= my < p[3] for p in parts):
-                inside += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j])
+        dx = xs[i + 1] - xs[i]
+        row = i * ny
+        for j in range(ny):
+            if cell[row + j]:
+                inside += dx * (ys[j + 1] - ys[j])
     return min(1.0, inside / area)
 
 
