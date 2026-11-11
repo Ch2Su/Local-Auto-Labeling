@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -87,6 +88,8 @@ CREATE TABLE IF NOT EXISTS classes (
 -- 09-21 에 박스 2개가 경고 없이 사라졌을 때 백업과 대조해서야 찾았다 — 그 대조를
 -- 이 표 하나로 대신한다. boxes 는 저장 때마다 지우고 다시 넣으므로(행 id 가 바뀐다)
 -- 박스 목록을 통째로 JSON 으로 둔다: [[cls, cx, cy, w, h, conf, origin], ...]
+-- 2026-11-11 부터 새 줄의 before·after·masks_before·masks_after 는 '#<hist_lists.id>' 다(아래 hist_lists). 그 전 줄은
+-- JSON 글자를 그대로 갖고 있고 둘 다 읽는다 — 읽을 때는 _hist_bodies·_hist_text 를 거칠 것.
 CREATE TABLE IF NOT EXISTS box_history (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
@@ -100,6 +103,18 @@ CREATE TABLE IF NOT EXISTS box_history (
 );
 CREATE INDEX IF NOT EXISTS idx_hist_image ON box_history(image_id, id);
 CREATE INDEX IF NOT EXISTS idx_hist_batch ON box_history(batch);
+
+-- 변경 이력의 박스·영역 목록 (2026-11-11, 사용자 요청 — 이력 줄이기). 같은 목록(같은 JSON 글자)은 한 번만 두고
+-- box_history 가 '#id' 로 가리킨다. 저장마다 박스 목록 전후를 통째로 남기던 때는 박스 95개 장 하나가 32분 작업(저장
+-- 338번)에 8.3MB 였다 — 한 줄의 '전' 은 앞 줄의 '후' 와 같고, 영역만 바꾼 저장은 박스 전후가 같아서다. 지울 때는
+-- delete_images 가 아무 줄도 가리키지 않는 목록을 함께 지운다. hash 는 body 의 sha1 앞 16자 — 찾는 데만 쓰고 같은지는
+-- body 로 본다. id 는 AUTOINCREMENT(지운 번호를 다시 쓰지 않게 — 함정 11 과 같은 이유).
+CREATE TABLE IF NOT EXISTS hist_lists (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT    NOT NULL,
+    body TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hist_lists_hash ON hist_lists(hash);
 
 -- 태그 (2026-11-03). 비슷한 이미지끼리 사람이 이름을 붙여 묶는다(같은 카메라·크롭 방식 등 — legacy 는
 -- 출처가 없어 grp 만으로는 못 가른다). 한 이미지에 여러 개 붙일 수 있다. 라벨이 아니라서 updated_at·
@@ -160,8 +175,16 @@ def _box_key(b) -> tuple:
 
 
 def _boxes_json(rows) -> str:
-    return json.dumps([[r[k] for k in _HIST_FIELDS] if not isinstance(r, Box)
-                       else [getattr(r, k) for k in _HIST_FIELDS] for r in rows])
+    """박스 목록의 이력 모양. 좌표는 7자리·conf 는 6자리로 반올림하고 빈칸 없이 쓴다(2026-11-11 — 글자가 반쯤으로
+    준다). _box_key 와 같은 자리라 이력에서 되돌린 박스도 '바뀌었나' 판정에서는 원래 박스와 같다(반올림을 두 번 해도
+    값이 그대로다). 차이는 정규화 5e-8 — 2560px 그림에서 0.0001px 이다."""
+    out = []
+    for r in rows:
+        cls, cx, cy, w, h, conf, origin = ([r[k] for k in _HIST_FIELDS] if not isinstance(r, Box)
+                                           else [getattr(r, k) for k in _HIST_FIELDS])
+        out.append([cls, *(round(float(v), 7) for v in (cx, cy, w, h)),
+                    None if conf is None else round(float(conf), 6), origin])
+    return json.dumps(out, separators=(",", ":"))
 
 
 def _boxes_from_json(text: str) -> list[Box]:
@@ -169,12 +192,60 @@ def _boxes_from_json(text: str) -> list[Box]:
 
 
 def _masks_json(rects) -> str:
-    """가릴 영역 목록의 이력 모양: [[x1, y1, x2, y2], ...]."""
-    return json.dumps([[float(v) for v in r] for r in rects])
+    """가릴 영역 목록의 이력 모양: [[x1, y1, x2, y2], ...] — mask_key 와 같은 7자리로 반올림, 빈칸 없이(2026-11-11)."""
+    return json.dumps([[round(float(v), 7) for v in r] for r in rects], separators=(",", ":"))
 
 
 def _masks_from_json(text: str | None) -> list[list[float]] | None:
     return None if text is None else [list(map(float, r)) for r in json.loads(text)]
+
+
+# 변경 이력의 목록 (2026-11-11 — 위 hist_lists). 새 줄은 '#id', 그 전 줄은 JSON 글자 그대로다.
+
+def _hist_put(con: sqlite3.Connection, body: str | None) -> str | None:
+    """목록 글자를 hist_lists 에 (같은 글자가 있으면 그것을) 두고 '#id' 를 돌려준다. None 은 None(영역이 그대로인 줄).
+
+    열린 트랜잭션 안에서 부른다 — 이력 줄과 함께 들어가고 함께 되돌아간다.
+    """
+    if body is None:
+        return None
+    h = hashlib.sha1(body.encode("utf-8")).hexdigest()[:16]
+    r = con.execute("SELECT id FROM hist_lists WHERE hash=? AND body=?", (h, body)).fetchone()
+    lid = r[0] if r is not None else con.execute(
+        "INSERT INTO hist_lists(hash, body) VALUES (?,?)", (h, body)).lastrowid
+    return f"#{lid}"
+
+
+_HIST_COLS = ("before", "after", "masks_before", "masks_after")
+
+
+def _hist_bodies(con: sqlite3.Connection, rows) -> dict[int, str]:
+    """이력 줄들이 가리키는 목록 글자 {id: body} — 한 번에(500개씩) 읽는다."""
+    ids = sorted({int(v[1:]) for r in rows for k in _HIST_COLS if k in r.keys()
+                  and isinstance(v := r[k], str) and v.startswith("#")})
+    out: dict[int, str] = {}
+    for k in range(0, len(ids), 500):
+        part = ids[k:k + 500]
+        out.update((int(i), b) for i, b in con.execute(
+            f"SELECT id, body FROM hist_lists WHERE id IN ({','.join('?' * len(part))})", part))
+    return out
+
+
+def _hist_text(bodies: dict[int, str], value: str | None) -> str | None:
+    """이력 칸의 값을 JSON 글자로 — '#id' 면 목록을 찾아 주고, 옛 줄의 JSON·None 은 그대로."""
+    if value is None or not value.startswith("#"):
+        return value
+    try:
+        return bodies[int(value[1:])]
+    except KeyError:
+        raise RuntimeError(f"변경 이력이 가리키는 목록 {value} 이 없습니다 (hist_lists).") from None
+
+
+def _hist_gc(con: sqlite3.Connection) -> int:
+    """아무 이력 줄도 가리키지 않는 목록을 지운다(이미지를 지운 뒤). 지운 수."""
+    refs = " UNION ".join(f"SELECT CAST(substr({c}, 2) AS INTEGER) FROM box_history WHERE {c} LIKE '#%'"
+                          for c in _HIST_COLS)
+    return con.execute(f"DELETE FROM hist_lists WHERE id NOT IN ({refs})").rowcount
 
 
 def _iou_xywh(a, b) -> float:
@@ -406,11 +477,16 @@ class Store:
         return out
 
     def delete_images(self, image_ids: list[int]) -> int:
-        """이미지와 그 박스를 DB에서 지운다. (boxes 는 ON DELETE CASCADE)"""
+        """이미지와 그 박스를 DB에서 지운다. (boxes·변경 이력은 ON DELETE CASCADE)
+
+        이력이 가리키던 목록(hist_lists, 2026-11-11)은 FOREIGN KEY 가 없어 따라 지워지지 않는다 — 같은 트랜잭션에서
+        아무 이력 줄도 가리키지 않게 된 목록을 지운다(다른 이미지와 같은 목록이면 남는다).
+        """
         if not image_ids:
             return 0
         with _write_lock, self.connect() as con:
             con.executemany("DELETE FROM images WHERE id=?", [(i,) for i in image_ids])
+            _hist_gc(con)
         return len(image_ids)
 
     def update_path(self, image_id: int, new_path: Path) -> None:
@@ -892,7 +968,8 @@ class Store:
             row = con.execute("SELECT id FROM mask_templates WHERE name=?", (name,)).fetchone()
             if row and not overwrite:
                 raise TemplateExists(f"같은 이름의 템플릿이 있습니다: {name}")
-            vals = (_masks_json(rects), width, height, image_id, camera)
+            # 템플릿은 반올림하지 않는다 — 이력(_masks_json, 11-11 부터 7자리)과 달리 이미지에 그대로 복사될 값이다
+            vals = (json.dumps([[float(v) for v in r] for r in rects]), width, height, image_id, camera)
             if row:
                 con.execute("UPDATE mask_templates SET rects=?, width=?, height=?, image_id=?, camera=?,"
                             " updated_at=? WHERE id=?", (*vals, now, row["id"]))
@@ -1086,13 +1163,14 @@ class Store:
             if mask_key(cur) != mask_key(masks):
                 old_m = cur
         if boxes_changed or old_m is not None:
+            # 목록은 hist_lists 에 한 번만 — 앞 줄의 '후' 와 같은 '전', 영역만 바꾼 저장의 박스 전후는 같은 #id 다 (2026-11-11)
             con.execute(
                 "INSERT INTO box_history(image_id, at, source, batch, before, after,"
                 " n_before, n_after, masks_before, masks_after) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (image_id, _now(), source, batch, _boxes_json(old), _boxes_json(new),
+                (image_id, _now(), source, batch, _hist_put(con, _boxes_json(old)), _hist_put(con, _boxes_json(new)),
                  len(old), len(new),
-                 None if old_m is None else _masks_json(old_m),
-                 None if old_m is None else _masks_json(masks)),
+                 None if old_m is None else _hist_put(con, _masks_json(old_m)),
+                 None if old_m is None else _hist_put(con, _masks_json(masks))),
             )
         if not same:                          # 박스가 그대로면(영역만 바꾸는 저장·템플릿 적용) 행을 다시 쓰지 않는다
             con.execute("DELETE FROM boxes WHERE image_id=?", (image_id,))
@@ -1173,7 +1251,7 @@ class Store:
                 con.execute(
                     "INSERT INTO box_history(image_id, at, source, batch, before, after,"
                     " n_before, n_after) VALUES (?,?,?,?,?,?,?,?)",
-                    (image_id, now, "bulk", batch, _boxes_json(old), _boxes_json(new),
+                    (image_id, now, "bulk", batch, _hist_put(con, _boxes_json(old)), _hist_put(con, _boxes_json(new)),
                      len(old), len(new)),
                 )
                 con.executemany("UPDATE boxes SET cls=?, conf=NULL, origin='human' WHERE id=? AND image_id=?",
@@ -1207,14 +1285,15 @@ class Store:
                 "SELECT image_id, before, after, masks_before, masks_after FROM box_history"
                 " WHERE batch=? AND source='bulk' ORDER BY id", (batch,),
             ).fetchall()
+            bodies = _hist_bodies(con, rows)
             todo = []
             for r in rows:
                 cur = con.execute(
                     "SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id",
                     (r["image_id"],),
                 ).fetchall()
-                after = _boxes_from_json(r["after"])
-                before = _boxes_from_json(r["before"])
+                after = _boxes_from_json(_hist_text(bodies, r["after"]))
+                before = _boxes_from_json(_hist_text(bodies, r["before"]))
                 if r["masks_after"] is not None and [_box_key(b) for b in before] == [_box_key(b) for b in after]:
                     before = [Box(**dict(b)) for b in cur]      # 영역만 바꾼 줄 — 박스는 지금 것을 그대로 둔다
                 elif [_box_key(b) for b in cur] != [_box_key(b) for b in after]:
@@ -1224,10 +1303,10 @@ class Store:
                 if r["masks_after"] is not None:
                     cur_m = [tuple(m) for m in con.execute(
                         "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (r["image_id"],))]
-                    if mask_key(cur_m) != mask_key(_masks_from_json(r["masks_after"])):
+                    if mask_key(cur_m) != mask_key(_masks_from_json(_hist_text(bodies, r["masks_after"]))):
                         skipped += 1
                         continue
-                    masks_before = _masks_from_json(r["masks_before"])
+                    masks_before = _masks_from_json(_hist_text(bodies, r["masks_before"]))
                     # 되돌리면 지금 없는 영역이 생기는데 영역을 둘 수 없는 이미지(test)면 건너뛴다 — 다른 저장 길과 같다
                     if mask_blocked is not None and set(mask_key(masks_before)) - set(mask_key(cur_m)):
                         img = con.execute("SELECT split, camera FROM images WHERE id=?",
@@ -1254,15 +1333,16 @@ class Store:
     # ---------------------------------------------------------------- 변경 이력
 
     @staticmethod
-    def _hist_row(r: sqlite3.Row, with_boxes: bool = True) -> dict:
+    def _hist_row(r: sqlite3.Row, bodies: dict[int, str], with_boxes: bool = True) -> dict:
+        """이력 한 줄 → 화면·되돌리기가 쓰는 모양. bodies 는 _hist_bodies(그 줄들이 가리키는 목록)."""
         out = {k: r[k] for k in ("id", "image_id", "at", "source", "batch", "n_before", "n_after")}
         keys = r.keys()
         # 가릴 영역의 전후 — 그 저장에서 영역이 바뀌었을 때만 목록, 아니면 None (2026-11-09)
-        out["masks_before"] = _masks_from_json(r["masks_before"]) if "masks_before" in keys else None
-        out["masks_after"] = _masks_from_json(r["masks_after"]) if "masks_after" in keys else None
+        for k in ("masks_before", "masks_after"):
+            out[k] = _masks_from_json(_hist_text(bodies, r[k])) if k in keys else None
         if with_boxes:
-            out["before"] = [b.to_dict() for b in _boxes_from_json(r["before"])]
-            out["after"] = [b.to_dict() for b in _boxes_from_json(r["after"])]
+            out["before"] = [b.to_dict() for b in _boxes_from_json(_hist_text(bodies, r["before"]))]
+            out["after"] = [b.to_dict() for b in _boxes_from_json(_hist_text(bodies, r["after"]))]
         return out
 
     def box_history(self, image_id: int, limit: int = 100) -> list[dict]:
@@ -1272,7 +1352,8 @@ class Store:
                 "SELECT * FROM box_history WHERE image_id=? ORDER BY id DESC LIMIT ?",
                 (image_id, limit),
             ).fetchall()
-        return [self._hist_row(r) for r in rows]
+            bodies = _hist_bodies(con, rows)
+        return [self._hist_row(r, bodies) for r in rows]
 
     def crop_entries(self, image_id: int) -> list[int]:
         """이 이미지를 잘라 바꾼 이력(source='crop')의 id. 그보다 앞선 이력의 박스는 자르기 전 화면 좌표라
@@ -1289,7 +1370,8 @@ class Store:
     def history_entry(self, entry_id: int) -> dict | None:
         with self.connect() as con:
             r = con.execute("SELECT * FROM box_history WHERE id=?", (entry_id,)).fetchone()
-        return self._hist_row(r) if r else None
+            bodies = _hist_bodies(con, [r]) if r else {}
+        return self._hist_row(r, bodies) if r else None
 
     def recent_history(
         self, *, limit: int = 200, shrunk: bool = False, source: str | None = None,

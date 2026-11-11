@@ -14,6 +14,15 @@
 - 여러 장을 연달아 고친 뒤에는 **박스가 줄어든 저장을 확인할 것**(상단 '변경 기록' 이나 `GET /api/history?shrunk=1`).
 - **박스를 바꾸는 길은 전부 `store._replace_boxes` 를 지난다**(변경 이력 `box_history` 에 그 이미지의 박스 목록 전후를 JSON 으로
   남긴다). 새 경로도 그걸 거치게 하고, `_write_lock` 은 **부르는 쪽이** 쥔다(안에서 다시 잡으면 멈춘다).
+  - **이력의 목록은 2026-11-11 부터 `hist_lists` 에 한 번만 둔다**(사용자 요청 — 이력 줄이기). `box_history` 의 before·after·
+    masks_before·masks_after 는 새 줄이면 `#<hist_lists.id>`, 그 전 줄이면 JSON 글자다 — 쓰는 길은 `_hist_put`, 읽는 길은
+    `_hist_bodies` → `_hist_text`(`box_history`·`history_entry`·`revert_batch`). 줄은 저장마다 그대로 남아(되돌릴 수 있는 시점·
+    `n_before`/`n_after`·'줄어든 저장' 은 전과 같다) 같은 목록만 함께 쓴다 — 한 줄의 '전' 은 앞 줄의 '후', 영역만 바꾼 저장의
+    박스 전후는 같은 목록이다. 이력 JSON 은 `_box_key`·`mask_key` 와 같은 자리(좌표 7·conf 6)로 반올림하고 빈칸 없이 쓴다(템플릿
+    `mask_templates.rects` 는 반올림하지 않는다). 목록에는 FOREIGN KEY 가 없어 `delete_images` 가 아무 줄도 안 가리키는 목록을
+    지운다(`_hist_gc`) — 이미지를 지우는 새 길을 만들면 그것을 거칠 것. **11-11 전 코드는 새 줄을 못 읽는다**(`json.loads('#12')`).
+    11-11 실측(DB 사본): 박스 100개 장에 영역을 하나씩 300개까지 더하는 저장 298번이 옛 모양 11.4MB → 1.9MB, 오늘 이력 636줄을
+    이 모양으로 바꿨다면 9.85MB → 약 1.85MB. 옛 줄은 바꾸지 않았다(읽기는 그대로 된다).
   - 파일을 바꾼 이미지(`store.replace_file` — VIRAT `--recrop` 은 source predict, `tools/crop_images.py` 는 crop)는 그 전 이력의
     박스가 옛 화면 좌표다. crop 은 서버가 그 전 이력으로 되돌리기를 막지만(`store.crop_entries`), VIRAT 자르기 이력은 가려내지 못한다.
     가릴 영역이 있는 이미지에 `masks=`(새 그림 기준으로 옮긴 영역)를 안 주면 `replace_file` 이 ValueError 를 낸다(아무것도 안 쓴다).

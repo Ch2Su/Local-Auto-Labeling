@@ -424,7 +424,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 박스 저장·가릴 영역·검수 서버를 건드리면 먼저 읽을 것). 늘 알아야 할 것만:
 - **편집은 0.6초 뒤 자동 저장된다** — UI 를 시험하면 실제 작업물이 바뀐다. 시험은 **DB 복사본** 서버에서, `backup.keep: 0` 으로.
 - **박스를 바꾸는 길은 전부 `store._replace_boxes` 를 지난다**(변경 이력). 그림 파일을 바꿀 때는 `store.replace_file` —
-  가릴 영역이 있는 이미지는 `masks=` 를 줘야 한다.
+  가릴 영역이 있는 이미지는 `masks=` 를 줘야 한다. 이력의 박스·영역 목록은 11-11 부터 `hist_lists` 에 한 번만 두고
+  `box_history` 는 `#id` 로 가리킨다 — 도구에서 before·after 를 SQL 로 바로 읽지 말고 `store.box_history`·`history_entry` 로.
 - **가릴 영역**은 DB `masks` 표에만 있고 학습 세트·이미지 내보내기만 칠한다. test 는 칠하지 않는다. 덮는 몫은 `masks.covered` 와
   `app.js` 의 `maskCover` 가 같은 식이다 — 고치면 둘 다.
 - **영상 캡처 탭(11-10 사용자 요청, `capture.py`·`web/capture.js`)** — 영상을 서버에 사본으로 올려 몇 초마다 한 장 뽑고, 화면에서
