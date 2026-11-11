@@ -2939,16 +2939,17 @@ function renderStatusButtons() {
   const skipBtn = $("#btn-skip");
   if (status === "pending") {
     skipBtn.innerHTML = '건너뛰기 <kbd>S</kbd>';
-    skipBtn.title = "이 이미지를 '건너뜀'으로 표시하고 다음으로";
+    skipBtn.title = "이 이미지를 '건너뜀'으로 표시하고 다음으로 — 한 번 묻습니다";
   } else {
     skipBtn.innerHTML = '다음 <kbd>S</kbd>';
     skipBtn.title = "상태를 바꾸지 않고 다음 이미지로";
   }
 
-  // 휴지통에 있는 이미지는 '복원'과 '비우기'를, 그 외에는 '휴지통'을 보여준다.
+  // 휴지통에 있는 이미지는 '비우기'를, 그 외에는 '휴지통'을 보여준다. '검수 대기로' 는 승인됨·건너뜀·휴지통일 때
+  // (11-11 — 전에는 휴지통의 '복원' 이었다)
   const inTrash = status === "trashed";
   $("#btn-trash").classList.toggle("hidden", inTrash);
-  $("#btn-restore").classList.toggle("hidden", !inTrash);
+  $("#btn-to-pending").classList.toggle("hidden", !(status in BACK_TO_PENDING));
   $("#btn-purge").classList.toggle("hidden", !inTrash);
   $("#btn-approve").classList.toggle("hidden", inTrash);
 }
@@ -3057,7 +3058,7 @@ async function loadImage(id) {
 async function setStatus(status) {
   if (!S.cur || navBusy()) return;
   if (status === "approved" && S.cur.status === "trashed") {
-    toast("휴지통 이미지는 [복원] 한 뒤 승인하세요", true);
+    toast("휴지통 이미지는 [검수 대기로] 되돌린 뒤 승인하세요", true);
     return;
   }
   if (status === "approved" && S.imgId !== S.cur.id) {
@@ -3149,10 +3150,34 @@ async function advanceFrom(id, before = S.images.map((im) => im.id)) {
   }
 }
 
-/** 건너뛰기: 검수 대기 중인 이미지만 '건너뜀'으로 내리고, 그 외에는 단순히 다음으로. */
+/** 건너뛰기: 검수 대기 중인 이미지만 '건너뜀'으로 내리고, 그 외에는 단순히 다음으로.
+ *  건너뜀으로 내릴 때는 한 번 묻는다(2026-11-11 사용자 요청) — 잘못 눌러도 보던 이미지가 건너뜀이 되어 넘어가지 않게.
+ *  상태를 바꾸지 않는 '다음'(검수 대기가 아닐 때)은 ↓ 와 같아서 묻지 않는다. */
 async function skipOrAdvance() {
-  if (!S.cur) return;
-  await setStatus(S.cur.status === "pending" ? "skipped" : null);
+  if (!S.cur || navBusy()) return;    // 도는 중이면 묻지 않는다 — 물어 놓고 setStatus 가 조용히 버리면 안 된다
+  if (S.cur.status !== "pending") { await setStatus(null); return; }
+  const id = S.cur.id;
+  if (!confirm("이 이미지를 '건너뜀'으로 표시하고 다음으로 넘어갈까요?\n\n"
+      + "건너뜀은 학습에 들어가지 않습니다. 나중에 [검수 대기로] 를 누르면 되돌릴 수 있습니다.")) return;
+  if (!S.cur || S.cur.id !== id) return;
+  await setStatus("skipped");
+}
+
+/** 승인됨·건너뜀·휴지통 이미지를 검수 대기로 되돌리고 다음으로 — 한 번 묻는다 (2026-11-11 사용자 요청. 전에는 휴지통의
+ *  [복원] 만 있어서, 건너뜀·승인됨은 휴지통을 거쳐야 검수 대기로 돌아갔다). 박스·가릴 영역은 그대로다.
+ *  승인을 풀면 다시 승인할 때까지 학습에서 빠진다. */
+const BACK_TO_PENDING = {
+  approved: "이 이미지의 승인을 풀고 검수 대기로 되돌립니다. 다시 승인할 때까지 학습에 들어가지 않습니다.",
+  skipped: "이 이미지의 '건너뜀'을 풀고 검수 대기로 되돌립니다.",
+  trashed: "이 이미지를 휴지통에서 꺼내 검수 대기로 되돌립니다.",
+};
+async function backToPending() {
+  if (!S.cur || navBusy()) return;
+  const id = S.cur.id, what = BACK_TO_PENDING[S.cur.status];
+  if (!what) return;                  // 이미 검수 대기거나 미라벨이다 — 단추도 숨어 있다
+  if (!confirm(`${what}\n박스는 그대로이고, 되돌린 뒤 다음 이미지로 넘어갑니다.\n\n되돌릴까요?`)) return;
+  if (!S.cur || S.cur.id !== id) return;
+  await setStatus("pending");
 }
 
 function step(delta) {
@@ -3424,7 +3449,7 @@ $("#modal").addEventListener("mousedown", (e) => { if (e.target.id === "modal") 
 
 $("#btn-approve").onclick = () => setStatus("approved");
 $("#btn-trash").onclick = () => setStatus("trashed");
-$("#btn-restore").onclick = () => setStatus("pending");
+$("#btn-to-pending").onclick = () => backToPending();
 $("#btn-purge").onclick = () => {
   const n = (S.counts && S.counts.trashed) || 0;
   if (!n) { toast("휴지통이 비어 있습니다."); return; }
