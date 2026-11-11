@@ -30,6 +30,10 @@
 - 프레임마다 직전 프레임과 바뀐 픽셀 비율(extract_frames `--min-change` 와 같은 값)을 남기고, 앞의 프레임과 **픽셀까지
   같은** 프레임(멈춘 화면 — 웹 CCTV 에서 흔하다)은 처음부터 '빼기' 로 둔다. 넣어도 scan 의 중복 검사가 막는다.
 - 서버를 다시 켜도 세션은 `session.json` 으로 이어진다(뽑던 것은 '멈춤', 올리다 끊긴 것은 지운다).
+- **카메라를 고르지 않고 넣으면 이 영상용 카메라를 자동으로 등록한다**(2026-11-11 사용자 요청 — 출처를 모르는 영상). 키는
+  다음 번호 `vid-NN`, 장소 '모름 — 영상 <이름>', note 에 영상 지문(`auto_note`). 같은 영상을 다시 넣으면 그 note 로 찾아 같은
+  카메라에 넣는다(키를 바꿔도 따라간다). 카메라를 아예 비우지 않는 것은 분할이 카메라째라서다 — 출처 없이 넣으면 한 영상의
+  프레임이 train 과 test 로 갈릴 수 있다. 장소·종류·키는 나중에 '고치기…' 로 바꾼다(키 바꾸기는 camera_rename.py).
 """
 
 from __future__ import annotations
@@ -47,9 +51,10 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .provenance import _from_name, load_cameras, tz_text
+from .provenance import CameraExists, _from_name, add_camera, camera_fields, load_cameras, remove_cameras, tz_text
 
 SID_RE = re.compile(r"^\d{8}_\d{6}_[0-9a-f]{4}$")
+_AUTO_KEY = re.compile(r"^vid-(\d+)$")      # 카메라를 고르지 않고 넣을 때 자동 등록하는 키 (화면 capAutoCamera 와 같다)
 JPEG_QUALITY = 95            # extract_frames 의 기본값과 같다
 THUMB_W = 384                # 썸네일 폭 (화면 칸은 140~380px)
 THUMB_QUALITY = 80
@@ -110,6 +115,29 @@ def changed_pct(a, b) -> float:
     import numpy as np
 
     return float((np.abs(a.astype(np.int16) - b.astype(np.int16)) > 20).mean() * 100)
+
+
+# ───────────────────────────── 자동 카메라 (카메라를 고르지 않고 넣을 때) ─────────────────────────────
+
+def auto_note(tag: str) -> str:
+    """자동 등록 카메라의 note — 같은 영상(지문)을 다시 넣을 때 이것으로 찾는다."""
+    return f"영상 캡처 자동 등록 — 영상 지문 {tag}"
+
+
+def find_auto_camera(fields: dict[str, dict], tag: str) -> str | None:
+    """이 영상(지문)을 전에 자동 등록한 카메라 — note 에 지문이 있는 키(provenance.camera_fields 의 값)."""
+    needle = f"영상 지문 {tag}"
+    hits = sorted(k for k, f in fields.items() if needle in (f.get("note") or ""))
+    return hits[0] if hits else None
+
+
+def next_auto_key(taken) -> str:
+    """vid-01, vid-02 … 의 다음 번호(가장 큰 번호 + 1, 쓰인 키는 건너뛴다)."""
+    nums = [int(m.group(1)) for k in taken if (m := _AUTO_KEY.match(k))]
+    n = max(nums, default=0) + 1
+    while f"vid-{n:02d}" in taken:
+        n += 1
+    return f"vid-{n:02d}"
 
 
 # ───────────────────────────── 세션 ─────────────────────────────
@@ -219,16 +247,19 @@ class Session:
 class CaptureManager:
     """한 프로젝트의 캡처 세션들 (`<DB 폴더>/capture/`). 서버가 프로젝트마다 하나 만든다.
 
-    ingest: 스캔(잠금을 쥐고 `ingest.ingest` 를 부른다), blocker: 넣으면 안 되는 이유(정리·휴지통 비우기 중) 또는 None.
+    ingest: 스캔(잠금을 쥐고 `ingest.ingest` 를 부른다), blocker: 넣으면 안 되는 이유(정리·휴지통 비우기 중) 또는 None,
+    used_cameras: DB 이미지가 쓰는 카메라 키(자동 카메라 번호가 등록에서 빠진 옛 키와 겹치지 않게).
     """
 
     def __init__(self, cfg, *, ingest: Callable[[], object], blocker: Callable[[], str | None] | None = None,
-                 known_paths: Callable[[], set[str]] | None = None):
+                 known_paths: Callable[[], set[str]] | None = None,
+                 used_cameras: Callable[[], set[str]] | None = None):
         self.cfg = cfg
         self.root = cfg.db.parent / "capture"
         self.ingest = ingest
         self.blocker = blocker or (lambda: None)
         self.known_paths = known_paths
+        self.used_cameras = used_cameras
         self.sessions: dict[str, Session] = {}
         self._lock = threading.Lock()            # sessions 사전
         self._extract_lock = threading.Lock()    # 한 번에 한 영상만 뽑는다
@@ -572,9 +603,47 @@ class CaptureManager:
         s.save()
         return s.summary()
 
-    def commit(self, sid: str, camera: str, start: str | None, keep: list[int]) -> dict:
+    def _auto_camera(self, s: Session, tag: str, cams: dict) -> tuple[str, str]:
+        """카메라를 고르지 않고 넣을 때(2026-11-11 사용자 요청) — 이 영상(지문)을 전에 자동 등록한 카메라가 있으면 그것('reused'),
+        없으면 다음 번호 vid-NN 을 cameras.yaml 에 등록한다('new' — 종류 cctv·장소 '모름 — 영상 <이름>'·해상도·note 에 지문).
+        등록 안 된 폴더·DB 의 옛 키와도 겹치지 않는 번호로. 넣기 잠금을 쥔 채 부른다."""
+        fields = camera_fields(self.cfg.cameras)
+        hit = find_auto_camera(fields, tag)
+        if hit and hit in cams:
+            return hit, "reused"
+        taken = set(cams) | set(fields) | (self.used_cameras() if self.used_cameras else set())
+        for d in (self.cfg.unlabeled, self.cfg.labeled / "images", self.cfg.labeled / "labels"):
+            if d.is_dir():
+                taken |= {p.name for p in d.iterdir() if p.is_dir()}
+        v = s.video
+        name = re.sub(r"[\x00-\x1f\x7f]", " ", str(v.get("name") or "")).strip()[:80] or "?"
+        attrs = {"kind": "cctv", "place": f"모름 — 영상 {name}", "note": auto_note(tag),
+                 "resolution": f"{v['width']}x{v['height']}" if v.get("width") and v.get("height") else None}
+        for _ in range(20):
+            key = next_auto_key(taken)
+            try:
+                add_camera(self.cfg.cameras, key, attrs, backup_dir=self.cfg.db.parent / "backups",
+                           comment=f"{datetime.now():%Y-%m-%d %H:%M} 검수 UI '영상 캡처' 가 자동 등록(카메라를 고르지 않고 넣음)")
+            except CameraExists:
+                taken.add(key)               # 그사이 '＋ 새로' 가 같은 키를 등록했다 — 다음 번호로
+                continue
+            except ValueError as exc:
+                raise CaptureError(400, f"이 영상용 카메라를 등록하지 못했습니다: {exc}") from None
+            print(f"[캡처] 카메라를 고르지 않은 영상 — {key} 를 자동 등록 ({self.cfg.cameras.name})")
+            return key, "new"
+        raise CaptureError(409, "이 영상용 카메라 키를 정하지 못했습니다 — 다시 넣어 보세요.")
+
+    def _drop_auto(self, key: str) -> None:
+        """자동 등록한 카메라에 한 장도 못 넣었다 — 빈 등록을 남기지 않는다."""
+        try:
+            remove_cameras(self.cfg.cameras, [key], backup_dir=self.cfg.db.parent / "backups")
+        except (ValueError, OSError) as exc:
+            print(f"[캡처] 자동 등록한 카메라 {key} 를 되돌리지 못했습니다(빈 등록이 남음): {exc}")
+
+    def commit(self, sid: str, camera: str | None, start: str | None, keep: list[int]) -> dict:
         """고른 프레임을 unlabeled/<카메라>/ 로 옮기고 스캔한다. start(영상 첫 프레임의 현지 시각)가 비면 시각 없는 이름
-        (`notime_name`, 폴더 v<지문>)으로 — DB 촬영 시각은 '모름' 이 된다."""
+        (`notime_name`, 폴더 v<지문>)으로 — DB 촬영 시각은 '모름' 이 된다. camera 가 비면 이 영상용 카메라를 자동으로
+        등록한다(`_auto_camera`)."""
         s = self.get(sid)
         with self._commit_lock:
             with s.lock:
@@ -590,7 +659,8 @@ class CaptureManager:
                 cams = load_cameras(self.cfg.cameras)
             except ValueError as exc:
                 raise CaptureError(400, f"카메라 등록 파일을 읽지 못했습니다:\n{exc}") from exc
-            if camera not in cams:
+            camera = (camera or "").strip() or None
+            if camera is not None and camera not in cams:
                 raise CaptureError(400, f"카메라 '{camera}' 가 {self.cfg.cameras.name} 에 없습니다 — 먼저 등록하세요"
                                         " (docs/provenance.md).")
             start = (start or "").strip()
@@ -603,11 +673,20 @@ class CaptureManager:
                 raise CaptureError(400, "넣을 프레임을 하나도 고르지 않았습니다.")
             if idx[0] < 0 or idx[-1] >= len(frames):
                 raise CaptureError(400, "없는 프레임 번호가 있습니다 — 화면을 새로 고치세요.")
-            tag = None if t0 else self.video_tag(s)    # 시각 없이 넣을 때만 (옛 세션이면 여기서 지문을 센다)
+            # 지문은 시각 없이 넣을 때(이름)와 카메라를 고르지 않았을 때(자동 카메라 찾기)만 — 옛 세션이면 여기서 센다
+            tag = self.video_tag(s) if t0 is None or camera is None else None
             with s.lock:
                 if s.deleted or s.state in RUNNING or s.state in ("uploading", "committing"):
                     raise CaptureError(409, "그사이 다시 뽑기를 시작했거나 닫았습니다 — 화면을 새로 고치세요.")
                 before, s.state = s.state, "committing"   # 그동안 다시 뽑기·닫기가 프레임을 지우지 않게
+            auto = None
+            if camera is None:
+                try:
+                    camera, auto = self._auto_camera(s, tag, cams)
+                except BaseException:
+                    with s.lock:
+                        s.state = before
+                    raise
 
             root = self.cfg.unlabeled / camera
             moved: list[Path] = []
@@ -635,13 +714,18 @@ class CaptureManager:
                         continue
                     moved.append(dst)
             except OSError as exc:
+                if auto == "new" and not moved:
+                    self._drop_auto(camera)
                 with s.lock:
                     s.state = before
                     s.note = f"넣다가 멈췄습니다 — {len(moved)}장은 {root} 에 옮겼습니다: {exc}"
                 s.save()
                 raise CaptureError(500, f"{len(moved)}장을 옮긴 뒤 멈췄습니다 ({root}): {exc}") from exc
+            if auto == "new" and not moved:
+                self._drop_auto(camera)          # 옮길 프레임 파일이 없었다 — 빈 등록을 남기지 않는다
+                auto = "dropped"
 
-            out = {"camera": camera, "moved": len(moved), "exists": len(exists), "missing": len(missing),
+            out = {"camera": camera, "auto": auto, "moved": len(moved), "exists": len(exists), "missing": len(missing),
                    "exists_names": exists[:5], "dest": str(root), "first": moved[0].name if moved else None,
                    "last": moved[-1].name if moved else None, "no_time": t0 is None}
             if moved:

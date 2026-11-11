@@ -130,6 +130,22 @@ function capKept() {
   return n;
 }
 
+/** 카메라를 고르지 않고 넣을 때 쓸 카메라(11-11 사용자 요청) — 서버 capture._auto_camera 와 같은 식의 미리 보기.
+ *  이 영상(지문)을 전에 자동 등록한 카메라(note 에 지문)가 있으면 그것, 없으면 다음 번호 vid-NN(넣을 때 서버가 다시 정한다). */
+function capAutoCamera() {
+  const tag = C.cur && C.cur.video && C.cur.video.tag;
+  if (tag) {
+    const hit = C.cameras.filter((c) => ((c.fields || {}).note || "").includes(`영상 지문 ${tag}`)).map((c) => c.key).sort()[0];
+    if (hit) return { key: hit, reuse: true };
+  }
+  let n = 0;
+  for (const c of C.cameras) {
+    const m = c.key.match(/^vid-(\d+)$/);
+    if (m) n = Math.max(n, Number(m[1]));
+  }
+  return { key: `vid-${String(n + 1).padStart(2, "0")}`, reuse: false };
+}
+
 function capRunning() {
   return !!C.cur && CAP_RUNNING.has(C.cur.state);
 }
@@ -451,13 +467,16 @@ async function capCommit() {
   const keep = C.frames.filter((f) => f.k).map((f) => f.i);
   const cam = $("#cap-camera").value, start = $("#cap-start").value.trim();
   if (!keep.length) { toast("넣을 프레임을 고르지 않았습니다", true); return; }
-  if (!cam) { toast("카메라를 고르세요", true); return; }
   if (start && !capParseStart(start)) {
     toast("촬영 시작 시각을 읽을 수 없습니다 — 예: 2026-11-10 14:30:00 (모르면 비워 두세요)", true);
     return;
   }
+  const auto = cam ? null : capAutoCamera();
   const drop = C.frames.length - keep.length;
-  const msg = `${keep.length}장을 ${C.unlabeled}/${cam}/ 에 넣고 스캔합니다(DB 에 미라벨로 등록).\n`
+  const msg = `${keep.length}장을 ${C.unlabeled}/${cam || auto.key}/ 에 넣고 스캔합니다(DB 에 미라벨로 등록).\n`
+    + (!auto ? "" : auto.reuse ? `카메라를 고르지 않아, 이 영상을 전에 넣은 자동 카메라 ${auto.key} 에 넣습니다.\n`
+      : `카메라를 고르지 않아 이 영상용 카메라 ${auto.key} 를 cameras.yaml 에 새로 등록합니다(장소 '모름' · cctv — `
+        + "나중에 '고치기…' 로 바꿀 수 있습니다).\n")
     + (start ? "" : "촬영 시각 없이 넣습니다 — DB 촬영 시각은 '모름' 이고 나중에 이름으로 채울 수 없습니다.\n")
     + `${drop ? `안 고른 ${drop}장과 ` : ""}올린 영상 사본은 지웁니다 — 원본 영상 파일은 그대로입니다.\n\n계속할까요?`;
   if (!confirm(msg)) return;
@@ -465,7 +484,7 @@ async function capCommit() {
   C.committing = true;
   capRenderCommit();
   try {
-    const r = await api(`/api/capture/${sid}/commit`, { method: "POST", body: { camera: cam, start: start || null, keep } });
+    const r = await api(`/api/capture/${sid}/commit`, { method: "POST", body: { camera: cam || null, start: start || null, keep } });
     capShowResult(r, name);
     capReset();
     capRenderAll();
@@ -487,6 +506,9 @@ function capShowResult(r, name) {
   const reg = r.registered;
   lines.push(`<b>${esc(name)}</b> — ${esc(r.camera)} 에 <b>${r.moved}</b>장을 넣었습니다`
     + (reg != null ? ` (DB 등록 ${reg}장)` : "") + ".");
+  if (r.auto === "new") lines.push(`카메라를 고르지 않아 <b>${esc(r.camera)}</b> 를 새로 등록했습니다(장소 '모름') — 알게 되면 '고치기…' 로 바꾸세요.`);
+  else if (r.auto === "reused") lines.push(`이 영상을 전에 넣은 자동 카메라 ${esc(r.camera)} 에 넣었습니다.`);
+  else if (r.auto === "dropped") lines.push("옮길 프레임이 없어 자동 등록한 카메라를 다시 뺐습니다.");
   if (r.exists) lines.push(`같은 이름이 이미 있어 건너뜀 ${r.exists}장 — 같은 구간을 전에 넣었습니다.`);
   if (r.missing) lines.push(`프레임 파일이 없어 건너뜀 ${r.missing}장.`);
   if (r.duplicates) lines.push(`내용이 이미 있는 이미지와 같아 등록하지 않음 ${r.duplicates}장(멈춘 화면 등).`);
@@ -598,7 +620,8 @@ function capRenderExtract() {
 function capRenderCameras() {
   const sel = $("#cap-camera");
   const cur = C.cur ? C.cur.camera || "" : "";
-  const opts = ['<option value="">카메라 고르기…</option>'];
+  // 비워 두면 이 영상용 카메라를 자동으로 등록해 넣는다(11-11 사용자 요청 — capture._auto_camera)
+  const opts = ['<option value="">자동 — 이 영상용 카메라</option>'];
   for (const cam of C.cameras) {
     // 한국(+09:00)이 아닌 카메라는 시간대를 함께 보인다 — 다른 시간대 영상의 시작 시각을 KST 로 착각하지 않게
     const tz = cam.tz && cam.tz !== "+09:00" ? `UTC${cam.tz}` : null;
@@ -625,7 +648,13 @@ function capRenderCommit() {
   // 시작 시각 안내
   let h = "";
   if (C.cameraError) h += `<span class="warn">카메라 등록 파일을 읽지 못했습니다: ${esc(C.cameraError)}</span><br>`;
-  else if (c && !C.cameras.length) h += '<span class="warn">등록된 카메라가 없습니다 — 위의 \'＋ 새로\' 로 등록하세요.</span><br>';
+  if (c && !cam && !C.cameraError) {
+    const a = capAutoCamera();
+    h += a.reuse
+      ? `카메라를 고르지 않으면 이 영상을 전에 넣은 자동 카메라 <b>${esc(a.key)}</b> 에 넣습니다.<br>`
+      : `카메라를 고르지 않으면 이 영상용 카메라 <b>${esc(a.key)}</b> 를 새로 등록해 넣습니다(장소 '모름' · cctv — `
+        + "알게 되면 '고치기…' 로 장소·종류·키를 바꿀 수 있습니다).<br>";
+  }
   if (c) {
     const typed = startEl.value.trim();
     if (!typed) {
@@ -654,15 +683,16 @@ function capRenderCommit() {
   }
   // 넣을 곳 미리 보기 — 시각을 적었으면 날짜 폴더·시각 이름, 비웠으면 영상 지문 폴더·영상 안 시각 이름(capture.notime_name)
   const noTime = !startEl.value.trim();
-  if (c && cam && kept && (st || noTime)) {
+  const useCam = cam || (c && !C.cameraError ? capAutoCamera().key : "");    // 비웠으면 자동 카메라(미리 보기)
+  if (c && useCam && kept && (st || noTime)) {
     const ks = C.frames.filter((f) => f.k);
     if (st) {
-      const a = capName(cam, capAt(st, ks[0].t)), b = capName(cam, capAt(st, ks[ks.length - 1].t));
-      dest.textContent = `→ ${C.unlabeled}/${cam}/${a.day}/\n   ${a.name}` + (ks.length > 1 ? `\n ~ ${b.day === a.day ? "" : `${b.day}/`}${b.name}` : "");
+      const a = capName(useCam, capAt(st, ks[0].t)), b = capName(useCam, capAt(st, ks[ks.length - 1].t));
+      dest.textContent = `→ ${C.unlabeled}/${useCam}/${a.day}/\n   ${a.name}` + (ks.length > 1 ? `\n ~ ${b.day === a.day ? "" : `${b.day}/`}${b.name}` : "");
     } else {
       const tag = (c.video && c.video.tag) || "????????";      // 지문은 서버가 올릴 때 셌다(옛 세션은 넣을 때 센다)
-      const a = capNoTimeName(cam, tag, ks[0].t), b = capNoTimeName(cam, tag, ks[ks.length - 1].t);
-      dest.textContent = `→ ${C.unlabeled}/${cam}/v${tag}/\n   ${a}` + (ks.length > 1 ? `\n ~ ${b}` : "") + "\n   (촬영 시각 모름)";
+      const a = capNoTimeName(useCam, tag, ks[0].t), b = capNoTimeName(useCam, tag, ks[ks.length - 1].t);
+      dest.textContent = `→ ${C.unlabeled}/${useCam}/v${tag}/\n   ${a}` + (ks.length > 1 ? `\n ~ ${b}` : "") + "\n   (촬영 시각 모름)";
     }
   } else {
     dest.textContent = "";
@@ -670,10 +700,12 @@ function capRenderCommit() {
   const btn = $("#cap-commit");
   btn.textContent = C.committing ? "넣는 중…" : `고른 ${kept}장 넣기`;
   const badStart = !noTime && !st;
-  btn.disabled = !c || C.committing || capRunning() || !kept || !cam || badStart || ["uploading", "committing"].includes(c.state);
+  btn.disabled = !c || C.committing || capRunning() || !kept || badStart || !!C.cameraError
+    || ["uploading", "committing"].includes(c.state);
   btn.title = !c ? "" : capRunning() ? "뽑는 중에는 넣을 수 없습니다 — 끝나거나 멈춘 뒤"
-    : !kept ? "넣을 프레임을 고르세요" : !cam ? "카메라를 고르세요" : badStart ? "촬영 시작 시각을 고치거나 비우세요"
-      : "고른 프레임을 unlabeled/<카메라>/ 로 옮기고 스캔합니다";
+    : !kept ? "넣을 프레임을 고르세요" : C.cameraError ? "카메라 등록 파일을 먼저 고치세요"
+      : badStart ? "촬영 시작 시각을 고치거나 비우세요"
+        : "고른 프레임을 unlabeled/<카메라>/ 로 옮기고 스캔합니다" + (cam ? "" : " — 카메라를 고르지 않아 이 영상용 카메라를 자동 등록합니다");
   $("#cap-discard").disabled = !c || C.committing || ["uploading", "committing"].includes(c ? c.state : "");
 }
 
@@ -924,7 +956,8 @@ function capCamEditOpen(key) {
   }).catch(() => {});
 }
 
-/** 고칠 카메라의 지금 값을 칸에 채우고, 바꿀 수 없는 칸(쓰는 이미지가 있으면 키, 분할이 정해진 이미지가 있으면 분할)을 막는다. */
+/** 고칠 카메라의 지금 값을 칸에 채우고, 바꿀 수 없는 칸(분할이 정해진 이미지가 있으면 분할)을 막는다. 쓰는 이미지가 있어도
+ *  키는 바꿀 수 있다(11-11 — 서버가 폴더·파일 이름·DB 도 함께 바꾼다, camera_rename.py). */
 function capCamEditFill(key) {
   const c = C.cameras.find((x) => x.key === key);
   if (!c) return;
@@ -940,10 +973,10 @@ function capCamEditFill(key) {
   $("#cc-tz").value = f.tz || c.tz || "+09:00";
   const files = c.files || [];
   const used = (c.db || 0) > 0 || files.length > 0;
-  $("#cc-key").disabled = used;
+  $("#cc-key").disabled = false;
   $("#cc-split").disabled = (c.assigned || 0) > 0;
   const notes = [];
-  if (used) notes.push(`쓰는 이미지가 있어(${[c.db ? `DB ${c.db}장` : null, files.length ? "폴더에 파일" : null].filter(Boolean).join(" · ")}) 키는 바꿀 수 없습니다`);
+  if (used) notes.push(`키를 바꾸면 이 카메라의 폴더·파일 이름(앞머리 ${c.key}_)과 DB(${[c.db ? `이미지 ${c.db}장` : null, files.length ? "폴더에 파일" : null].filter(Boolean).join(" · ")})도 함께 바꿉니다`);
   if (c.assigned) notes.push(`이미지 ${c.assigned}장이 이미 분할에 들어가 있어 고정 분할은 바꿀 수 없습니다`);
   if (c.db) notes.push(`시간대를 바꾸면 이 카메라 이미지의 촬영 시각을 새 시간대로 다시 셉니다`);
   $("#cc-lock").textContent = notes.join(" · ");
@@ -1007,8 +1040,18 @@ async function capCamEditSave() {
   if (!body.place) { toast("장소를 적으세요", true); $("#cc-place").focus(); return; }
   if (body.split === "test" && (c.split || "") !== "test" && !confirm(`'${target}' 를 test 로 고정할까요?\n이 카메라의 이미지는 `
     + "평가에만 쓰이고(학습에 안 들어감) 가릴 영역을 둘 수 없습니다.")) return;
+  const files = c.files || [];
+  const used = (c.db || 0) > 0 || files.length > 0;
+  if (body.new_key && used && !confirm(`카메라 키를 ${target} → ${body.new_key} 로 바꿀까요?\n\n`
+    + `이미지가 있는 카메라라 폴더와 파일 이름도 함께 바꿉니다:\n`
+    + `· 폴더 ${files.length ? files.join(", ") : "(없음)"} → 새 키 폴더\n`
+    + `· 파일 이름 앞머리 ${target}_ → ${body.new_key}_\n`
+    + `· DB 이미지 ${c.db || 0}장의 카메라·경로 (라벨·검수 상태·분할은 그대로)\n\n`
+    + "바꾸기 전 DB 와 cameras.yaml 은 backups/ 에 남고, 되돌리려면 키를 다시 바꾸면 됩니다. "
+    + "학습·자동 라벨링 같은 작업이 도는 중에는 할 수 없습니다.")) return;
   const btn = $("#cc-save");
   btn.disabled = true;
+  if (body.new_key && used) btn.textContent = "바꾸는 중…";
   try {
     const r = await api(`/api/cameras/${encodeURIComponent(target)}`, { method: "PUT", body });
     C.cameras = r.cameras || C.cameras;
@@ -1020,13 +1063,29 @@ async function capCamEditSave() {
     capCamFormClose();
     const names = { kind: "종류", place: "장소", mount: "설치", split: "분할", tz: "시간대", view: "화면", resolution: "해상도",
       rights: "권리", note: "메모", key: "키" };
+    const rn = r.rename;
     toast(`카메라 ${r.key} 를 고쳤습니다 — ${r.changed.map((n) => names[n] || n).join("·")}`
+      + (rn ? ` (파일 ${rn.files}개·DB 이미지 ${rn.db_camera}장도 새 키로)` : "")
       + (r.recalculated ? ` (촬영 시각 ${r.recalculated}장을 새 시간대로 다시 셈)` : ""));
+    if (rn && rn.left_n) {
+      toast(`옛 이름 ${rn.left_n}개를 지우지 못했습니다(다른 프로그램이 열어 둠) — 같은 파일의 다른 이름이니 손으로 지우세요: `
+        + rn.left.join(", "), true);
+    }
+    if (rn) {
+      // 라벨링 쪽: 그 카메라로 거르고 있었으면 새 키로, 목록·보던 이미지의 이름을 다시 받는다
+      if (S.filterCamera === target) S.filterCamera = r.key;
+      try {
+        await loadState();
+        await loadImageList();
+        if (S.cur && !S.dirty && S.cur.camera === target) await loadImage(S.cur.id);
+      } catch { /* 라벨링으로 가면 다시 받는다 */ }
+    }
   } catch (err) {
     toast(err.message, true);
     capLoadList().then(() => { if (C.camMode === "edit") capCamEditFill($("#cc-target").value); }).catch(() => {});
   } finally {
     btn.disabled = false;
+    btn.textContent = C.camMode === "edit" ? "고치기" : "등록";
   }
 }
 

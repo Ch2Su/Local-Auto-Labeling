@@ -3265,7 +3265,7 @@ function watchJob(id) {
       return;
     }
     S.jobKind = job.status === "running" ? job.kind : null;     // 도는 작업 — 자동 라벨링 중 승인 확인(setStatusNow)
-    $("#job-kind").textContent = { scan: "폴더 스캔", predict: "자동 라벨링", train: "학습", resume: "이어서 학습", train_wsl: "WSL 학습", resume_wsl: "WSL 이어하기", tidy: "정리", purge: "휴지통 비우기", export: "내보내기" }[job.kind] || job.kind;
+    $("#job-kind").textContent = { scan: "폴더 스캔", predict: "자동 라벨링", train: "학습", resume: "이어서 학습", train_wsl: "WSL 학습", resume_wsl: "WSL 이어하기", tidy: "정리", purge: "휴지통 비우기", export: "내보내기", camera_rename: "카메라 키 바꾸기" }[job.kind] || job.kind;
     $("#job-status").textContent = { running: "진행 중…", done: "완료", error: "실패" }[job.status];
     $("#job-status").className = job.status;
     const stopBtn = $("#job-stop");

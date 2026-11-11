@@ -429,12 +429,16 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   `app.js` 의 `maskCover` 가 같은 식이다 — 고치면 둘 다.
 - **영상 캡처 탭(11-10 사용자 요청, `capture.py`·`web/capture.js`)** — 영상을 서버에 사본으로 올려 몇 초마다 한 장 뽑고, 화면에서
   고른 것만 `unlabeled/<카메라>/` 로 **옮겨** 스캔한다(원본 영상은 읽지도 않는다 — 사본만). 촬영 시각을 모르면 비워 두고 넣을 수
-  있다(이름 `<카메라>_v<영상 지문>_t00h01m05s500.jpg`, `captured_at` NULL — 카메라는 여전히 필수). **작업 큐 밖**이라 학습 중에도 돌고,
+  있다(이름 `<카메라>_v<영상 지문>_t00h01m05s500.jpg`, `captured_at` NULL). **카메라를 고르지 않으면 이 영상용 카메라 `vid-NN` 을
+  자동 등록해 넣는다**(11-11 사용자 요청 — 장소 '모름', note 의 영상 지문으로 같은 영상은 같은 카메라에. 분할이 카메라째라 출처 없이는
+  넣지 않는다). **작업 큐 밖**이라 학습 중에도 돌고,
   넣기의 스캔은 '폴더 스캔' 과 같은 잠금(`server.ingest_lock`)을 쥔다. 같은 탭의 `＋ 새로` 가 **`cameras.yaml` 에 카메라를
   더한다**(`provenance.add_camera` — 끝에 글자로 덧붙이고 쓰기 전 파일은 `backups/cameras_<시각>.yaml`). `지우기…` 는 그 카메라의
   줄만 뺀다(`remove_cameras`) — **DB(휴지통 포함)나 카메라 폴더에 이미지가 남은 카메라는 서버가 막는다**. `고치기…` 는 바뀐 칸의
-  줄만 고친다(`edit_camera`) — 쓰는 이미지가 있으면 키, 분할된 이미지가 있으면 고정 분할은 막고, 시간대를 바꾸면 그 카메라 이미지의
-  촬영 시각을 다시 센다. 규칙은 src/autolabel/CLAUDE.md.
+  줄만 고친다(`edit_camera`) — 분할된 이미지가 있으면 고정 분할은 막고, 시간대를 바꾸면 그 카메라 이미지의 촬영 시각을 다시 센다.
+  **이미지가 있는 카메라의 키를 바꾸면 폴더·파일 이름 앞머리·DB 경로까지 함께 바꾼다**(11-11 사용자 요청, `camera_rename.py` —
+  작업 큐에서 돌고, 실패하면 되돌리며, 바꾸기 전 DB 는 `backups/labeling_camrename_<시각>.db`). 지명이 드러난 키를 번호로 바꿀 때
+  쓴다. 규칙은 src/autolabel/CLAUDE.md.
 - 코드를 고친 뒤에는 검수 서버를 다시 켜야 반영된다. TestClient 는 `base_url="http://127.0.0.1:7860"`.
 
 ---
@@ -455,7 +459,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    (`git show 25a3de6:CLAUDE.md`).
 5. **새 데이터 모으기 (11-10 사용자 결정 — 위 '현재 데이터 상태').** 풀 해상도 CCTV 캡처를 자르지 않고 넣고, 화면 글자·로고·
    라벨하기 애매한 곳은 가릴 영역으로 덮는다. 순서: 카메라를 `cameras.yaml` 에 등록(kind cctv — 영상 캡처 탭의 `＋ 새로` 나
-   손으로) → `unlabeled/<카메라>/` 에 넣기
+   손으로. 출처를 모르는 영상은 영상 캡처 탭에서 카메라를 비워 두면 `vid-NN` 으로 자동 등록되고, 나중에 `고치기…` 로 키·장소를
+   바꾼다) → `unlabeled/<카메라>/` 에 넣기
    (영상은 검수 UI **'영상 캡처' 탭**(11-10 — 뽑아서 눈으로 골라 넣고 스캔까지 한다) 또는 `tools/extract_frames.py`, ROAD PLUS
    녹화는 `tools/import_roadplus.py` — SD 원본이라 높이 720 으로 줄여도 잃는 것이 없다) → `labeler.py scan` → `label`(운영 m) → responder·cone 후보(`tools/ovd_propose.py` → `tools/import_proposals.py`) →
    검수 → 분할(카메라째 — 평가에 쓸 카메라는 `cameras.yaml` 의 `split:` 으로 먼저 정할 것) → 학습 → 새 test 로 기준선.

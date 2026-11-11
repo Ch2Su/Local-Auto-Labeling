@@ -407,14 +407,16 @@ def _same_value(field: str, old, new: str | None) -> bool:
 
 
 def edit_camera(path: Path, key: str, values: dict, *, new_key: str | None = None,
-                backup_dir: Path | None = None) -> tuple[Camera, list[str]]:
+                backup_dir: Path | None = None, dry_run: bool = False) -> tuple[Camera, list[str]]:
     """등록된 카메라의 칸을 고친다 (2026-11-10, 검수 UI '영상 캡처' 의 카메라 고치기).
 
     values 에 든 칸(_FIELD_ORDER)만 보고, 지금 값과 뜻이 같은 칸은 건드리지 않는다. 다른 속성(crop 등)·주석·순서는 그대로 —
     바뀐 칸의 줄만 글자로 고친다: 한 줄짜리 값은 그 줄을 바꾸고(줄 끝 주석은 남긴다), 없던 칸은 _FIELD_ORDER 의 자리에 넣고,
     비운 칸은 그 줄을 뺀다(split 은 'split:' 으로 비워 둔다). new_key 는 키 줄의 이름만 바꾼다 — 폴더·파일 이름·DB 는 모르니
-    그 카메라를 쓰는 이미지가 없는지는 부르는 쪽(server)이 본다. 값 규칙은 add_camera 와 같다(시간대는 normalize_tz 꼴로).
-    다시 읽어 이 카메라만 기대대로 바뀌었을 때만 쓰고(백업은 add 와 같다), 바뀐 것이 없으면 쓰지 않는다.
+    그 카메라를 쓰는 이미지가 있으면 부르는 쪽(server — camera_rename.py)이 함께 바꾼다. 값 규칙은 add_camera 와 같다(시간대는
+    normalize_tz 꼴로). 다시 읽어 이 카메라만 기대대로 바뀌었을 때만 쓰고(백업은 add 와 같다), 바뀐 것이 없으면 쓰지 않는다.
+    dry_run 이면 확인까지만 하고 쓰지 않는다(2026-11-11 — 이미지가 있는 카메라의 키 바꾸기는 파일·DB 를 먼저 바꾸므로, 그
+    전에 값이 맞는지 본다).
     돌려주는 것: (고친 뒤의 Camera, 바뀐 칸 이름들 — 키를 바꿨으면 'key' 포함).
     """
     key = str(key or "").strip()
@@ -486,7 +488,8 @@ def edit_camera(path: Path, key: str, values: dict, *, new_key: str | None = Non
             if not ok:
                 raise ValueError("고친 결과를 다시 읽으니 기대와 달라 아무것도 쓰지 않았습니다 — 이 카메라의 줄 모양(여러 줄 값·"
                                  f"들여쓰기)을 {path.name} 에서 손으로 확인할 것")
-            _backup_and_swap(path, tmp, backup_dir)
+            if not dry_run:
+                _backup_and_swap(path, tmp, backup_dir)
         finally:
             tmp.unlink(missing_ok=True)
         return after[final], list(edits) + (["key"] if new_key else [])

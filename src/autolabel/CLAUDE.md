@@ -78,6 +78,13 @@
     `_from_name` 이 None 인지 다시 볼 것). 지문은 올릴 때 센 영상 내용 sha1(`video.sha1`, 화면에는 `video.tag`) — 같은 영상이면 같은
     이름이라 다시 넣어도 건너뛴다. 이 기능 전에 올린 세션은 넣을 때 센다(`video_tag`). 화면의 미리 보기 `capNoTimeName` 이 같은 식
     이다(반올림은 반을 올림 — 고치면 둘 다).
+  - **카메라를 고르지 않으면 영상마다 자동 카메라(11-11 사용자 요청, `_auto_camera`).** 넣기의 `camera` 가 비면(없음·`""`) 이
+    영상(지문)을 전에 자동 등록한 카메라 — **note 에 `영상 지문 <8자>`** 가 있는 키(`find_auto_camera`, 키를 바꿔도 note 가 따라간다)
+    — 에 넣고, 없으면 다음 번호 `vid-NN`(`next_auto_key` — 등록·`camera_fields`·DB 가 쓰는 키(`used_cameras`)·카메라 폴더 이름을
+    건너뛴다)을 `add_camera` 로 등록한다: kind cctv, place `모름 — 영상 <이름>`, 해상도, note `auto_note`. 결과의 `auto` 는
+    new·reused·dropped(옮긴 프레임이 없으면 만든 등록을 `remove_cameras` 로 되돌린다). **카메라를 아예 비우지 않는 것은 분할이
+    카메라째라서다** — 출처 없이 넣으면 한 영상의 프레임이 train·test 로 갈릴 수 있다. 화면 `capAutoCamera` 가 같은 식으로 미리
+    보인다(목록 `fields.note` 로 — DB·폴더 번호는 몰라 드물게 다를 수 있고, 결과가 실제 키를 알린다).
   - 프레임 항목 `{i, t, c, s, k}` — `c` 는 앞 장과 바뀐 픽셀 %, `s` 는 **JPEG 바이트까지 같은** 앞 프레임(멈춘 화면 — 처음부터
     `k=false`). 화면이 남기는 빼기 목록은 `PUT …/state {drop, upto}` — `upto` 밖(화면이 아직 못 받은 뒤쪽)은 건드리지 않는다.
   - 화면은 뽑는 동안 0.7초마다 `?since=` 로 새 프레임만 받고, `run`(다시 뽑을 때마다 +1)이 바뀌면 처음부터 받는다. 썸네일·원본
@@ -96,11 +103,23 @@
     **뜻이 같은 칸은 건드리지 않는다**(`_same_value` — mount 없음 = unknown, tz 는 `normalize_tz` 로 견줌, 빈 값 = 없음). 바뀐 칸의 줄만
     고친다: 한 줄 값은 그 줄을 바꾸고(줄 끝 주석은 `_line_comment` — 떼어도 같게 읽히는 첫 ' #'), 없던 칸은 `_FIELD_ORDER` 자리에 넣고,
     비운 칸은 줄을 뺀다(split 은 `split:`). 키는 키 줄의 이름만 바꾼다. 다시 읽어 그 카메라만 기대대로(`merged`) 바뀌었을 때만 쓴다 —
-    flow 한 줄 항목처럼 못 고치는 모양은 400(손으로). **server 가 막는 것(409)**: 쓰는 이미지(DB 휴지통 포함·폴더 파일)가 있는 카메라의
-    키, 분할이 정해진 이미지(`store.camera_image_stats` 의 assigned)가 있는 카메라의 고정 분할(split.py 는 정한 분할을 안 옮겨 두 분할로
-    갈린다), 가릴 영역이 있는 이미지(masked)가 있는데 test 고정. **시간대를 바꾸면** 그 카메라 이미지의 `captured_at` 을 `capture_time`
-    으로 다시 센다(`store.set_captured_at` — updated_at 은 그대로, 다시 셀 수 없으면 그대로). 지우기와 같은 두 잠금을 같은 순서로 쥔다.
+    flow 한 줄 항목처럼 못 고치는 모양은 400(손으로). `dry_run` 은 확인까지만 한다. **server 가 막는 것(409)**: 분할이 정해진
+    이미지(`store.camera_image_stats` 의 assigned)가 있는 카메라의 고정 분할(split.py 는 정한 분할을 안 옮겨 두 분할로 갈린다), 가릴
+    영역이 있는 이미지(masked)가 있는데 test 고정. **시간대를 바꾸면** 그 카메라 이미지의 `captured_at` 을 `capture_time` 으로 다시
+    센다(`store.set_captured_at` — updated_at 은 그대로, 다시 셀 수 없으면 그대로). 지우기와 같은 두 잠금을 같은 순서로 쥔다.
     키를 바꾸면 캡처 세션도 새 키로(`rename_camera`). 화면 목록의 `fields`(`camera_fields`)가 고치기 칸을 채운다.
+  - **이미지가 있는 카메라의 키 바꾸기(11-11 사용자 요청, `camera_rename.py` — 전에는 409).** 키가 든 세 곳을 함께 바꾼다:
+    `cameras.yaml` 키 줄, 카메라 폴더 `unlabeled`·`labeled/images`·`labeled/labels` 의 `<키>/` 와 파일 이름 앞머리 `<키>_`(앞머리가
+    다른 이름은 옮기기만), DB `images.camera`·`path`·`name` 과 `mask_templates.camera`. **순서가 핵심이다 — DB 행이 없는 파일을
+    가리키는 때가 없어야 한다**(그러면 정리 뒤의 prune 이 그 행을 라벨째 지운다): 계획(`plan_rename` — 새 폴더에 파일·DB 에 새 키
+    행·새 경로 겹침·DB 의 다른 행이 쓰는 경로면 409) → DB 사본 `backups/labeling_camrename_<시각>.db`(하루 사본 정리 대상 아님) → 새
+    경로에 **하드링크**(안 되는 디스크면 복사 — 수정 시각·크기가 같아 썸네일 캐시가 그대로 맞는다) → DB 한 트랜잭션
+    (`store.rename_camera_rows` — `BEGIN IMMEDIATE`, 지금 경로가 그사이 바뀐 행이 있으면 안 바꿈, updated_at 그대로) →
+    `edit_camera` → 옛 이름 지우기. 링크·DB·yaml 중 하나가 실패하면 앞의 것을 되돌린다(`undo_camera_rows`·만든 링크 지우기 — 11-11
+    시험에서 셋 다 '파일·DB·등록이 처음과 같다'). 옛 이름을 못 지우면(다른 프로그램이 열어 둠) 알린다 — 등록이 빠진 옛 폴더라 scan 이
+    멈추니 손으로 지울 것. **작업 큐에서 돈다**(`camera_rename` — 파일 경로를 읽는 학습·자동 라벨링·정리와 겹치지 않게, 도는 작업이
+    있으면 409). 요청은 끝날 때까지 기다리고(10분 넘으면 504), 값 확인(`dry_run`)·계획은 작업을 만들기 전에 한 번, 작업 안에서
+    잠금을 쥐고 한 번 더 한다. 키만 다시 바꾸면 경로 글자까지 처음과 같다(11-11 시험). 화면은 바꾼 뒤 라벨링 카메라 필터를 새 키로 옮긴다.
   - **카메라 지우기(`지우기…` → `POST /api/cameras/remove` → `provenance.remove_cameras`, 11-10 사용자 요청).** 같은 방식으로
     **그 카메라의 줄만** 뺀다 — 키 줄, 그 아래 더 깊이 들여쓴 줄(속성·안쪽 주석), 키 바로 위에 **같은 들여쓰기로** 붙은 주석(등록
     주석). 맨 왼쪽의 묶음 설명 주석과 끝의 얕은 주석·빈 줄은 다음 키 것으로 보고 남긴다. 다시 읽어 '그 키들만 없어지고 나머지는

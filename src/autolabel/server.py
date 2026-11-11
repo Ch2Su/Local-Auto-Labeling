@@ -12,6 +12,7 @@ import os
 import re
 import secrets
 import threading
+import time
 import unicodedata
 from collections import Counter
 from datetime import datetime
@@ -31,6 +32,7 @@ from starlette.datastructures import Headers
 from starlette.requests import ClientDisconnect
 from starlette.responses import JSONResponse, PlainTextResponse
 
+from .camera_rename import RenameBlocked, RenameStuck, apply_rename, plan_rename
 from .capture import MAX_EVERY, MAX_FRAMES, MIN_EVERY, CaptureError, CaptureManager
 from .config import ROOT, Config, resolve
 from .export import default_export_dir, export_yolo
@@ -218,7 +220,8 @@ class CaptureStateIn(BaseModel):
 
 
 class CaptureCommitIn(BaseModel):
-    camera: str = Field(min_length=1, max_length=64)
+    # 비우면 이 영상용 카메라를 자동으로 등록해 넣는다(vid-NN — capture.auto_camera, 2026-11-11 사용자 요청)
+    camera: str | None = Field(None, max_length=64)
     # 영상 첫 프레임의 현지 시각. 비우면 시각 없는 이름으로 넣는다(촬영 시각 '모름' — capture.notime_name, 11-10 사용자 요청)
     start: str | None = Field(None, max_length=40)
     keep: list[int]
@@ -239,7 +242,8 @@ class CameraIn(BaseModel):
 
 
 class CameraEditIn(BaseModel):
-    # 카메라 고치기 (2026-11-10, provenance.edit_camera) — 보낸 칸만 본다. new_key 는 그 카메라를 쓰는 이미지가 없을 때만
+    # 카메라 고치기 (2026-11-10, provenance.edit_camera) — 보낸 칸만 본다. new_key 는 이미지가 있으면 폴더·파일 이름·DB 까지
+    # 함께 바꾼다(camera_rename.py, 2026-11-11)
     new_key: str | None = Field(None, max_length=40)
     kind: str | None = None
     place: str | None = Field(None, max_length=120)
@@ -1325,7 +1329,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         return None
 
     capman = CaptureManager(cfg, ingest=_capture_ingest, blocker=_capture_blocker,
-                            known_paths=lambda: {os.path.normcase(p) for p in store.known_statuses()})
+                            known_paths=lambda: {os.path.normcase(p) for p in store.known_statuses()},
+                            used_cameras=lambda: {k for k in store.camera_counts(with_trashed=True) if k})
 
     def _cap(fn, *args, **kwargs):
         try:
@@ -1369,60 +1374,136 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         fields = camera_fields(cfg.cameras)
         return [{**c, **usage[c["key"]], "fields": fields.get(c["key"], {})} for c in cams], error
 
+    def _camera_check(key: str, values: dict) -> dict:
+        """카메라 고치기에서 막을 것(잠금을 쥐고 부른다) — 등록돼 있나, 고정 분할을 바꿔도 되나. 돌려주는 것: 쓰는 곳."""
+        try:
+            old = load_cameras(cfg.cameras).get(key)
+        except ValueError as exc:
+            raise HTTPException(400, f"카메라 등록 파일을 읽지 못했습니다:\n{exc}") from None
+        if old is None:
+            raise HTTPException(404, f"등록돼 있지 않은 카메라: {key}")
+        use = _camera_usage([key])[key]
+        if "split" in values:
+            want = (values["split"] or "").strip() or None
+            if want != old.split and use["assigned"]:
+                raise HTTPException(409, f"'{key}' 의 이미지 {use['assigned']}장이 이미 분할에 들어가 있어 고정 분할을 바꿀 수 "
+                                         "없습니다 — 바꾸면 이 카메라가 두 분할로 갈립니다(정한 분할은 옮기지 않는다).")
+            if want == "test" and want != old.split and use["masked"]:
+                raise HTTPException(409, f"'{key}' 의 이미지 {use['masked']}장에 가릴 영역이 있어 test 로 고정할 수 없습니다 — "
+                                         "test 이미지에는 가릴 영역을 둘 수 없습니다(먼저 지울 것).")
+        return use
+
+    def _edit_camera(key: str, values: dict, new_key: str | None, *, dry_run: bool = False):
+        try:
+            return edit_camera(cfg.cameras, key, values, new_key=new_key, backup_dir=cfg.db.parent / "backups",
+                               dry_run=dry_run)
+        except CameraMissing as exc:
+            raise HTTPException(404, str(exc)) from None
+        except CameraExists as exc:
+            raise HTTPException(409, str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    def _recount_times(cam) -> int:
+        """시간대를 바꾼 카메라 이미지의 촬영 시각을 새 시간대로 다시 센다(파일 이름의 시각 — EXIF 에 시간대가 있던 것과
+        다시 셀 수 없는 것(이름에 시각 없음·파일 없음)은 그대로)."""
+        pairs = []
+        for r in store.camera_images(cam.key):
+            v = capture_time(Path(r["path"]), cam.tz)
+            if v is not None and v != r["captured_at"]:
+                pairs.append((r["id"], v))
+        return store.set_captured_at(pairs)
+
+    def _rename_plan(key: str, new_key: str):
+        try:
+            return plan_rename(cfg, store, key, new_key)
+        except RenameBlocked as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    def _rename_with_files(key: str, new_key: str, values: dict):
+        """이미지가 있는 카메라의 키 바꾸기 (2026-11-11, camera_rename.py) — 폴더·파일 이름·DB·cameras.yaml 을 함께.
+        **작업 큐에서 돌린다** — 학습·자동 라벨링·정리처럼 파일 경로를 읽는 작업과 겹치지 않게(도는 작업이 있으면 409, 바꾸는
+        동안은 다른 작업이 시작되지 않는다). 이 요청은 끝날 때까지 기다렸다 결과를 돌려준다."""
+        box: dict = {}
+
+        def work(job) -> dict:
+            try:
+                with capman.commit_lock, ingest_lock:
+                    _camera_check(key, values)                      # 기다리는 사이에 바뀌었을 수 있다 — 다시 본다
+                    _edit_camera(key, values, new_key, dry_run=True)
+                    plan = _rename_plan(key, new_key)
+                    print(f"카메라 키 바꾸기 {key} -> {new_key}: 파일 {len(plan.files)}개(이름 바꿈 {plan.renamed}), "
+                          f"DB 경로 {len(plan.moves)}장, 카메라 {plan.camera_rows}장")
+                    report = apply_rename(cfg, store, plan, edit_yaml=lambda: _edit_camera(key, values, new_key))
+                    box["renamed"] = True
+                    cam, changed = report.pop("yaml")
+                    recalculated = _recount_times(cam) if "tz" in changed else 0
+            except HTTPException as exc:
+                box["http"] = exc
+                raise RuntimeError(exc.detail) from None
+            except Exception as exc:
+                box["error"] = exc
+                raise
+            box["out"] = (cam, changed, recalculated, report)
+            return {k: v for k, v in report.items() if k not in ("left", "backup")}
+
+        try:
+            job = jobs.start("camera_rename", work)
+        except RuntimeError:
+            cur = jobs.current()
+            name = _JOB_NAMES.get(cur.kind, cur.kind) if cur else "다른"
+            raise HTTPException(409, f"'{name}' 작업이 도는 중이라 키를 바꿀 수 없습니다 — 폴더·파일 이름을 바꾸는 일이라 다른 "
+                                     "작업과 겹치지 않게 합니다. 끝난 뒤 다시 하세요.") from None
+        deadline = time.monotonic() + 600
+        while job.status == "running" and not ({"out", "http", "error"} & box.keys()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if "http" in box:
+            raise box["http"]
+        if "error" in box:
+            exc = box["error"]
+            if box.get("renamed"):
+                raise HTTPException(500, f"키는 {new_key} 로 바꿨지만 그 뒤에 멈췄습니다: {type(exc).__name__}: {exc}")
+            if isinstance(exc, RenameStuck):
+                raise HTTPException(500, str(exc))
+            raise HTTPException(500, f"키를 바꾸지 못해 되돌렸습니다(바뀐 것 없음): {type(exc).__name__}: {exc}")
+        if "out" not in box:
+            raise HTTPException(504, "아직 바꾸는 중입니다(10분 넘게) — 끝나면 라벨링 화면의 작업 칸에 뜹니다. 그 뒤 새로 고치세요.")
+        return box["out"]
+
     @app.put("/api/cameras/{key}")
     def change_camera(key: str, payload: CameraEditIn) -> dict:
         """등록된 카메라를 고친다 (영상 캡처 탭의 '고치기…', 2026-11-10). 보낸 칸만 보고 그 줄만 고친다(provenance.edit_camera).
-        막는 것(409, 아무것도 안 바꿈): 이미지가 있는 카메라의 키 바꾸기(폴더·파일 이름·DB 가 그 키를 쓴다), 분할이 정해진
-        이미지가 있는 카메라의 고정 분할 바꾸기(split.py 는 정한 분할을 옮기지 않아 같은 카메라가 두 분할로 갈린다), 가릴 영역이
-        있는 이미지가 있는데 test 로 고정하기. 시간대를 바꾸면 그 카메라 이미지의 촬영 시각을 새 시간대로 다시 센다(파일 이름의
-        시각 — EXIF 에 시간대가 있던 것과 다시 셀 수 없는 것은 그대로). 넣기·스캔과 겹치지 않게 지우기와 같은 잠금을 쥔다."""
+        **이미지가 있는 카메라의 키 바꾸기**는 폴더·파일 이름·DB 까지 함께 바꾼다(2026-11-11 사용자 요청 — _rename_with_files).
+        막는 것(409, 아무것도 안 바꿈): 분할이 정해진 이미지가 있는 카메라의 고정 분할 바꾸기(split.py 는 정한 분할을 옮기지 않아
+        같은 카메라가 두 분할로 갈린다), 가릴 영역이 있는 이미지가 있는데 test 로 고정하기, 키 바꾸기에서 새 카메라 폴더에 파일이
+        있거나 다른 작업이 도는 때. 시간대를 바꾸면 그 카메라 이미지의 촬영 시각을 새 시간대로 다시 센다. 넣기·스캔과 겹치지
+        않게 지우기와 같은 잠금을 쥔다."""
         values = payload.model_dump(exclude_unset=True)
         new_key = (values.pop("new_key", None) or "").strip() or None
+        if new_key == key:
+            new_key = None
+        report = None
         with capman.commit_lock, ingest_lock:
-            try:
-                old = load_cameras(cfg.cameras).get(key)
-            except ValueError as exc:
-                raise HTTPException(400, f"카메라 등록 파일을 읽지 못했습니다:\n{exc}") from None
-            if old is None:
-                raise HTTPException(404, f"등록돼 있지 않은 카메라: {key}")
-            use = _camera_usage([key])[key]
-            if new_key and new_key != key and (use["db"] or use["files"]):
-                where = ", ".join(([f"DB 이미지 {use['db']}장"] if use["db"] else []) + [f"{f} 에 파일" for f in use["files"]])
-                raise HTTPException(409, f"'{key}' 를 쓰는 이미지가 있어 키를 바꿀 수 없습니다({where}) — 폴더·파일 이름·DB 가 "
-                                         "이 키를 씁니다. 키 말고 다른 칸은 고칠 수 있습니다.")
-            if "split" in values:
-                want = (values["split"] or "").strip() or None
-                if want != old.split and use["assigned"]:
-                    raise HTTPException(409, f"'{key}' 의 이미지 {use['assigned']}장이 이미 분할에 들어가 있어 고정 분할을 바꿀 수 "
-                                             "없습니다 — 바꾸면 이 카메라가 두 분할로 갈립니다(정한 분할은 옮기지 않는다).")
-                if want == "test" and want != old.split and use["masked"]:
-                    raise HTTPException(409, f"'{key}' 의 이미지 {use['masked']}장에 가릴 영역이 있어 test 로 고정할 수 없습니다 — "
-                                             "test 이미지에는 가릴 영역을 둘 수 없습니다(먼저 지울 것).")
-            try:
-                cam, changed = edit_camera(cfg.cameras, key, values, new_key=new_key,
-                                           backup_dir=cfg.db.parent / "backups")
-            except CameraMissing as exc:
-                raise HTTPException(404, str(exc)) from None
-            except CameraExists as exc:
-                raise HTTPException(409, str(exc)) from None
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from None
-            recalculated = 0
-            if "tz" in changed and use["db"]:
-                pairs = []
-                for r in store.camera_images(cam.key):
-                    v = capture_time(Path(r["path"]), cam.tz)
-                    if v is not None and v != r["captured_at"]:   # 다시 셀 수 없으면(이름에 시각 없음·파일 없음) 그대로
-                        pairs.append((r["id"], v))
-                recalculated = store.set_captured_at(pairs)
+            use = _camera_check(key, values)
+            moving = bool(new_key) and bool(use["db"] or use["files"])
+            if moving:
+                # 값이 틀리거나(400) 새 키가 이미 있거나 새 폴더에 파일이 있으면(409) 작업을 만들기 전에 알린다
+                _edit_camera(key, values, new_key, dry_run=True)
+                _rename_plan(key, new_key)
+            else:
+                cam, changed = _edit_camera(key, values, new_key)
+                recalculated = _recount_times(cam) if "tz" in changed and use["db"] else 0
+        if moving:
+            cam, changed, recalculated, report = _rename_with_files(key, new_key, values)
         if "key" in changed:
             capman.rename_camera(key, cam.key)
         if changed:
             print(f"[{label}] 카메라 고침: {key}{f' -> {cam.key}' if cam.key != key else ''} ({', '.join(changed)})"
+                  + (f", 파일 {report['files']}개·DB {report['db_camera']}장 함께" if report else "")
                   + (f", 촬영 시각 {recalculated}장 다시 셈" if recalculated else ""))
         cams, error = _camera_rows()
         return {"key": cam.key, "changed": changed, "recalculated": recalculated, "tz": tz_text(cam.tz),
-                "cameras": cams, "camera_error": error}
+                "rename": report, "cameras": cams, "camera_error": error}
 
     @app.post("/api/cameras/remove")
     def unregister_cameras(payload: CameraRemoveIn) -> dict:
@@ -1583,6 +1664,12 @@ def create_multi_app(projects: list, *, bind_host: str | None = None) -> FastAPI
     for p in projects:
         root.mount(f"/p/{p.name}", create_app(p.cfg, label=p.title, guard=False))
     return root
+
+
+# 작업 이름 (화면 app.js watchJob 의 표와 같다) — 다른 작업 때문에 막을 때 알리는 데 쓴다
+_JOB_NAMES = {"scan": "폴더 스캔", "predict": "자동 라벨링", "train": "학습", "resume": "이어서 학습", "train_wsl": "WSL 학습",
+              "resume_wsl": "WSL 이어하기", "tidy": "정리", "purge": "휴지통 비우기", "export": "내보내기",
+              "camera_rename": "카메라 키 바꾸기"}
 
 
 def _start(jobs: JobManager, kind: str, work) -> dict:

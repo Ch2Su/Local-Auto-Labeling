@@ -742,6 +742,49 @@ class Store:
             cur = con.executemany("UPDATE images SET captured_at=? WHERE id=?", [(v, i) for i, v in pairs])
             return cur.rowcount
 
+    def image_paths(self) -> list[tuple[int, str, str | None]]:
+        """모든 이미지의 (id, path, camera) — 카메라 키 바꾸기(camera_rename.py)가 옮길 행과 겹치는 경로를 찾는다."""
+        with self.connect() as con:
+            return [(int(r[0]), r[1], r[2]) for r in con.execute("SELECT id, path, camera FROM images ORDER BY id")]
+
+    def rename_camera_rows(self, moves: list[tuple[int, str, str]], old: str, new: str) -> dict:
+        """카메라 키 바꾸기 (2026-11-11, camera_rename.py) — 한 트랜잭션: moves (id, 지금 경로, 새 경로)의 path·name,
+        camera=old 인 행과 가릴 영역 템플릿의 camera. 지금 경로가 그사이 바뀐 행이 하나라도 있으면 아무것도 안 바꾸고
+        RuntimeError. updated_at 은 그대로다 — 라벨·그림이 아니라 이름만 바뀐다(set_captured_at 과 같은 이유: 최근 수정순·
+        자동 라벨링의 (상태, updated_at) 확인을 흔들지 않는다. 썸네일 캐시는 파일의 수정 시각·크기로 맞춘다).
+        돌려주는 것: 되돌릴 때 쓰는 {camera_ids, template_ids}."""
+        with _write_lock, self.connect() as con:
+            con.execute("BEGIN IMMEDIATE")      # 읽고 쓰는 사이에 다른 연결이 끼지 않게 처음부터 쓰기 잠금
+            for i, src, dst in moves:
+                cur = con.execute("UPDATE images SET path=?, name=? WHERE id=? AND path=?", (dst, Path(dst).name, i, src))
+                if cur.rowcount != 1:
+                    raise RuntimeError(f"이미지 id {i} 의 경로가 그사이 바뀌었습니다 — 아무것도 바꾸지 않았습니다. 다시 하세요.")
+            cams = [int(r[0]) for r in con.execute("UPDATE images SET camera=? WHERE camera=? RETURNING id", (new, old))]
+            tpls = [int(r[0]) for r in con.execute("UPDATE mask_templates SET camera=? WHERE camera=? RETURNING id",
+                                                   (new, old))]
+        return {"camera_ids": cams, "template_ids": tpls}
+
+    def undo_camera_rows(self, moves: list[tuple[int, str, str]], undo: dict, old: str) -> None:
+        """rename_camera_rows 를 되돌린다(그 뒤 cameras.yaml 을 못 고쳤을 때) — 경로는 새 경로인 행만 옛 경로로."""
+        with _write_lock, self.connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            con.executemany("UPDATE images SET path=?, name=? WHERE id=? AND path=?",
+                            [(src, Path(src).name, i, dst) for i, src, dst in moves])
+            con.executemany("UPDATE images SET camera=? WHERE id=?", [(old, i) for i in undo["camera_ids"]])
+            con.executemany("UPDATE mask_templates SET camera=? WHERE id=?", [(old, i) for i in undo["template_ids"]])
+
+    def backup_to(self, dst: Path) -> Path:
+        """DB 를 dst 로 뜬다(sqlite backup — 서버가 쓰는 중이어도 일관된 사본). 카메라 키 바꾸기처럼 행을 많이 바꾸기 전에."""
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src = sqlite3.connect(self.db_path, timeout=30.0)
+        out = sqlite3.connect(dst)
+        try:
+            src.backup(out)
+        finally:
+            out.close()
+            src.close()
+        return dst
+
     def next_image_id(self, current_id: int, status: str = "pending") -> int | None:
         """현재 이미지 다음으로 검수할 이미지. 목록과 같은 정렬 기준을 쓴다."""
         with self.connect() as con:
