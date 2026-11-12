@@ -106,6 +106,11 @@
     보인다(목록 `fields.note` 로 — DB·폴더 번호는 몰라 드물게 다를 수 있고, 결과가 실제 키를 알린다).
   - 프레임 항목 `{i, t, c, s, k}` — `c` 는 앞 장과 바뀐 픽셀 %, `s` 는 **JPEG 바이트까지 같은** 앞 프레임(멈춘 화면 — 처음부터
     `k=false`). 화면이 남기는 빼기 목록은 `PUT …/state {drop, upto}` — `upto` 밖(화면이 아직 못 받은 뒤쪽)은 건드리지 않는다.
+  - **`tools/auto_capture.py`(11-12)가 이 API 를 그대로 부른다** — `POST capture/upload?name&size&mtime`(본문 그대로)·
+    `POST capture/<세션>/extract {every}`·`GET capture/<세션>?since=`·`PUT capture/<세션>/state {drop, upto, camera, start}`·
+    `POST capture/<세션>/commit {camera, start, keep}`·`DELETE capture/<세션>`, 그리고 `GET capture`(limits·cameras)·`GET state`
+    (classes·class_boxes·job)·`POST jobs/predict`. 꼴을 바꾸면 그 도구도 고칠 것. 세션 프레임·썸네일은 서버와 같은 PC 면
+    `<DB 폴더>/capture/<세션>/` 에서 바로 읽는다(없으면 `frame/<i>` 로 받는다).
   - 화면은 뽑는 동안 0.7초마다 `?since=` 로 새 프레임만 받고, `run`(다시 뽑을 때마다 +1)이 바뀌면 처음부터 받는다. 썸네일·원본
     주소에 `?r=<run>` 을 붙여 서버가 1시간 캐시를 허락한다. 폴링 응답의 카메라·시작 시각은 받지 않는다(고치는 중인 값을 덮지 않게).
   - **새 카메라 등록(`＋ 새로` → `POST /api/cameras` → `provenance.add_camera`, 11-10 사용자 요청).** `cameras.yaml` 은 사람이

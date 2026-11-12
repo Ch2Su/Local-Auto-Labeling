@@ -165,6 +165,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
 | `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
 | `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md. 눈으로 골라 넣는 것은 검수 UI 의 **'영상 캡처' 탭**(11-10, 아래 'UI 조작') — 같은 방식·같은 이름이고, 이름·변화량 함수는 `src/autolabel/capture.py` 한 곳에 있다(`import_roadplus.py` 도 거기서 가져간다) |
+| `tools/auto_capture.py` | 영상 캡처의 '고르기' 를 운영 가중치로 대신한다(2026-11-12 사용자 요청 — 녹화부터 자동화의 첫 단계). **검수 서버의 캡처 API 를 그대로 부른다**(올리기·뽑기·`PUT state`·넣기 — 이름·카메라 추정·자동 카메라·스캔 잠금을 capture.py 한 곳에 두려고, 그래서 서버가 켜져 있어야 한다). 기본은 탭에 표시만(세션의 넣기/빼기), `--apply` 면 넣고 자동 라벨링 작업, `--watch` 는 녹화 폴더(크기·수정 시각이 두 번 같고 `--settle` 초 지난 파일만), `--dry-run --sheet` 는 값 맞추기용. 고르기는 `src/autolabel/autopick.py`(같은 객체 = IoU + 12×12 외형 차이, 클래스는 안 봄 — 희소 클래스·애매한 검출 가중, 빈 화면·탐색 몫). **기본값은 공개 영상 두 편·yolo26n(COCO)·CPU 로만 정한 첫 값**이다 — `data/visible/autocapture/frames/*.jsonl` 로 다시 맞출 것. 학습·자동 라벨링이 도는 중이면 CPU 로 검출한다(`/api/state`). 같은 카메라의 영상 여러 개는 `--camera` 로 묶을 것(아니면 영상마다 vid-NN) |
 | `tools/legacy_groups.py` | legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안(DB 읽기 전용) — 사전학습 임베딩을 평균 연결로 묶어 `data/visible/legacy_groups/` 에 CSV·대조 시트. 카메라 후보는 거칠다(웹 사진과 CCTV 크롭이 한 후보에 섞이기도 한다) |
 | `tools/domain_review.py` | 도메인(CCTV·비CCTV·드론)·태그 점검(DB 읽기 전용) — 같은 태그·장면 묶음과 다른 도메인, 비슷한 이미지(임베딩 이웃)와 다른 도메인, EXIF 제조사, 태그 포함 관계·오타 후보, 같은 카메라 누수를 `data/visible/domain_review/` 에 id 목록·대조 시트로. **의심일 뿐이다** — 11-04 에 의심 이미지를 다 눈으로 보니 고칠 것은 6장이었다. 본 것은 `--mark-seen` 으로 그 폴더의 `seen.csv` 에 적고(11-04 점검분 465건), 다음부터 같은 이미지가 같은 도메인으로 같은 검사에 걸리면 목록·시트에서 뺀다(`--all` 이면 다) — 표시는 사람이 다 본 뒤에만 할 것. '일부가 빠진 태그' 표(3장 이상 장면 묶음의 절반 이상에 붙은 태그가 나머지에 빠진 곳)는 따로 — 한 태그의 줄을 다 본 뒤 `--mark-tag <태그>` 로 (이미지, `tagmiss:<태그 id>`) 를 적는다(`--mark-seen` 은 이 표를 적지 않는다) |
 | `tools/prune_seed_json.py` | 시드 COCO json 에서 파일이 없는 이미지 항목과 그 annotations 를 뺀다(scan 의 'JSON 에 있으나 파일이 없는 이미지' 를 없앤다, DB 는 안 건드림). 기본은 보기만·`--apply`. 원본 json 은 `seed_coco` 밖 `seed_json_backup/<시각>/` 에 뜨고, 다시 읽어 남은 이미지·박스가 같은지 본 뒤 다르면 되돌린다. 한 json 의 절반 넘게 없거나 id 가 겹치거나 원래 모양으로 다시 저장할 수 없으면 아무것도 쓰지 않는다(절반은 `--force`) |
@@ -298,6 +299,8 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개).
   `classes.txt` 는 DB 옆이다. `thumbs/`(11-04)는 이미지 보기 썸네일 캐시 — 지워도 되고 백업하지 않는다. `capture/`(11-10)는
   영상 캡처 탭의 임시 세션(올린 영상 사본·뽑은 프레임 — 넣거나 닫으면 서버가 지운다)이라 백업하지 않는다(수 GB 일 수 있다).
+  `autocapture/`(11-12)는 `tools/auto_capture.py` 의 처리 기록 `videos.jsonl`(지우면 처리한 영상을 다시 올린다)·후보 프레임별
+  기록 `frames/`·대조 시트 `sheets/` 다 — 영상 경로·검출 기록이라 git 밖(data/)에 둔다.
 - `export/<프로젝트>/` — 내보내기 기본 폴더. 표식(`export_info.json`)이 있고 그 DB 가 지금 DB 인 폴더만 비우고 다시 쓴다. 저장소
   안의 다른 폴더로 내보내면 그 폴더에 `.gitignore`(`*`)를 둔다. `data.yaml` 은 DB 분할 그대로의 목록(`train.txt`·`val.txt`·
   `test.txt`, 미배정은 빠짐)을 가리킨다(11-05 — 전에는 train = val = images 라 test 가 섞였다).
@@ -507,6 +510,23 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - 고른 모델은 `models/best_<이름>.pt` 로 두고 `best.pt` 로 올린다. 960 이면 `predict.imgsz` 도 960 으로 바꾸고, 학습 중 P(CPU)는
      m 보다 몇 배 느려진다. 웹 UI 학습 버튼(config `model.base`)은 m640 그대로 둬 로컬 반복용으로 쓴다. 그 뒤로 `best.pt` 는
      DetectView 에 그대로 넘길 모델이 아니다 — 넘길 때는 m 을 따로 학습한다.
+7. **녹화부터 자동화 (11-12 사용자 요청 — 카메라는 아직 없다, IP캠·웹캠 미정).** 1단계로 `tools/auto_capture.py`(영상 캡처의
+   고르기 자동화)를 만들었다 — 만든 세션(클라우드)은 리눅스·CPU·yolo26n(COCO)·공개 영상 두 편(768×432)으로 시험했고, **같은 날 이
+   PC 에서 DB·이미지 사본으로 띄운 시험 서버에 돌려 봤다**(운영 가중치·GPU, 보관 폴더의 hw-02·04·05 클립 — docs/experiments.md
+   '자동 고르기 첫 실행'): `--dry-run --sheet`, 기본(탭에 고른 칸만 `넣기` 로), `--apply`(이름에서 읽은 카메라·시각, 자동 카메라
+   `vid-NN`, 자동 라벨링 작업), `--watch`, 한글 경로, 서버 작업 중 CPU → 끝나면 GPU 전환이 다 됐다. **진짜 서버·진짜 DB 로는 아직
+   안 돌렸다(사용자가 한다).** 남은 것:
+   - **기본값은 고속도로 화면에서 한 구간에 몰린다** — 4분 30초 영상에서 본 고르기 8장 가운데 6장이 차가 가장 많은 21초 안에
+     들어가고 그 뒤 145초에서는 한 장도 안 골랐다. 지나가는 차는 후보마다 자리가 달라 늘 '새 객체' 라서 차가 많은 순간이 값을
+     독차지한다(기본 `--gap` 3초로는 못 막는다). `--gap 20` 이면 영상 전체에 퍼졌다. 기본값을 바꿀지는 사용자와 시트를 보고 정할 것.
+   - 값 맞추기 — `autocapture/frames/*.jsonl` 의 검출별 마지막 값(앞 후보와의 외형 차이)으로 `--match-sig`, `flat`·`sharp` 로
+     `blank_flat`·`--blur-ratio`, 고른 결과를 눈으로 보고 `--per-min`·`--gap`·`--explore`. 그날 hw-04 화면에서는 외형 차이의
+     중앙값이 12.9 라 기본 `--match-sig` 12 가 분포 한가운데였다(같은 객체와 다른 객체를 가르는 값으로 약하다).
+   - 안 본 것 — 1080p·1440p 풀 해상도 영상의 검출 속도(720p 는 GPU 초당 약 50장·CPU 2\~3장), 밤·안개 화면이 '어두움'·'흐림' 으로
+     잘못 버려지는지, 학습이 도는 동안의 VRAM.
+   - 카메라를 들이면 `tools/record.py` — ffmpeg 조각 녹화(IP캠 RTSP 는 `-c copy`, 웹캠은 dshow + NVENC), 이름은
+     `<카메라 키>_%Y%m%d_%H%M%S.mkv`(이름에서 카메라·시각을 읽는다. mp4 는 끝에 moov 를 쓰니 녹화가 끊기면 못 연다)로 폴더에 쌓고,
+     `auto_capture.py --watch --apply` 가 받는다.
 
 ## 사용자에 대해
 
