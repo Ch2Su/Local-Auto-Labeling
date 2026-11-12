@@ -964,6 +964,7 @@ pytest 는 기본 설치에 없어서 처음 한 번만 깐다.
 | `test_yolo_io.py` | 라벨 읽기·쓰기 — 박스 행과 폴리곤 행이 섞인 파일, NaN, EXIF 회전 이미지의 크기 |
 | `test_pitfalls.py` | `dfl` 0·Windows 의 ram 캐시 경고, 정리가 같은 이름의 파일을 덮지 않기 |
 | `test_server.py` | 검수 서버 — NaN 박스 422, test 이미지의 가릴 영역 409, 다른 사이트에서 부르기 403 |
+| `test_subset_dataset.py` | 실험용 세트 만들기(`tools/build_subset_dataset.py`) — 고르는 기준, 원본 DB 를 건드리지 않기, 분할 그대로 쓰기 |
 | `test_js_parity.py` | 화면(JS)과 서버(Python)에 두 번 쓴 식이 같은 답을 내는가, 화면 스크립트가 문법 오류 없이 읽히는가 — node 가 있어야 돈다(없으면 건너뛴다) |
 | `test_autopick.py` | 영상 자동 고르기(`tools/auto_capture.py` 의 `autopick`) — 서 있는 차는 한 번만 세기, 같은 자리라도 생김새가 다르면 새 객체, 클래스가 오가도 같은 객체, 간격·예산, 드문 클래스·애매한 검출 먼저, 버릴 화면 5종, 빈 화면·탐색 몫 |
 | `test_js_nav.py` | `↑` `↓` 를 누르고 있으면 계속 넘어가는가 — 화면의 넘기기 코드를 node 로 그대로 돌리고 키 반복·서버 응답·사진 도착만 가짜 시계로 일으킨다(`nav_harness.js`). 사진이 뜨기 전에 지나치지 않기, 목록 끝·받지 못한 사진·실패한 요청에서 멈춰 버리지 않기 — node 가 있어야 돈다 |

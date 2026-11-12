@@ -16,6 +16,13 @@ pod 를 만들기 전에 GPU·예상 시간·비용을 말하고 허락받는 �
   docs/experiments.md — resume.pt 는 pod 와 함께 사라져 300 epoch 은 처음부터다(비용도 그 기준으로 말할 것).
 - 절차는 `runs/runpod/`(묶음 tar → scp → `pod_probe.sh` → `pod_compare.sh`). 묶음을 만든 `make_bundle.py` 는 저장소에 없다 —
   DB 로 `data/visible/dataset` 을 만들어 tar 로 묶는 스크립트를 새로 짤 것.
+- **실험용 묶음은 `tools/build_subset_dataset.py … --apply --tar`(2026-11-12)** — 원본 DB 를 읽기 전용으로 사본 떠, 고른 승인
+  이미지만으로 `<out>/dataset/`·`dataset.tar` 를 쓴다(프로젝트 DB·데이터는 안 건드린다). 11-12 에 만든 것: `E:\datasets\lal_oldcctv8`
+  (옛 CCTV 8클래스 — train 2,290 / val 523 / test 441, tar 2.71GB)·`E:\datasets\lal_newtest8`(새 풀 프레임 119장, 평가 전용).
+  **큰 모델 × 큰 해상도 비교는 `pod_xres.sh`**(m·x × 640·1280, batch 8 고정, 끝나면 `wsl/eval_test.py` 로 두 test 에 재
+  `runs/xres_1112/summary.jsonl`) — 준비물·명령은 그 파일 머리말, 기준선은 docs/experiments.md '새 풀 프레임 데이터'.
+  pod 에 올릴 것: 두 tar, `wsl/train_wsl.py`·`wsl/eval_test.py`, `weights/yolo26m.pt`·`yolo26x.pt`(로컬에 x 가 없다 — pod 에서
+  받는다), `models/best_y26m_8cls.pt`.
 - 학습 전에 **`pip install --break-system-packages -U pillow` 와 `labels/*.cache` 삭제** — 이미지의 Pillow 11.0.0 은 확장자만
   .png 인 삼성 폰 JPEG 29장을 '손상'으로 빼고 AVIF 도 못 읽는다. `/workspace` 는 네트워크 FS 라 데이터셋은 `/root` 에 풀고,
   컨테이너 RAM 한도(A40 46.6GiB)에 ram 캐시·워커가 겹치면 SIGKILL 된다. SSH 로 `a && b && setsid nohup ... &` 처럼 목록째
