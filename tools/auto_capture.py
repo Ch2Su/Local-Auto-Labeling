@@ -693,7 +693,8 @@ def main() -> int:
     g.add_argument("--per-min", type=float, default=2.0, help="영상 1분당 최대 장수(기본 2)")
     g.add_argument("--max", type=int, default=300, help="영상 하나에서 최대 장수(기본 300)")
     g.add_argument("--min", type=int, default=1, help="짧은 영상도 이만큼은(기본 1)")
-    g.add_argument("--gap", type=float, default=3.0, help="고른 프레임 사이 최소 간격(초, 기본 3)")
+    g.add_argument("--gap", type=float, default=20.0,
+                   help="고른 프레임 사이 최소 간격(초, 기본 20 — 1분에 60/gap 장을 넘게 못 고르니 --per-min 을 올리면 함께 줄일 것)")
     g.add_argument("--det-conf", type=float, default=0.10, help="고르기용 검출 신뢰도 하한(기본 0.10)")
     g.add_argument("--match-iou", type=float, default=0.5, help="같은 객체로 볼 IoU(기본 0.5)")
     g.add_argument("--match-sig", type=float, default=12.0, help="같은 객체로 볼 외형 차이 0~255(기본 12)")

@@ -1,6 +1,7 @@
 """autopick 단위 시험 — 손으로 만든 검출로 고르기 규칙을 확인한다 (2026-11-12).
 
 `tools/auto_capture.py` 를 만든 세션이 저장소 밖에서 쓴 검증용을 그대로 옮겼다(영상·모델·서버 없이 `autopick.select` 만 본다).
+끝의 둘(`test_default_gap_…`·`test_cli_defaults_…`)은 같은 날 간격 기본값을 3 → 20 초로 바꾸며 더했다.
 pytest 로 다른 테스트와 함께 돌고, pytest 없이도 돈다:
     .venv\\Scripts\\python.exe tests\\test_autopick.py
 """
@@ -175,6 +176,45 @@ def test_speed_large():
     dt = time.perf_counter() - t0
     print(f"  5000 후보 × 20 검출: {len(r.picks)}장 고름, {dt:.2f}초")
     assert dt < 30
+
+
+def test_default_gap_spreads_over_dense_traffic():
+    # 2026-11-12 에 이 PC 의 고속도로 영상에서 본 것 — 지나가는 차는 후보마다 자리가 달라 늘 새 객체라서, 간격이 3초(처음 기본값)일
+    # 때는 차가 가장 많은 구간에 고르기가 몰리고 나머지 구간은 비었다. 기본값(20초)이면 영상에 퍼진다.
+    # 270초, 매 초 새 차 4대(100~124초에는 12대). 박스 자리는 90초마다 겹치지만 색이 달라 같은 차가 아니다.
+    def frame(t):
+        n = 12 if 100 <= t < 125 else 4
+        y = (t % 90) / 100.0
+        return [det(CAR, 0.9, (0.05 * k, y, 0.05 * k + 0.04, y + 0.008), (t % 256, t * 5 % 256, 128)) for k in range(n)]
+
+    cands = [cand(t, float(t), frame(t)) for t in range(270)]
+    r = autopick.select(cands, Params(background=0, explore=0), W1, every=1.0)
+    ts = sorted(pk.t for pk in r.picks)
+    assert len(ts) == r.budget == 9, ts
+    assert all(b - a >= 20 for a, b in zip(ts, ts[1:])), ts
+    assert sum(100 <= t < 125 for t in ts) <= 2, ts                  # 붐비는 25초에서는 두 장까지만
+    assert min(ts) < 100 and max(ts) >= 125, ts                      # 그 앞뒤 구간에서도 고른다
+    old = autopick.select(cands, Params(gap=3, background=0, explore=0), W1, every=1.0)
+    assert all(100 <= pk.t < 125 for pk in old.picks) and len(old.picks) == 9    # 처음 기본값이면 아홉 장이 다 그 구간
+
+
+def test_cli_defaults_match_params():
+    # tools/auto_capture.py 의 고르기 옵션 기본값은 Params 의 기본값과 같아야 한다 — 두 곳에 적혀 있어 한쪽만 고치기 쉽다
+    # (2026-11-12 에 gap 을 3 → 20 초로 바꾸며 더했다). 도구는 main() 안에서 옵션을 만들어서 글자로 읽는다 — add_argument 줄의
+    # 모양('"--이름", type=…, default=값')을 바꾸면 여기도 맞출 것.
+    import re
+
+    src = (Path(__file__).resolve().parents[1] / "tools" / "auto_capture.py").read_text(encoding="utf-8")
+    pairs = {"--per-min": "per_min", "--max": "max_total", "--min": "min_total", "--gap": "gap", "--match-iou": "match_iou",
+             "--match-sig": "match_sig", "--uncertain-bonus": "uncertain_bonus", "--min-gain": "min_gain",
+             "--background": "background", "--explore": "explore", "--explore-change": "explore_change",
+             "--blur-ratio": "blur_ratio"}
+    d = Params()
+    for flag, name in pairs.items():
+        m = re.search(rf'add_argument\("{re.escape(flag)}", type=(?:float|int), default=([0-9.]+)', src)
+        assert m, f"tools/auto_capture.py 에서 {flag} 의 기본값을 찾지 못했습니다"
+        assert float(m.group(1)) == float(getattr(d, name)), (flag, m.group(1), getattr(d, name))
+    assert d.gap == 20.0
 
 
 if __name__ == "__main__":

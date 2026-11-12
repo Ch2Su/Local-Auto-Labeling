@@ -27,7 +27,8 @@
 (`per_min`·`max_total`)과 `gap` 이 막는다.
 
 기본값은 2026-11-12 에 공개 영상 두 편(주차장을 내려다본 768×432)과 yolo26n(COCO)으로만 돌려 본 첫 값이다 — 이 데이터·운영 가중치로 다시
-맞출 것. 맞출 근거는 도구가 남기는 프레임별 기록(`autocapture/frames/*.jsonl`)에 있다.
+맞출 것. 맞출 근거는 도구가 남기는 프레임별 기록(`autocapture/frames/*.jsonl`)에 있다. `gap` 만은 같은 날 이 PC 의 고속도로
+영상으로 3 → 20 초로 바꿨다(`Params.gap` 의 주석).
 """
 
 from __future__ import annotations
@@ -77,7 +78,11 @@ class Params:
     per_min: float = 2.0          # 영상 1분당 최대 장수
     max_total: int = 300          # 영상 하나에서 최대 장수
     min_total: int = 1            # 짧은 영상도 이만큼은 (볼 것이 있으면)
-    gap: float = 3.0              # 고른 프레임 사이 최소 간격(초)
+    # 고른 프레임 사이 최소 간격(초). 처음엔 3 이었다 — 2026-11-12 에 이 PC 의 고속도로 영상(269초)으로 돌려 보니 본 고르기 8장
+    # 가운데 6장이 차가 가장 많은 21초 안에 몰리고 그 뒤 145초는 0장이었다(지나가는 차는 후보마다 자리가 달라 늘 새 객체다).
+    # 20 이면 영상 전체에 퍼졌다(사용자 결정, docs/experiments.md '자동 고르기 첫 실행'). 1분에 60/gap 장을 넘게 못 고르니
+    # per_min 을 3 넘게 올릴 때는 함께 줄일 것. tools/auto_capture.py 의 --gap 기본값과 같은 값이다 — 고치면 둘 다.
+    gap: float = 20.0
     match_iou: float = 0.5        # 같은 객체로 볼 박스 IoU
     match_sig: float = 12.0       # 같은 객체로 볼 외형 평균 절대 차이(0~255)
     uncertain_bonus: float = 1.0  # 애매한 검출의 덧값 (애매함 1 이면 값이 2배)
