@@ -201,6 +201,14 @@
   (자동 라벨링·휴지통 비우기·정리, `IMAGE_JOBS`)이 끝나면 `syncCurrentAfterJob` 이 지금 이미지를 맞춘다(404 면 비우고 첫 장) —
   학습·스캔은 넣지 말 것(긴 학습이 끝날 때 되돌리기·확대가 날아간다). 서버 쪽 `AutoLabeler.run` 도 시작 때의 (상태, updated_at)
   과 같을 때만 쓴다(`store.apply_prediction`).
+- **↑·↓ 는 누르고 있으면 계속 넘어간다 (11-12 사용자 요청) — Space·Enter·S 와 달리 키 반복을 받는다.** keydown 이 `e.repeat` 를
+  `step(delta, held)` 에 넘기고, 반복 입력은 앞 장이 다 뜬 뒤에만 넘긴다(`imageLoading()` — `S.loading`: 돌고 있는 `loadImage`
+  수, `S.imgPending`: 사진을 받는 중인 메타). 그 전에는 반복(약 33ms)마다 넘기려다, 정보 받기(실측 40~50ms)가 끝나기 전에 같은
+  장을 또 요청하고 앞 요청은 `S.loadSeq` 에 버려져 누르는 동안 한 장만 넘어갔다(시험 서버 3초: 1장 → 32장, 장마다 사진이 뜬 뒤).
+  **입력이 올 때만 움직인다** — '누르고 있음' 을 따로 기억해 타이머로 넘기지 말 것(창이 포커스를 잃어 keyup 을 놓치면 혼자 계속
+  넘어간다). `loadImage` 는 `loadImageNow` 를 감싸 어느 길로 끝나든 `S.loading` 을 내리고, `S.imgPending` 은 onload·onerror 가
+  내린다 — 새 끝내기 길을 만들면 둘 다 볼 것(안 내리면 누르고 있는 화살표가 그 뒤로 먹지 않는다). 목록 끝에서 반복 입력은 같은
+  장을 다시 열지 않는다(한 번 누르기는 전처럼 다시 연다). `tests/test_js_nav.py` 가 이 함수들을 node 로 돌린다.
 - **건너뛰기와 '검수 대기로' 는 한 번 묻는다 (11-11 사용자 요청).** `skipOrAdvance` 는 건너뜀으로 내릴 때만 `confirm` 한다(상태를
   바꾸지 않는 '다음' 은 묻지 않는다). 아래 줄의 `검수 대기로`(`#btn-to-pending` → `backToPending`)는 승인됨·건너뜀·휴지통에서
   보이고(`BACK_TO_PENDING` — 전의 휴지통 '복원' 을 넓혔다), 상태만 pending 으로 바꾸고 다음으로 간다. 둘 다 묻기 전에 `navBusy()`

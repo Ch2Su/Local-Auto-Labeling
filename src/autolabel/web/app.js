@@ -34,6 +34,8 @@ const S = {
   img: null,          // HTMLImageElement
   imgId: null,        // S.img 가 어느 이미지의 사진인가 (onload 때 정한다). S.cur.id 와 다르면 아직 안 떴다
   loadSeq: 0,         // loadImage 순번 — 겹치면 마지막 것만 반영한다
+  loading: 0,         // 돌고 있는 loadImage 수 — 0 보다 크면 이미지 정보를 받는 중이다 (imageLoading)
+  imgPending: null,   // 사진을 받는 중인 이미지의 메타(S.cur 와 같은 객체). 뜨거나 받지 못하면 null (imageLoading)
   view: { scale: 1, ox: 0, oy: 0 },
   mode: "box",        // "box" = 새 박스 / "pan" = 화면 끌기 / "sam" = SAM 클릭 / "mask" = 가릴 영역
   ctrl: false,        // Ctrl 을 누르고 있는 동안 두 모드가 뒤바뀐다
@@ -2963,6 +2965,16 @@ function openImage(id) {
 }
 
 async function loadImage(id) {
+  // 도는 동안을 센다(S.loading → imageLoading) — 저장 실패·요청 실패·다른 이미지에 밀림, 어느 길로 끝나도 내린다
+  S.loading++;
+  try {
+    await loadImageNow(id);
+  } finally {
+    S.loading--;
+  }
+}
+
+async function loadImageNow(id) {
   // 빨리 넘기면 여러 번이 겹친다. 마지막으로 부른 것만 반영한다 — 예전에는 늦게 온 앞 응답이 이겨, 마지막에
   // 누른 것과 다른 이미지가 열렸다 (2026-11-05)
   const seq = ++S.loadSeq;
@@ -2980,6 +2992,7 @@ async function loadImage(id) {
   // 이번에 연 사진이 뜰 때까지(onload) 승인·그리기를 막는다 — 같은 이미지를 다시 열어도(작업 뒤 syncCurrentAfterJob)
   // 새 박스가 그려지기 전에 Space 가 승인하지 않게
   S.imgId = null;
+  S.imgPending = meta;      // 아래 onload·onerror 가 내린다 — 그때까지 누르고 있는 ↑·↓ 는 기다린다 (step)
   // cls0 = 열었을 때의 클래스. '같은 자리 일괄 수정' 이 원래 클래스로 짝을 찾는 데 쓴다.
   // 저장 페이로드에는 들어가지 않는다 (saveBoxes 가 필드를 골라 보낸다).
   S.boxes = meta.boxes.map((b) => ({ ...b, cls0: b.cls }));
@@ -3027,6 +3040,7 @@ async function loadImage(id) {
   img.onload = () => {
     // 빨리 넘기면 앞 이미지가 늦게 도착할 수 있다. 지금 이미지가 아니면 버린다(같은 이미지를 다시 열었으면 뒤의 것만).
     if (S.cur !== meta) return;
+    S.imgPending = null;
     // 화면 좌표는 **브라우저가 그린 크기**로 계산한다. EXIF 회전이 있는 사진은 DB 크기
     // (회전 전 원시 크기, 예: 4000x3000)와 브라우저가 그린 크기(3000x4000)가 뒤바뀌어
     // 찌그러져 보였다. 박스는 정규화 좌표이고 학습(Ultralytics)도 회전을 적용한 화면
@@ -3038,6 +3052,7 @@ async function loadImage(id) {
   };
   img.onerror = () => {
     if (S.cur !== meta) return;
+    S.imgPending = null;
     // 앞 장 사진을 남겨 두면 그 위에 이 이미지의 박스가 그려지고 Space 가 이 이미지를 승인했다(2026-11-05).
     // 비워서 빈 화면으로 두고(승인·그리기는 막힌다 — setStatus·mousedown), 오른쪽 박스 목록은 이 이미지 것으로.
     S.img = null; S.imgId = null;
@@ -3183,11 +3198,24 @@ async function backToPending() {
   await setStatus("pending");
 }
 
-function step(delta) {
+/** 지금 이미지가 아직 뜨는 중인가 — 정보를 받는 중이거나(loadImage), 받았는데 사진이 뜨지도 받지 못하지도 않았다. */
+function imageLoading() {
+  return S.loading > 0 || (!!S.cur && S.imgPending === S.cur);
+}
+
+/** ↑·↓ — 목록의 한 줄 위·아래 이미지로. held 는 키를 누르고 있어서 들어온 반복 입력이다.
+ *  누르고 있으면 앞 장의 사진이 뜬 뒤에 다음 장으로 계속 넘어간다 (2026-11-12 사용자 요청). 그 전에는 반복 입력(약 33ms
+ *  마다)이 올 때마다 넘기려 했는데, 이미지 정보를 받는 데 그보다 오래 걸려(실측 40~50ms) S.cur 가 바뀌기 전에 같은 장을
+ *  또 요청하고 앞 요청은 버려져서(S.loadSeq), 누르고 있는 동안에는 처음 한 장 뒤로 더 넘어가지 않았다. 뜨는 중에 온 반복은
+ *  버리고 다음 반복에서 다시 본다 — 입력이 올 때만 움직이므로 키에서 손을 떼면 그 자리에 선다. 목록 끝에서는 같은 장을
+ *  다시 열지 않는다(반복 입력일 때 — 한 번 누른 것은 전처럼 다시 연다). */
+function step(delta, held = false) {
   if (!S.images.length) return;
+  if (held && imageLoading()) return;
   const idx = S.images.findIndex((im) => S.cur && im.id === S.cur.id);
   // 지금 이미지가 목록에 없으면(목록 밖에서 열었거나 빠졌다) 첫 줄로 — 예전에는 ↓ 가 둘째 줄로 갔다 (2026-11-05)
   const next = idx < 0 ? 0 : Math.min(S.images.length - 1, Math.max(0, idx + delta));
+  if (held && next === idx) return;
   openImage(S.images[next].id);
 }
 
@@ -3771,9 +3799,9 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault(); if (!e.repeat) setStatus("approved"); break;
     case "s": case "S": case "ㄴ":
       e.preventDefault(); if (!e.repeat) skipOrAdvance(); break;
-    // 목록이 세로라 위·아래로 넘긴다 (2026-11-03 사용자 요청, 전에는 ←·→)
-    case "ArrowDown": e.preventDefault(); step(1); break;
-    case "ArrowUp":   e.preventDefault(); step(-1); break;
+    // 목록이 세로라 위·아래로 넘긴다 (2026-11-03 사용자 요청, 전에는 ←·→). 누르고 있으면 계속 넘어간다 (step 의 held)
+    case "ArrowDown": e.preventDefault(); step(1, e.repeat); break;
+    case "ArrowUp":   e.preventDefault(); step(-1, e.repeat); break;
     case "Delete": case "Backspace":
       if (S.msel >= 0) { e.preventDefault(); deleteMask(S.msel); }
       else if (S.sel >= 0) { e.preventDefault(); pushUndo(); S.boxes.splice(S.sel, 1); S.sel = -1; markDirty(); refresh(); }

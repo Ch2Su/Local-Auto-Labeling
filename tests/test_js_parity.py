@@ -36,8 +36,9 @@ def find_node() -> str | None:
 
 def js_function(src: str, name: str) -> str:
     lines = src.splitlines()
-    start = next((i for i, line in enumerate(lines) if line.startswith(f"function {name}(")), None)
-    assert start is not None, f"JS 에서 'function {name}(' 를 찾지 못했습니다 (맨 왼쪽에서 시작해야 한다)"
+    heads = (f"function {name}(", f"async function {name}(")
+    start = next((i for i, line in enumerate(lines) if line.startswith(heads)), None)
+    assert start is not None, f"JS 에서 'function {name}(' 를 찾지 못했습니다 (맨 왼쪽에서 시작해야 한다 — async 는 붙어도 된다)"
     end = next((i for i in range(start, len(lines)) if lines[i] == "}"), None)
     assert end is not None, f"JS 함수 {name} 의 끝(맨 왼쪽 '}}')을 찾지 못했습니다"
     return "\n".join(lines[start:end + 1])

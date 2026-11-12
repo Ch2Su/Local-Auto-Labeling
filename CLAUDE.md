@@ -180,6 +180,10 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 - `tests/test_js_parity.py` 가 '고치면 둘 다' 인 식(`maskCover`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`capName`·
   `MASK_MAX`·`MASK_DROP`·`MASK_SAME`)을 node 로 돌려 Python 과 견주고, 화면 스크립트 셋의 문법도 본다. JS 선언을 글자로
   떼므로(맨 왼쪽 `function 이름(` … 맨 왼쪽 `}`, 한 줄 `const`) 그 모양을 바꾸면 테스트의 규칙도 맞춘다. 짝이 새로 생기면 거기에 더할 것.
+- `tests/test_js_nav.py`(11-12)는 같은 규칙으로 app.js 의 이미지 넘기기(`step`·`imageLoading`·`openImage`·`loadImage`·
+  `loadImageNow`)를 떼어 `tests/nav_harness.js` 에서 **그대로** 돌린다 — 키 반복·서버 응답·사진 도착만 가짜 시계로 일으키고,
+  이 함수들이 부르는 그 밖의 화면 함수는 아무것도 안 하는 대역이 받는다. ↑·↓ 를 누르고 있으면 계속 넘어가는지(src/autolabel/CLAUDE.md)
+  를 지킨다. 이 다섯 함수의 이름을 바꾸면 테스트의 `PARTS` 도 맞춘다.
 - **좌표가 '같은 자리' 인지는 반올림한 값을 견주지 말고 `masks.same_rect`(화면 `sameRect`)로 본다** — 네 좌표의 차가 모두
   `SAME`(7.5e-8) 이하. 11-12 에 테스트로 찾아 고쳤다: 소수 7자리 반올림 키는 픽셀에 딱 맞춘 좌표(2560·1280 폭)가 반올림 경계에
   자주 걸려, 화면이 영역을 {cx, cy, w, h} 로 들었다 되돌리는 끝자리 잡음만으로 다른 자리가 됐다(같은 템플릿을 두 번 더하면 겹쳐
