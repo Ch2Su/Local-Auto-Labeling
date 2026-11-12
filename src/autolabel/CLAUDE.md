@@ -5,6 +5,9 @@
 이 파일은 `src/autolabel/` 아래 파일을 다룰 때만 읽힌다.
 
 사용자 문서·단축키는 README '검수 UI 사용법'. 작업자가 알아야 할 것만:
+- **이 폴더를 고친 뒤에는 회귀 테스트를 돌릴 것**(2026-11-12, `tests/` — `.venv\Scripts\python.exe -m pytest`, 루트 CLAUDE.md
+  '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`xyxyKey`·`capNoTimeName`·`MASK_MAX` 는 `tests/test_js_parity.py` 가
+  화면과 서버를 대조한다 — `xyxyKey` 는 픽셀에 딱 맞춘 좌표에서 `mask_key` 와 갈리는 것이 알려져 있다(xfail, 안 고쳤다).
 - **편집은 0.6초 뒤 자동 저장된다**(`app.js` `markDirty`·`flushSave`) — UI 를 시험하면 실제 작업물이 바뀐다. 먼저
   `GET /api/images/{id}` 로 떠 두고 끝나면 `PUT /api/images/{id}/boxes` 로 되돌릴 것. 경합 시험은 **DB 복사본**(sqlite `backup()`)
   으로 띄운 서버에서 한다.

@@ -905,6 +905,41 @@ ltrb 거리의 L1 손실에 곱해집니다. 0 으로 두면 에러 없이 학�
 (합성 데이터 A/B: mAP50 은 같고 mAP50-95 가 0.953 → 0.902). `train` 은 `dfl` 이 0 이면 경고를
 냅니다. 자세한 근거는 CLAUDE.md 함정 1.
 
+## 회귀 테스트
+
+`tests/` 에 자동 테스트가 있다(2026-11-12). 코드를 고친 뒤 돌리면, 전에 고친 버그와 문서에 적어 둔 규칙이 다시 깨졌는지
+10초 안팎에 알려 준다. **실제 데이터는 건드리지 않는다** — DB·설정·카메라 등록 파일을 임시 폴더에 만들어 쓰고, GPU·모델·
+학습은 쓰지 않는다.
+
+```bat
+.venv\Scripts\python.exe -m pip install pytest==9.2.0
+.venv\Scripts\python.exe -m pytest
+```
+
+pytest 는 기본 설치에 없어서 처음 한 번만 깐다. 결과 줄의 `x` 하나(`1 xfailed`)는 아래의 **알려진 어긋남**이다.
+
+| 파일 | 지키는 것 |
+|---|---|
+| `test_grouping.py` | 같은 장면 묶기 — tidy·로보플로 꼬리표, 숫자뿐인 이름, 스크린샷 연사, 이름은 카메라 안에서만 잇기, dHash 와 EXIF 회전 |
+| `test_split.py` | 분할 — 한 장면은 한 분할에만, **이미 정한 배정은 움직이지 않는다**, 카메라 고정, 비율에서 빠진 분할이 있으면 쓰기 전에 멈춤 |
+| `test_store.py` | DB 저장 — 변경 이력(목록은 한 번만 둔다), 가릴 영역, 자동 라벨링이 사람의 손을 덮지 않기, 일괄 수정과 되돌리기, id 를 다시 쓰지 않기 |
+| `test_masks.py` | 가릴 영역 — 덮는 몫(겹친 영역을 두 번 세지 않는다), 학습 라벨에서 뺄 박스, 칠하기 |
+| `test_provenance.py` | 촬영 시각 읽기, 시간대, `cameras.yaml` 더하기·빼기·고치기(더했다 빼면 바이트까지 처음과 같다) |
+| `test_yolo_io.py` | 라벨 읽기·쓰기 — 박스 행과 폴리곤 행이 섞인 파일, NaN, EXIF 회전 이미지의 크기 |
+| `test_pitfalls.py` | `dfl` 0·Windows 의 ram 캐시 경고, 정리가 같은 이름의 파일을 덮지 않기 |
+| `test_server.py` | 검수 서버 — NaN 박스 422, test 이미지의 가릴 영역 409, 다른 사이트에서 부르기 403 |
+| `test_js_parity.py` | 화면(JS)과 서버(Python)에 두 번 쓴 식이 같은 답을 내는가 — node 가 있어야 돈다(없으면 건너뛴다) |
+
+테스트가 보지 않는 것: 브라우저 화면 조작, 실제 학습·추론, WSL·Runpod 스크립트, `tools/` 의 도구들.
+`tools/test_baseline.py`·`test_tiles.py` 는 이름만 `test_` 인 측정 도구다(`pytest.ini` 가 `tests/` 만 모은다).
+
+버그를 고치면 그 버그를 다시 내는 입력을 테스트로 남긴다.
+
+**알려진 어긋남 1건** (`test_js_parity.py` 의 xfail, 아직 고치지 않았다) — 픽셀에 딱 맞춘 가릴 영역(`tools/mask_images.py --rect`
+가 만드는 꼴)은 2560·1280 폭에서 '같은 자리' 판정(소수 7자리 반올림)의 경계에 걸리는 좌표가 많아, 화면과 서버의 판정이 갈리거나
+화면을 한 번 오간 뒤 같은 자리로 못 알아볼 수 있다(같은 템플릿을 두 번 더하면 겹쳐 들어가고, 빼기가 그 영역을 남긴다).
+손으로 그린 영역에는 생기지 않는다(11-12 에 DB 의 561개 모두 0건).
+
 ## 폴더 구조
 
 ```
@@ -940,6 +975,7 @@ wsl/                   WSL 학습 스크립트 (웹 UI 'WSL 학습' 버튼이 �
 docs/experiments.md    실험·비교 기록 (모델 선택 근거)
 docs/label-rules.md    라벨 판정 기준 전문 (차종별 실물 예시·점검 기록)
 src/autolabel/         소스
+tests/                 회귀 테스트 — `.venv\Scripts\python.exe -m pytest` (위 '회귀 테스트')
 tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\python.exe tools\<이름>.py`
   import_o365.py       Objects365 의 Van·Pickup Truck 사진을 검수 대기로 넣는다 (기본은 보기만, --apply 로 넣음.
                        Objects365 를 푼 폴더는 --root, 기본 E:\datasets\objects365 — 11-02 부터 원본은

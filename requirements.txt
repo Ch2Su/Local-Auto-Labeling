@@ -35,3 +35,7 @@ numpy==2.5.2
 
 # --- 선택: tools/label_qa_claude.py (Claude API 파일럿) 에서만 쓴다 ---
 # 기본 설치에는 넣지 않는다. 그 도구를 돌릴 때만:  .venv\Scripts\python.exe -m pip install anthropic==1.6.0
+
+# --- 선택: 회귀 테스트 (tests/, README '회귀 테스트') ---
+# 기본 설치에는 넣지 않는다. 테스트를 돌릴 때만:  .venv\Scripts\python.exe -m pip install pytest==9.2.0
+# (2026-11-12 에 9.2.0 으로 확인. 화면(JS) 쪽을 대조하는 test_js_parity.py 는 node 도 있어야 돈다 — 없으면 건너뛴다)

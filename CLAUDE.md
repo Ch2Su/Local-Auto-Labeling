@@ -170,6 +170,22 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | `tools/prune_seed_json.py` | 시드 COCO json 에서 파일이 없는 이미지 항목과 그 annotations 를 뺀다(scan 의 'JSON 에 있으나 파일이 없는 이미지' 를 없앤다, DB 는 안 건드림). 기본은 보기만·`--apply`. 원본 json 은 `seed_coco` 밖 `seed_json_backup/<시각>/` 에 뜨고, 다시 읽어 남은 이미지·박스가 같은지 본 뒤 다르면 되돌린다. 한 json 의 절반 넘게 없거나 id 가 겹치거나 원래 모양으로 다시 저장할 수 없으면 아무것도 쓰지 않는다(절반은 `--force`) |
 | `tools/scheduled_stop.py` | 정해진 시각에 웹 UI 학습을 정상 중단(탭 서버에서는 `/api/projects` 로 학습 중인 프로젝트를 찾는다) |
 
+## 회귀 테스트
+
+`tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
+(10초 안팎. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+- **버그를 고치면 그 버그를 다시 내는 입력을 테스트로 남긴다** — 일회용 스크립트로 확인하고 버리지 말 것.
+- 테스트의 `cfg`(`tests/conftest.py`)는 `data.*` 경로를 전부 임시 폴더의 절대경로로 적는다. 새 경로 설정을 쓰는 코드를 시험하면
+  거기에도 넣을 것 — 빼면 `config.resolve` 가 저장소의 `data/` 를 가리킨다.
+- `tests/test_js_parity.py` 가 '고치면 둘 다' 인 식(`maskCover`·`xyxyKey`·`capNoTimeName`·`capName`·`MASK_MAX`·`MASK_DROP`)을
+  node 로 돌려 Python 과 견준다. JS 선언을 글자로 떼므로(맨 왼쪽 `function 이름(` … 맨 왼쪽 `}`, 한 줄 `const`) 그 모양을 바꾸면
+  테스트의 규칙도 맞춘다. 짝이 새로 생기면 거기에 더할 것.
+- **알려진 어긋남(xfail 1건, 안 고쳤다):** 픽셀에 딱 맞춘 가릴 영역의 '같은 자리' 키 — 2560·1280 폭에서는 7자리 반올림의
+  경계에 걸리는 좌표가 많아 화면(`Math.round`)과 서버(`round`)의 키가 다르고, 화면을 한 번 오가면 키가 바뀐다(손으로 그린 영역은
+  0건). 실측·설명은 그 테스트의 docstring. 고치면 xfail 표시를 뗀다(strict 라 고쳐지면 '뜻밖의 통과' 로 알려 준다).
+- `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작,
+  학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.
+
 ## 라벨 기준
 
 전문·차종별 실물 예시·전수 검사 기록은 [docs/label-rules.md](docs/label-rules.md) — 판정 기준을 바꾸면 그 파일도 같이 고칠

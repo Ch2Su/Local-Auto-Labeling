@@ -6,6 +6,7 @@
 /.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # 데이터·가중치·내보내기
 /data/
