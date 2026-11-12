@@ -865,6 +865,6 @@ body.view-capture #panel-label { display: none; }
 .cap-pv-title { font-variant-numeric: tabular-nums; }
 .cap-pv-title .off { color: var(--err); font-weight: 600; }
 .cap-pv-title .on { color: var(--ok); font-weight: 600; }
-.cap-pv-img { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 10px; }
+.cap-pv-img { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 10px; user-select: none; }
 .cap-pv-img img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .cap-preview.off .cap-pv-img img { opacity: 0.4; filter: grayscale(1); }

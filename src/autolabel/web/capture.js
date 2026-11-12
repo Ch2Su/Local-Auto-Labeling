@@ -802,6 +802,7 @@ function capCell(f) {
   el.innerHTML = '<span class="cx">✕</span><div class="ci"><img loading="lazy" decoding="async" alt=""></div>'
     + '<div class="cm"><span class="no"></span><span class="tm"></span><span class="ch"></span></div>';
   const img = el.querySelector("img");
+  img.draggable = false;        // 끌지 않는다 — 아래 '끌어다 놓기' 의 dragstart 주석
   img.onerror = () => { img.remove(); el.querySelector(".ci").textContent = "열 수 없음"; };
   img.src = url(`/api/capture/${C.cur.sid}/thumb/${f.i}?r=${C.cur.run}`);
   el.querySelector(".no").textContent = `#${f.i + 1}`;
@@ -1275,6 +1276,19 @@ capEl.addEventListener("drop", (e) => {
 window.addEventListener("dragover", (e) => { if (VIEW === "capture") e.preventDefault(); });
 window.addEventListener("drop", (e) => { if (VIEW === "capture") e.preventDefault(); });
 
+// 뽑은 프레임(칸·크게 보기)은 끌지 않는다 (2026-11-12 사용자 요청). 크롬은 페이지 안의 <img> 를 끌 때도 'Files' 를 실어
+// 보내서, 위의 끌어다 놓기가 영상을 끌어온 줄 알고 테두리를 띄웠고 놓으면 그 JPEG 을 올리려다 '영상 파일로 보이지
+// 않습니다' 를 물었다. 이 화면에서 프레임을 끌어서 할 일은 없다 — 그림은 draggable=false, 그 밖의 끌기도 여기서 막는다.
+for (const el of [$("#cap-grid"), $("#cap-preview")]) el.addEventListener("dragstart", (e) => e.preventDefault());
+
+// 눌러서 끈 것은 클릭으로 세지 않는다 — 끌기를 막으면 끌었다 놓은 것이 클릭이 되어, 칸은 넣기/빼기가 바뀌고 크게 보기는
+// 그림에서 바깥으로 끌어 놓으면 닫혔다(전에는 그림 끌기가 시작돼 클릭이 나지 않았다). 브라우저가 그림 끌기를 시작하던 거리쯤
+// (몇 px) 움직였으면 끈 것으로 본다.
+const CAP_DRAG_PX = 6;
+let capDownAt = null;
+capEl.addEventListener("mousedown", (e) => { capDownAt = e.button === 0 ? [e.clientX, e.clientY] : null; }, true);
+const capWasDrag = (e) => !!capDownAt && Math.hypot(e.clientX - capDownAt[0], e.clientY - capDownAt[1]) > CAP_DRAG_PX;
+
 for (const id of ["#cap-every", "#cap-from", "#cap-to"]) {
   $(id).addEventListener("input", () => capRenderExtract());
   $(id).addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.target.blur(); capRun(); } });
@@ -1341,6 +1355,7 @@ $("#cap-sessions").addEventListener("click", (e) => {
 });
 
 $("#cap-grid").addEventListener("click", (e) => {
+  if (capWasDrag(e)) return;
   const el = e.target.closest(".cap-cell");
   if (!el) return;
   const i = Number(el.dataset.i);
@@ -1376,7 +1391,9 @@ $("#cap-pv-prev").onclick = (e) => { e.currentTarget.blur(); capPreview(C.pv - 1
 $("#cap-pv-next").onclick = (e) => { e.currentTarget.blur(); capPreview(C.pv + 1); };
 $("#cap-pv-toggle").onclick = (e) => { e.currentTarget.blur(); if (C.pv >= 0) capSetKeep([C.pv], !C.frames[C.pv].k); };
 $("#cap-pv-close").onclick = (e) => { e.currentTarget.blur(); capClosePreview(); };
-$("#cap-preview").addEventListener("click", (e) => { if (e.target.classList.contains("cap-pv-img")) capClosePreview(); });
+$("#cap-preview").addEventListener("click", (e) => {
+  if (!capWasDrag(e) && e.target.classList.contains("cap-pv-img")) capClosePreview();
+});
 
 function capApplySize(px) {
   C.size = px;

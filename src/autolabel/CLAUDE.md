@@ -144,6 +144,11 @@
     계열은 뺌), 처음 보는 접두어·`test` 고정은 한 번 더 묻는다(키에 지명이 드러나면 문서·커밋에 쓸 수 없다 — 루트 CLAUDE.md git 절).
   - **키는 app.js keydown 이 `VIEW === "capture"` 면 V 보다 먼저 `captureKey` 로만 넘긴다** — 숨은 라벨링에 Space(승인)·S·Q 가
     먹으면 안 된다(11-10 에 확인). 크게 보기는 공용 대화상자가 아니라 `#cap-preview`(키도 captureKey).
+  - **뽑은 프레임은 끌지 않는다 (11-12 사용자 요청).** 크롬은 페이지 안의 `<img>` 를 끌 때도 dataTransfer 에 'Files' 와 그 JPEG
+    을 실어, `#capture` 의 끌어다 놓기가 영상인 줄 알고 `capUpload` 로 넘겼다(실측: 칸을 다른 칸에 놓으면 이름 '0'·image/jpeg 파일).
+    칸·크게 보기 그림은 `draggable=false`, `#cap-grid`·`#cap-preview` 의 dragstart 는 막는다. 끌기가 없으면 끌었다 놓은 것이
+    클릭이 되므로 `capWasDrag`(누른 곳에서 6px 넘게)면 칸 클릭(넣기/빼기)과 크게 보기 바깥 클릭(닫기)을 버린다 — 칸 클릭에
+    새 처리를 더하면 이 검사 뒤에 둘 것. 밖에서 끌어온 영상 파일은 그대로 받는다.
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
   가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
   모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).
