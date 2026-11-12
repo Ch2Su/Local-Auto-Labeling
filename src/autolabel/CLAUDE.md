@@ -6,8 +6,8 @@
 
 사용자 문서·단축키는 README '검수 UI 사용법'. 작업자가 알아야 할 것만:
 - **이 폴더를 고친 뒤에는 회귀 테스트를 돌릴 것**(2026-11-12, `tests/` — `.venv\Scripts\python.exe -m pytest`, 루트 CLAUDE.md
-  '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`xyxyKey`·`capNoTimeName`·`MASK_MAX` 는 `tests/test_js_parity.py` 가
-  화면과 서버를 대조한다 — `xyxyKey` 는 픽셀에 딱 맞춘 좌표에서 `mask_key` 와 갈리는 것이 알려져 있다(xfail, 안 고쳤다).
+  '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`MASK_MAX`·`MASK_SAME`
+  은 `tests/test_js_parity.py` 가 화면과 서버를 대조한다.
 - **편집은 0.6초 뒤 자동 저장된다**(`app.js` `markDirty`·`flushSave`) — UI 를 시험하면 실제 작업물이 바뀐다. 먼저
   `GET /api/images/{id}` 로 떠 두고 끝나면 `PUT /api/images/{id}/boxes` 로 되돌릴 것. 경합 시험은 **DB 복사본**(sqlite `backup()`)
   으로 띄운 서버에서 한다.
@@ -21,7 +21,8 @@
     masks_before·masks_after 는 새 줄이면 `#<hist_lists.id>`, 그 전 줄이면 JSON 글자다 — 쓰는 길은 `_hist_put`, 읽는 길은
     `_hist_bodies` → `_hist_text`(`box_history`·`history_entry`·`revert_batch`). 줄은 저장마다 그대로 남아(되돌릴 수 있는 시점·
     `n_before`/`n_after`·'줄어든 저장' 은 전과 같다) 같은 목록만 함께 쓴다 — 한 줄의 '전' 은 앞 줄의 '후', 영역만 바꾼 저장의
-    박스 전후는 같은 목록이다. 이력 JSON 은 `_box_key`·`mask_key` 와 같은 자리(좌표 7·conf 6)로 반올림하고 빈칸 없이 쓴다(템플릿
+    박스 전후는 같은 목록이다. 이력 JSON 은 `_box_key` 와 같은 자리(좌표 7·conf 6)로 반올림하고(영역도 7자리 — 그 차는
+    `masks.SAME` 안이라 되읽은 영역이 원래와 같은 자리다. 자릿수를 줄이면 `SAME` 도 볼 것) 빈칸 없이 쓴다(템플릿
     `mask_templates.rects` 는 반올림하지 않는다). 목록에는 FOREIGN KEY 가 없어 `delete_images` 가 아무 줄도 안 가리키는 목록을
     지운다(`_hist_gc`) — 이미지를 지우는 새 길을 만들면 그것을 거칠 것. **11-11 전 코드는 새 줄을 못 읽는다**(`json.loads('#12')`).
     11-11 실측(DB 사본): 박스 100개 장에 영역을 하나씩 300개까지 더하는 저장 298번이 옛 모양 11.4MB → 1.9MB, 오늘 이력 636줄을
@@ -54,8 +55,10 @@
     되돌려야 해서다. 되돌리면 영역이 새로 생기는 장이 그새 test 가 됐으면 건너뛴다.
     **test 판정은 server 의 `mask_block` 한 곳에만 둔다** — store(`apply_mask_template(blocked=)`·`revert_batch(mask_blocked=)`)에는
     `mask_blocker()` 로 넘긴다(store 는 cameras.yaml 을 모른다). 넘기지 않으면 store 는 막지 않는다.
-    같은 자리 판정은 `masks.mask_key`(소수 7자리) — 더하기는 같은 좌표를 건너뛰고(`masks.merge`), 빼기는 같은 좌표만 뺀다
-    (`masks.subtract`). 화면의 `xyxyKey` 가 같은 규칙이다 — 고치면 둘 다. 더하기는 test·화면 비율이 1% 넘게 다른 그림(DB 크기로
+    같은 자리 판정은 `masks.same_rect` — 네 좌표의 차가 모두 `SAME`(7.5e-8) 이하(2026-11-12 에 소수 7자리 반올림 키
+    `mask_key` 에서 바꿨다: 픽셀에 딱 맞춘 2560·1280 폭 좌표가 반올림 경계에 걸려 화면을 한 번 오가면 다른 자리가 됐다 — 이유·
+    수치는 masks.py 의 `SAME`). 더하기는 같은 자리를 건너뛰고(`masks.merge`), 빼기는 같은 자리만 뺀다(`masks.subtract`), 영역이
+    '바뀌었나' 는 `same_rects`. 화면의 `sameRect`·`MASK_SAME` 이 같은 식이다 — 고치면 둘 다. 더하기는 test·화면 비율이 1% 넘게 다른 그림(DB 크기로
     먼저 보고 어긋날 때만 `display_size` 로 연다)·한도(500개) 넘김을 건너뛴다. 화면은 적용 직전에 목록을 다시 받는다(`freshMaskTemplate`).
   - `_replace_boxes` 는 **박스가 그대로면(같은 `_box_key` 목록) boxes 행을 지우고 다시 넣지 않는다**(2026-11-10) — 영역만 바꾸는
     저장·템플릿 적용에서 박스 행 id 가 그대로 남는다. 이력은 전과 같이 남긴다.

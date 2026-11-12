@@ -7,7 +7,7 @@ import json
 import pytest
 
 from autolabel.masks import MAX_MASKS
-from helpers import CLASSES, box, keys
+from helpers import CLASSES, box, keys, pixel_rects, screen_round_trip
 
 CAR, PICKUP, CONE = 2, 7, 9
 RECT_A = (0.0, 0.0, 0.125, 0.125)
@@ -223,6 +223,35 @@ def test_template_is_copied_and_reverted_even_after_boxes_were_reviewed(store, a
     assert store.get_masks(i) == [] and keys(store.get_boxes(i)) == keys(reviewed)
     assert store.get_masks(j) == [RECT_B]
     assert store.get_masks(k) == [RECT_A]
+
+
+def test_template_revert_works_with_any_coordinates(store, add_image):
+    """이력의 영역은 7자리로 반올림돼 있다 — DB 의 지금 영역(반올림 전)과 같은 자리로 봐야 되돌릴 수 있다."""
+    rects = [(1 / 3, 1 / 7, 2 / 3, 5 / 7), (1326 / 2560, 100 / 1440, 1900 / 2560, 771 / 1440)]
+    i = add_image("a.jpg", boxes=[box()])
+    assert store.apply_mask_template([i], rects, mode="add", batch="t")["changed"] == 1
+    assert store.get_masks(i) == rects                  # DB 에는 반올림하지 않은 값이 들어간다
+    assert store.revert_batch("t") == (1, 0)
+    assert store.get_masks(i) == []
+
+
+def test_template_applied_through_the_screen_is_still_recognised(store, add_image):
+    """화면에서 한 장에 적용하면 좌표가 {cx, cy, w, h} 를 한 번 오간 값으로 저장된다. 그 뒤의 여러 장 적용·빼기와 '바뀌었나'
+    판정이 그 영역을 같은 자리로 알아봐야 한다 (2026-11-12 — 픽셀에 맞춘 2560 폭 좌표의 8.4% 가 다른 자리가 됐다)."""
+    rects = pixel_rects(2560, 1440, 300)
+    i = add_image("a.jpg", boxes=[box()])
+    on_screen = [screen_round_trip(r) for r in rects]
+    assert on_screen != rects
+    store.set_boxes(i, [box()], masks=on_screen)                        # 화면의 저장
+
+    out = store.apply_mask_template([i], rects, mode="add", batch="again")
+    assert out["unchanged"] == 1 and len(store.get_masks(i)) == len(rects)      # 겹쳐 들어가지 않는다
+    n = store.history_count(i)
+    store.set_boxes(i, [box()], masks=[screen_round_trip(m) for m in store.get_masks(i)])    # 영역은 그대로인 저장
+    assert store.history_count(i) == n                                  # 바뀐 것이 없다 — 이력도 남지 않는다
+    out = store.apply_mask_template([i], rects, mode="remove", batch="off")
+    assert out["changed"] == 1 and store.get_masks(i) == []             # 빼기가 하나도 남기지 않는다
+    assert store.revert_batch("off") == (1, 0) and len(store.get_masks(i)) == len(rects)
 
 
 def test_template_is_not_added_to_blocked_images_but_can_be_removed(store, add_image):

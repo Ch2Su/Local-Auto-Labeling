@@ -1819,8 +1819,12 @@ async function deleteTag(t) {
  * (서버 masks.merge 와 같은 규칙). 여러 장에는 이미지 보기의 '가릴 영역 템플릿'(gallery.js — 일괄 수정 묶음이라 변경
  * 기록에서 묶음째 되돌린다). */
 
-/** 정규화 xyxy 한 개의 '같은 자리' 키 — 서버 masks.mask_key 처럼 소수 7자리로 (화면의 {cx, cy, w, h} 를 오가며 생기는 잡음). */
-const xyxyKey = (r) => r.map((v) => (Math.round(v * 1e7) / 1e7).toFixed(7)).join(",");
+/** 정규화 xyxy 두 개가 '같은 자리' 인가 — 네 좌표가 모두 MASK_SAME 안. 서버 masks.same_rect·SAME 과 같은 식이다 — 고치면 둘 다
+ *  (tests/test_js_parity.py 가 대조한다). 화면은 영역을 {cx, cy, w, h} 로 들었다 xyxy 로 되돌려 끝자리가 달라진다.
+ *  2026-11-12 까지는 소수 7자리로 반올림한 키를 견줬는데, 픽셀에 딱 맞춘 좌표(2560·1280 폭)가 반올림 경계에 자주 걸려 그
+ *  잡음만으로 같은 자리를 못 알아봤다(같은 템플릿을 두 번 더하면 겹쳐 들어갔다) — 이유·수치는 masks.py 의 SAME. */
+const MASK_SAME = 7.5e-8;
+const sameRect = (a, b) => a.every((v, i) => Math.abs(v - b[i]) <= MASK_SAME);
 
 async function loadMaskTemplates() {
   let data;
@@ -1898,12 +1902,11 @@ function applyMaskTemplate(t) {
           + `${S.cur.width}×${S.cur.height} 라 가로·세로 비율이 다릅니다 — 영역이 늘어나거나 줄어든 자리에 덮입니다.\n`
           + "그래도 더할까요?")) return;
   }
-  const have = new Set(S.masks.map((m) => xyxyKey(maskToXyxy(m))));
+  const have = S.masks.map(maskToXyxy);
   const add = [];
   for (const r of t.rects) {
-    const k = xyxyKey(r);
-    if (have.has(k)) continue;
-    have.add(k);
+    if (have.some((h) => sameRect(h, r))) continue;
+    have.push(r);
     add.push(maskFromXyxy(r));
   }
   if (!add.length) { toast(`'${t.name}' 의 영역이 이미 모두 들어 있습니다`); return; }

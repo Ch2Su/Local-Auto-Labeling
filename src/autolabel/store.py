@@ -22,7 +22,7 @@ from typing import Callable, Iterator
 
 from .masks import MAX_MASKS
 from .masks import clean as clean_masks
-from .masks import mask_key
+from .masks import has_rect, same_rects
 from .masks import merge as merge_masks
 from .masks import subtract as subtract_masks
 from .yolo_io import Box
@@ -192,7 +192,8 @@ def _boxes_from_json(text: str) -> list[Box]:
 
 
 def _masks_json(rects) -> str:
-    """가릴 영역 목록의 이력 모양: [[x1, y1, x2, y2], ...] — mask_key 와 같은 7자리로 반올림, 빈칸 없이(2026-11-11)."""
+    """가릴 영역 목록의 이력 모양: [[x1, y1, x2, y2], ...] — 7자리로 반올림, 빈칸 없이(2026-11-11). 반올림으로 생기는 차
+    (5e-8 까지)는 masks.SAME 안이라, 이력에서 되읽은 영역은 원래 영역과 같은 자리로 본다(자릿수를 줄이면 SAME 도 볼 것)."""
     return json.dumps([[round(float(v), 7) for v in r] for r in rects], separators=(",", ":"))
 
 
@@ -1020,7 +1021,7 @@ class Store:
                 cur = [tuple(r) for r in con.execute(
                     "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
                 new = merge_masks(cur, rects) if mode == "add" else subtract_masks(cur, rects)
-                if mask_key(new) == mask_key(cur):
+                if same_rects(new, cur):
                     out["unchanged"] += 1
                     continue
                 if len(new) > MAX_MASKS:
@@ -1160,7 +1161,7 @@ class Store:
         if masks is not None:
             cur = [tuple(r) for r in con.execute(
                 "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
-            if mask_key(cur) != mask_key(masks):
+            if not same_rects(cur, masks):
                 old_m = cur
         if boxes_changed or old_m is not None:
             # 목록은 hist_lists 에 한 번만 — 앞 줄의 '후' 와 같은 '전', 영역만 바꾼 저장의 박스 전후는 같은 #id 다 (2026-11-11)
@@ -1303,12 +1304,12 @@ class Store:
                 if r["masks_after"] is not None:
                     cur_m = [tuple(m) for m in con.execute(
                         "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (r["image_id"],))]
-                    if mask_key(cur_m) != mask_key(_masks_from_json(_hist_text(bodies, r["masks_after"]))):
+                    if not same_rects(cur_m, _masks_from_json(_hist_text(bodies, r["masks_after"]))):
                         skipped += 1
                         continue
                     masks_before = _masks_from_json(_hist_text(bodies, r["masks_before"]))
                     # 되돌리면 지금 없는 영역이 생기는데 영역을 둘 수 없는 이미지(test)면 건너뛴다 — 다른 저장 길과 같다
-                    if mask_blocked is not None and set(mask_key(masks_before)) - set(mask_key(cur_m)):
+                    if mask_blocked is not None and any(not has_rect(cur_m, m) for m in masks_before):
                         img = con.execute("SELECT split, camera FROM images WHERE id=?",
                                           (r["image_id"],)).fetchone()
                         if img is not None and mask_blocked(dict(img)):

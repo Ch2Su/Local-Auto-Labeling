@@ -55,30 +55,55 @@ def clean(rects: Iterable[Sequence[float]]) -> list[Rect]:
     return out
 
 
-def mask_key(rects: Iterable[Sequence[float]]) -> list[tuple]:
-    """영역 목록이 '바뀌었나' 를 가르는 값 (store._box_key 처럼 부동소수 잡음은 같은 것으로 본다)."""
-    return [tuple(round(float(v), 7) for v in r) for r in rects]
+# '같은 자리' (2026-11-12) — 두 영역의 네 좌표가 모두 SAME 안이면 같은 영역으로 본다. 화면(app.js 의 sameRect·MASK_SAME)도
+# 같은 식이다 — 고치면 둘 다(tests/test_js_parity.py 가 대조한다).
+#
+# 그 전에는 소수 7자리로 반올림한 값(mask_key, 화면은 xyxyKey)을 견줬다. 반올림에는 경계가 있어서, 경계 위의 값은 끝자리
+# 잡음만으로 옆 칸으로 넘어간다 — 그리고 픽셀에 딱 맞춘 좌표는 2560·1280 폭에서 그 경계(소수 8번째 자리가 정확히 5,
+# 예: 1326/2560 = 0.51796875)에 자주 걸린다. 화면은 영역을 {cx, cy, w, h} 로 들었다 xyxy 로 되돌려 끝자리가 달라지므로,
+# 같은 템플릿을 두 번 더하면 겹쳐 들어가거나 빼기가 그 영역을 남길 수 있었다(무작위 2만 개 실측: 2560×1440 에서 화면을 한 번
+# 오가면 키가 바뀌는 영역 8.4%, JS 의 Math.round 와 Python 의 round 가 다른 영역 22.8%. 손으로 그린 영역은 0).
+#
+# SAME 은 '7자리로 반올림하며 생기는 차(5e-8 까지 — 변경 이력의 영역은 그렇게 반올림돼 있다, store._masks_json)' 보다 크고
+# '7자리 한 칸(1e-7)' 보다 작게 잡았다: 이력에서 되읽은 영역은 원래 영역과 같은 자리이고, 한 칸 떨어진 영역은 다른 자리다.
+# 2560px 그림에서 0.0002px 이다.
+SAME = 7.5e-8
+
+
+def same_rect(a: Sequence[float], b: Sequence[float]) -> bool:
+    """두 영역(정규화 xyxy)이 같은 자리인가."""
+    return (abs(a[0] - b[0]) <= SAME and abs(a[1] - b[1]) <= SAME
+            and abs(a[2] - b[2]) <= SAME and abs(a[3] - b[3]) <= SAME)
+
+
+def has_rect(rects: Iterable[Sequence[float]], r: Sequence[float]) -> bool:
+    """rects 안에 r 과 같은 자리의 영역이 있나."""
+    return any(same_rect(c, r) for c in rects)
+
+
+def same_rects(a: Sequence[Sequence[float]], b: Sequence[Sequence[float]]) -> bool:
+    """영역 목록 둘이 같은가 — 개수가 같고 순서대로 같은 자리(영역이 '바뀌었나' 를 가른다)."""
+    return len(a) == len(b) and all(same_rect(x, y) for x, y in zip(a, b))
 
 
 # 가릴 영역 템플릿 (2026-11-10, 사용자 요청) — 이름을 붙여 둔 영역 묶음을 이미지에 더하고 뺀다. 적용하면 이미지의
-# 영역으로 **복사**되므로, 빼기는 템플릿과 좌표가 같은(mask_key) 영역만 뺀다 — 손으로 옮긴 영역은 그 이미지의 것이다.
+# 영역으로 **복사**되므로, 빼기는 템플릿과 같은 자리(same_rect)의 영역만 뺀다 — 손으로 옮긴 영역은 그 이미지의 것이다.
 # 검수 화면의 한 장 적용(app.js applyMaskTemplate)도 같은 규칙이다.
 
 def merge(cur: Sequence[Sequence[float]], add: Sequence[Sequence[float]]) -> list[Rect]:
-    """cur 뒤에 add 가운데 cur 에 없는(같은 좌표가 아닌) 영역만 붙인다. 순서는 그대로."""
-    seen = set(mask_key(cur))
+    """cur 뒤에 add 가운데 cur 에 없는(같은 자리가 아닌) 영역만 붙인다. 순서는 그대로."""
     out = [tuple(map(float, r)) for r in cur]
-    for r, k in zip(add, mask_key(add)):
-        if k not in seen:
-            seen.add(k)
-            out.append(tuple(map(float, r)))
+    for r in add:
+        r = tuple(map(float, r))
+        if not has_rect(out, r):
+            out.append(r)
     return out
 
 
 def subtract(cur: Sequence[Sequence[float]], rem: Sequence[Sequence[float]]) -> list[Rect]:
-    """cur 에서 rem 과 좌표가 같은 영역을 뺀다."""
-    gone = set(mask_key(rem))
-    return [tuple(map(float, r)) for r, k in zip(cur, mask_key(cur)) if k not in gone]
+    """cur 에서 rem 과 같은 자리의 영역을 뺀다."""
+    gone = [tuple(map(float, r)) for r in rem]
+    return [c for c in (tuple(map(float, r)) for r in cur) if not has_rect(gone, c)]
 
 
 def covered(box, rects: Sequence[Rect]) -> float:

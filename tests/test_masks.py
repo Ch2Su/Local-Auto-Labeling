@@ -8,8 +8,10 @@ import pytest
 from PIL import Image
 
 from autolabel import masks
-from autolabel.masks import DROP, GRAY, clean, covered, mask_key, merge, paint, pixel_rect, split_boxes, subtract, write_masked
+from autolabel.masks import (DROP, GRAY, SAME, clean, covered, has_rect, merge, paint, pixel_rect, same_rect, same_rects,
+                             split_boxes, subtract, write_masked)
 from autolabel.yolo_io import Box
+from helpers import pixel_rects, screen_round_trip
 
 # x 0.25~0.75, y 0.25~0.75 — 2의 거듭제곱 분수라 넓이 계산에 반올림 오차가 없다
 BOX = Box(2, 0.5, 0.5, 0.5, 0.5)
@@ -117,9 +119,59 @@ def test_subtract_removes_only_same_place():
     assert subtract(cur, [(0.125 - 1e-9, 0.125, 0.25, 0.25), moved]) == [(0.5, 0.5, 0.75, 0.75)]
 
 
-def test_mask_key_ignores_float_noise():
-    assert mask_key([(0.1, 0.2, 0.3, 0.4)]) == mask_key([(0.1 + 1e-9, 0.2, 0.3 - 1e-9, 0.4)])
-    assert mask_key([(0.1, 0.2, 0.3, 0.4)]) != mask_key([(0.1 + 1e-6, 0.2, 0.3, 0.4)])
+# ----------------------------------------------------------------- 같은 자리
+
+def test_same_place_tolerance_sits_between_rounding_error_and_one_step():
+    """SAME 은 7자리 반올림으로 생기는 차(5e-8)보다 크고 7자리 한 칸(1e-7)보다 작아야 한다 — masks.py 의 SAME 설명."""
+    assert 5e-8 < SAME < 1e-7
+    r = (0.1, 0.2, 0.3, 0.4)
+    assert same_rect(r, r) and same_rect(r, list(r))
+    assert same_rect(r, (0.1 + 5e-8, 0.2 - 5e-8, 0.3 + 5e-8, 0.4 - 5e-8))
+    assert same_rect((0.0, 0.0, 0.5, 0.5), (SAME, 0.0, 0.5, 0.5))      # 차가 정확히 SAME — '이하' 라 같은 자리
+    for k in range(4):                                  # 네 좌표 가운데 하나만 한 칸 달라도 다른 자리
+        other = list(r)
+        other[k] += 1e-7
+        assert not same_rect(r, other) and not same_rect(other, r)
+
+
+def test_same_rects_compares_in_order():
+    a, b = (0.0, 0.0, 0.25, 0.25), (0.5, 0.5, 0.75, 0.75)
+    assert same_rects([], []) and same_rects([a, b], [list(a), (0.5 + 1e-9, 0.5, 0.75, 0.75)])
+    assert not same_rects([a, b], [b, a])
+    assert not same_rects([a], [a, b]) and not same_rects([a, b], [a])
+    assert has_rect([a, b], (0.5, 0.5 - 1e-9, 0.75, 0.75)) and not has_rect([a], b) and not has_rect([], a)
+
+
+@pytest.mark.parametrize("size", [(2560, 1440), (1280, 720), (1920, 1080), (3840, 2160), (640, 640)])
+def test_pixel_aligned_rects_survive_the_screen_round_trip(size):
+    """2026-11-12 — 반올림한 키를 견주던 때는 2560·1280 폭의 픽셀 좌표가 반올림 경계에 걸려, 화면을 한 번 오간 것만으로
+    다른 자리가 됐다(8.4%·16.5%). 같은 템플릿을 두 번 더하면 겹쳐 들어가고 빼기가 그 영역을 남겼다."""
+    moved = 0
+    for r in pixel_rects(*size, 3000):
+        back = screen_round_trip(r)
+        moved += back != r
+        assert same_rect(r, back), r
+        assert merge([back], [r]) == [back]             # 다시 더해도 겹쳐 들어가지 않는다
+        assert subtract([back], [r]) == []              # 빼기가 남기지 않는다
+    assert moved > 1000                                 # 오가면 끝자리가 정말 달라지는 입력이다
+
+
+def test_rects_read_back_from_history_are_the_same_place():
+    """변경 이력은 영역을 7자리로 반올림해 둔다 — 되읽은 값이 지금 영역과 같은 자리여야 묶음 되돌리기가 그 이미지를
+    '그 뒤 손대지 않았다' 고 알아본다. 화면을 한 번 오간 값과 견줘도 마찬가지다."""
+    from autolabel.store import _masks_from_json, _masks_json
+
+    rng = random.Random(5)
+    rects = pixel_rects(2560, 1440, 2000) + pixel_rects(1280, 720, 2000)
+    for _ in range(2000):
+        x1, x2 = sorted(rng.random() for _ in range(2))
+        y1, y2 = sorted(rng.random() for _ in range(2))
+        rects.append((x1, y1, x2, y2))
+    rects += [(1 / 3, 1 / 7, 2 / 3, 5 / 7), (0.00000005, 0.00000015, 0.99999995, 0.99999985)]
+    back = _masks_from_json(_masks_json(rects))
+    assert back != [list(r) for r in rects]             # 반올림으로 값이 정말 달라진다
+    assert same_rects(rects, back)
+    assert same_rects([screen_round_trip(r) for r in rects], back)
 
 
 # ----------------------------------------------------------------- 칠하기

@@ -177,12 +177,13 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 - **버그를 고치면 그 버그를 다시 내는 입력을 테스트로 남긴다** — 일회용 스크립트로 확인하고 버리지 말 것.
 - 테스트의 `cfg`(`tests/conftest.py`)는 `data.*` 경로를 전부 임시 폴더의 절대경로로 적는다. 새 경로 설정을 쓰는 코드를 시험하면
   거기에도 넣을 것 — 빼면 `config.resolve` 가 저장소의 `data/` 를 가리킨다.
-- `tests/test_js_parity.py` 가 '고치면 둘 다' 인 식(`maskCover`·`xyxyKey`·`capNoTimeName`·`capName`·`MASK_MAX`·`MASK_DROP`)을
-  node 로 돌려 Python 과 견준다. JS 선언을 글자로 떼므로(맨 왼쪽 `function 이름(` … 맨 왼쪽 `}`, 한 줄 `const`) 그 모양을 바꾸면
-  테스트의 규칙도 맞춘다. 짝이 새로 생기면 거기에 더할 것.
-- **알려진 어긋남(xfail 1건, 안 고쳤다):** 픽셀에 딱 맞춘 가릴 영역의 '같은 자리' 키 — 2560·1280 폭에서는 7자리 반올림의
-  경계에 걸리는 좌표가 많아 화면(`Math.round`)과 서버(`round`)의 키가 다르고, 화면을 한 번 오가면 키가 바뀐다(손으로 그린 영역은
-  0건). 실측·설명은 그 테스트의 docstring. 고치면 xfail 표시를 뗀다(strict 라 고쳐지면 '뜻밖의 통과' 로 알려 준다).
+- `tests/test_js_parity.py` 가 '고치면 둘 다' 인 식(`maskCover`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`capName`·
+  `MASK_MAX`·`MASK_DROP`·`MASK_SAME`)을 node 로 돌려 Python 과 견주고, 화면 스크립트 셋의 문법도 본다. JS 선언을 글자로
+  떼므로(맨 왼쪽 `function 이름(` … 맨 왼쪽 `}`, 한 줄 `const`) 그 모양을 바꾸면 테스트의 규칙도 맞춘다. 짝이 새로 생기면 거기에 더할 것.
+- **좌표가 '같은 자리' 인지는 반올림한 값을 견주지 말고 `masks.same_rect`(화면 `sameRect`)로 본다** — 네 좌표의 차가 모두
+  `SAME`(7.5e-8) 이하. 11-12 에 테스트로 찾아 고쳤다: 소수 7자리 반올림 키는 픽셀에 딱 맞춘 좌표(2560·1280 폭)가 반올림 경계에
+  자주 걸려, 화면이 영역을 {cx, cy, w, h} 로 들었다 되돌리는 끝자리 잡음만으로 다른 자리가 됐다(같은 템플릿을 두 번 더하면 겹쳐
+  들어가고 빼기가 남겼다 — 손으로 그린 영역은 0건). 이유·수치는 `masks.py` 의 `SAME`. 좌표를 견주는 새 코드에서도 반올림 키를 만들지 말 것.
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작,
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.
 
