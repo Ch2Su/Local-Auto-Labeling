@@ -26,7 +26,7 @@ GPU 가 노트북(5060 Laptop 8GB)과 **같은 Blackwell(sm_120)** 이라 환경
 - 모니터 케이블은 **그래픽카드**에 꽂는다 — 14400F 는 내장 그래픽이 없어 메인보드 단자에 꽂으면 화면이 안 나온다.
 - GPU 보조 전원 케이블은 카드의 단자(8핀 또는 16핀 12V-2x6)에 끝까지. 어댑터보다 PSU 의 전용 케이블이 낫다.
 - BIOS 를 최신으로 올린다(13·14세대 CPU 안정성 마이크로코드 패치 — 14400F 가 대상인지는 확인하지 못했다, 최신이 손해는 없다).
-- **XMP/DOCP 를 켠다.** 안 켜면 DDR4-3200 램이 2133–2666 으로 돈다. 14400F 의 공식 최대가 DDR4-3200 이다.
+- **XMP/DOCP 프로파일이 있는 램이면 켠다**(안 켜면 2133–2666 으로 돌 수 있다). 프로파일이 없는 JEDEC 3200 램(아이티젠 삼성 칩 PC4-25600 등)은 보통 자동으로 3200 으로 뜬다. 14400F 의 공식 최대가 DDR4-3200 이다. 어느 쪽이든 BIOS 에서 3200MHz 인지 본다. 램이 2개면 매뉴얼이 가리키는 슬롯 두 개(보통 A2·B2)에 꽂아야 듀얼 채널이다.
 - **가상화(Intel VT-x / Virtualization)가 켜져 있는지** 본다 — WSL2 가 필요로 한다(보통 기본 켬).
 - Resizable BAR(Above 4G Decoding)는 켠다. 선택: `AC Power Loss` = `Power On`(정전 뒤 전기가 오면 저절로 켜진다).
 - 확인: BIOS 첫 화면에 메모리 **32GB / 3200MHz**, NVMe 1TB, CPU 14400F 가 보이는가.
@@ -327,7 +327,7 @@ Start-Service sshd; Set-Service -Name sshd -StartupType Automatic
 
 ## 10. 다 됐는지 확인
 
-- [ ] BIOS 에 32GB·3200MHz, XMP 켬
+- [ ] BIOS 에 32GB·3200MHz(XMP 프로파일이 있으면 켬), 램 2개면 듀얼 채널
 - [ ] `nvidia-smi` 에 16GB·CUDA 13.x
 - [ ] Windows `.venv` 의 torch 가 `2.14.0+cu130 True`
 - [ ] WSL 의 torch 가 `2.11.0+cu130 True … (12, 0)`
