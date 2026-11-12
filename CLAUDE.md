@@ -511,6 +511,12 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - 고른 모델은 `models/best_<이름>.pt` 로 두고 `best.pt` 로 올린다. 960 이면 `predict.imgsz` 도 960 으로 바꾸고, 학습 중 P(CPU)는
      m 보다 몇 배 느려진다. 웹 UI 학습 버튼(config `model.base`)은 m640 그대로 둬 로컬 반복용으로 쓴다. 그 뒤로 `best.pt` 는
      DetectView 에 그대로 넘길 모델이 아니다 — 넘길 때는 m 을 따로 학습한다.
+   - **11-12 에 옛 CCTV 데이터로 x·1280 을 미리 재 볼 준비를 했다 — pod 는 안 띄웠다(사용자: '새 데이터를 좀 모으면서 판단').**
+     세트(`E:\datasets\lal_oldcctv8`·`lal_newtest8`)·스크립트(`runs/runpod/pod_xres.sh`)·기준선은 docs/runpod.md 와
+     docs/experiments.md '새 풀 프레임 데이터'. 그날 Runpod 는 이 세션에 연결돼 있었고(켜진 pod 0개) RTX 6000 Ada 는 secure 시간당
+     0.99달러·재고 적음이었다 — 추정은 x1280 + m640 약 6시간·6달러, m·x × 640·1280 전부 약 10시간·10달러(시간은 ±30%).
+     **사용자가 다시 꺼내기 전에는 띄우자고 권하지 말 것.** 꺼내면 조합, 도로 장면만 쓸지(지금 세트는 CCTV 도메인 전체), 그때
+     가격을 다시 묻는다. 새 데이터가 늘면 `lal_newtest8` 은 다시 만들 것(지금은 119장이라 박스 몇 개 차이는 잡음이다).
 7. **녹화부터 자동화 (11-12 사용자 요청 — 카메라는 아직 없다, IP캠·웹캠 미정).** 1단계로 `tools/auto_capture.py`(영상 캡처의
    고르기 자동화)를 만들었다 — 만든 세션(클라우드)은 리눅스·CPU·yolo26n(COCO)·공개 영상 두 편(768×432)으로 시험했고, **같은 날 이
    PC 에서 DB·이미지 사본으로 띄운 시험 서버에 돌려 봤다**(운영 가중치·GPU, 보관 폴더의 hw-02·04·05 클립 — docs/experiments.md
