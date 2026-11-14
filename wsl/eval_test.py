@@ -31,14 +31,16 @@ MATCH_IOU = 0.45        # 혼동 행렬에서 예측과 정답을 짝짓는 IoU 
 def pin_confusion_thresholds(conf: float, match_iou: float = MATCH_IOU) -> None:
     """Ultralytics 의 혼동 행렬이 버전과 상관없이 `conf`·`match_iou` 로 세게 한다.
 
-    검증기는 혼동 행렬에 val 의 conf 를 그대로 넘기는데(`process_batch(predn, pbatch, conf=self.args.conf)`) val 의 기본
-    conf 는 0.001 이다. 8.4.212 는 그 0.001 과 IoU 0.5 로 센다. 8.4.142 로 잰 11-12 기록은 conf 0.25·IoU 0.45 로 센 수다 —
-    같은 가중치·같은 119장(newtest8, 640)에서 8.4.212 는 헛 박스를 20 이 아니라 988 로 냈고, 여기서 두 값을 고정하니 놓침·
-    헛 박스가 세 해상도 모두 11-12 와 같아졌다(2026-11-15, docs/experiments.md '새 풀 프레임 데이터').
+    8.4.212 의 검증기는 혼동 행렬에 val 의 conf 를 그대로 넘기는데(`process_batch(predn, pbatch, conf=self.args.conf)`) val 의
+    기본 conf 는 0.001 이다 — 그 0.001 과 IoU 0.5 로 센다. 8.4.142 는 val 에 conf 를 안 주면 0.25 를 넘기고
+    (`confusion_matrix_conf = 0.25 if conf is None else conf`) `process_batch` 의 기본 `iou_thres` 가 0.45 라, 그 버전으로 잰
+    11-12 기록은 conf 0.25·IoU 0.45 로 센 수다(11-15 에 소스로 확인 — 8.4.142 에서는 이 고정이 값을 바꾸지 않는다). 같은 가중치·
+    같은 119장(newtest8, 640)에서 8.4.212 는 헛 박스를 20 이 아니라 988 로 냈고, 여기서 두 값을 고정하니 놓침·헛 박스가 세
+    해상도 모두 11-12 와 같아졌다(2026-11-15, docs/experiments.md '새 풀 프레임 데이터').
 
     - val 에 `conf=0.25` 를 넘기는 것으로 고치지 말 것 — 그러면 mAP 도 0.25 위에서만 센다(PR 곡선이 잘린다).
-    - 짝짓는 순서까지 맞추지는 않는다: 8.4.212 는 conf 가 높은 예측부터 정답을 하나씩 차지한다. 그래서 `hit` 와
-      `wrong_class` 는 8.4.142 의 수와 1~2개 오갈 수 있다(둘의 합, `missed`, `false` 는 같았다).
+    - 짝짓는 순서까지 맞추지는 않는다: 8.4.212 는 conf 가 높은 예측부터 정답을 하나씩 차지하고, 8.4.142 는 IoU 가 큰 짝부터
+      남긴다. 그래서 `hit` 와 `wrong_class` 는 8.4.142 의 수와 1~2개 오갈 수 있다(둘의 합, `missed`, `false` 는 같았다).
     - 두 번 불러도 겹쳐 감싸지 않는다(마지막 값이 남는다).
     """
     from ultralytics.utils import metrics
