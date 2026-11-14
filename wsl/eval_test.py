@@ -10,7 +10,9 @@ test 분할을 재는 도구라, 실험용으로 따로 만든 세트(`tools/bui
   없는 자리의 예측 — 헛 박스), `wrong_class`(자리는 맞는데 클래스가 다른 것). 자동 라벨링을 고치는 일의 양은 mAP 보다
   이 수에 가깝다. Ultralytics 의 혼동 행렬(IoU 0.45 로 짝짓는다)에서 읽는다 — 그래서 `plots=True` 로 돈다.
   **혼동 행렬의 문턱은 `pin_confusion_thresholds` 가 고정한다(2026-11-15)** — Ultralytics 버전마다 기본이 달라, 그냥 두면
-  에러 없이 다른 문턱에서 센 수가 `conf: 0.25` 라는 이름으로 남는다. 기록마다 `ultralytics` 버전도 적는다.
+  에러 없이 다른 문턱에서 센 수가 `conf: 0.25` 라는 이름으로 남는다. 기록마다 `ultralytics`·`torch` 버전과 `batch` 도 적는다
+  (batch 4 와 8 은 mAP 넷째 자리가 다르고 어느 쪽이 어느 값인지는 PC 마다 반대였다 — PC 가 다른 기록끼리는 넷째 자리를
+  견주지 말 것. `at_conf` 는 batch 와 상관없이 같았다. 11-12 기록은 batch 4, docs/experiments.md '새 풀 프레임 데이터').
 
   python3 eval_test.py --weights a.pt b.pt --data set1=/root/datasets/x/dataset/data.yaml --imgsz 640 1280 --out out.jsonl
 """
@@ -41,6 +43,7 @@ def pin_confusion_thresholds(conf: float, match_iou: float = MATCH_IOU) -> None:
     - val 에 `conf=0.25` 를 넘기는 것으로 고치지 말 것 — 그러면 mAP 도 0.25 위에서만 센다(PR 곡선이 잘린다).
     - 짝짓는 순서까지 맞추지는 않는다: 8.4.212 는 conf 가 높은 예측부터 정답을 하나씩 차지하고, 8.4.142 는 IoU 가 큰 짝부터
       남긴다. 그래서 `hit` 와 `wrong_class` 는 8.4.142 의 수와 1~2개 오갈 수 있다(둘의 합, `missed`, `false` 는 같았다).
+      클래스별 `false` 도 달라진다(합은 같다) — 11-15 에 같은 PC·torch 에서 버전만 바꿔 재 보니 달라진 것은 이것들뿐이었다.
     - 두 번 불러도 겹쳐 감싸지 않는다(마지막 값이 남는다).
     """
     from ultralytics.utils import metrics
@@ -107,6 +110,7 @@ def main() -> int:
     ap.add_argument("--note", default="")
     args = ap.parse_args()
 
+    import torch
     import ultralytics
     from ultralytics import YOLO
 
@@ -133,8 +137,8 @@ def main() -> int:
                                 iou=args.iou, plots=True, verbose=False, project=args.project,
                                 name=f"{wp.stem}_{name}_{sz}", exist_ok=True)
                 rec = {"weights": wp.name, "sha256": digest, "set": name, "split": args.split, "imgsz": sz,
-                       "seconds": round(time.time() - t0, 1), "note": args.note,
-                       "ultralytics": ultralytics.__version__,
+                       "seconds": round(time.time() - t0, 1), "note": args.note, "batch": args.batch,
+                       "ultralytics": ultralytics.__version__, "torch": torch.__version__,
                        **summarize(res, model.names, args.conf, args.match_iou)}
                 with open(out, "a", encoding="utf-8") as f:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
