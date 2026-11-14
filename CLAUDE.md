@@ -56,7 +56,7 @@
 
 **Runpod (클라우드 GPU 대여).** MCP 서버 `runpod` 는 11-02 에 뺐다. 다시 붙이는 명령·과금·GPU 고르기·pod 에서의 준비(Pillow·
 `/root`·RAM 한도)는 [docs/runpod.md](docs/runpod.md) — **pod 를 띄우기 전에 읽을 것.** 고른다면 RTX 6000 Ada 이고, 멈춘 pod 도 볼륨
-요금이 나가며 다시 안 켜질 수 있다.
+요금이 나가며 다시 안 켜질 수 있다. **집 데스크탑(i5-14400F·RTX 5060 Ti 16GB, 2026-11-12 구매 검토)에서 직접 세팅·운영하는 길은 [docs/desktop-setup.md](docs/desktop-setup.md)** — 사용자가 Claude·MCP 없이 직접 해 보려고 쓴 런북이다(노트북 8GB 의 한도·경로 `/mnt/e` 는 그 PC 에서 `/mnt/c` 로 읽는다).
 
 **Roboflow.** 09-28 에 claude.ai 커넥터로 붙였는데 11-02 에는 커넥터 목록에 없다(다시 쓰려면 claude.ai 커넥터 설정에서).
 **워크스페이스는 비어 있다** — 스토리지 크레딧 때문에 사용자가 09-28 에 데이터를 전부 지웠고 휴지통도 10-02 에 비웠다.
