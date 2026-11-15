@@ -1707,6 +1707,11 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         # 휴리스틱으로 app.js 를 '신선하다'고 보고 서버에 묻지 않아, UI 를 고친 뒤 서버를
         # 재시작해도 옛 코드가 돌 수 있다. no-cache 는 매번 ETag 로 확인만 하니(304) 비용이 없다.
         response = await call_next(request)
+        if response.status_code >= 400:
+            # 오류 응답은 브라우저가 기억하지 않게 (2026-11-15). 크롬은 캐시 헤더가 없는 410 을 **기한 없이** 캐시한다 —
+            # 파일이 잠깐 없을 때 받은 '원본 파일이 사라졌습니다'(410)가 파일이 돌아온 뒤에도 그 썸네일 주소에 남았다
+            # (시험 서버에서 봄: 같은 주소가 캐시로는 410, 캐시를 건너뛰어 받으면 200 — 썸네일 주소에는 ?v= 도 없다).
+            response.headers.setdefault("Cache-Control", "no-store")
         if not request.url.path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-cache")
         return response

@@ -138,3 +138,31 @@ def test_static_files_are_revalidated(client):
     """함정 11 의 한 겹 — 화면 파일은 no-cache 라 서버를 다시 켠 뒤 옛 app.js 가 돌지 않는다."""
     r = client.get("/app.js")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+
+
+def test_error_responses_are_never_cached(client, add_image):
+    """크롬은 캐시 헤더가 없는 410 을 기한 없이 캐시한다 — 파일이 잠깐 없을 때 받은 '원본 파일이 사라졌습니다' 가 파일이
+    돌아온 뒤에도 그 썸네일 주소에 남았다(2026-11-15 시험 서버: 같은 주소가 캐시로는 410, 캐시를 건너뛰면 200)."""
+    gone = add_image("gone.jpg")                # 행만 있고 파일은 없다
+    for url in (f"/api/images/{gone}/thumb?s=256", f"/api/images/{gone}/file"):
+        r = client.get(url)
+        assert (r.status_code, r.headers["cache-control"]) == (410, "no-store"), url
+    r = client.get("/api/images/999999")
+    assert (r.status_code, r.headers["cache-control"]) == (404, "no-store")
+    assert client.get("/no-such-file.js").headers["cache-control"] == "no-store"
+    assert "no-store" not in client.get("/api/state").headers.get("cache-control", "")      # 성공한 응답은 그대로
+
+
+def test_error_responses_are_never_cached_under_a_project_tab(cfg, store, add_image):
+    """프로젝트 탭(`/p/<이름>/`)으로 띄운 서버에서도 같다 — 평소 `labeler.py review` 가 이 꼴이다."""
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from autolabel.server import create_multi_app
+
+    gone = add_image("gone.jpg")
+    app = create_multi_app([SimpleNamespace(name="t", title="시험", cfg=cfg)], bind_host="127.0.0.1")
+    with TestClient(app, base_url=ORIGIN) as c:
+        r = c.get(f"/p/t/api/images/{gone}/thumb?s=256")
+        assert (r.status_code, r.headers["cache-control"]) == (410, "no-store")
