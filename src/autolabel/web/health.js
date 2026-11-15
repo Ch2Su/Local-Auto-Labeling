@@ -24,8 +24,8 @@ const H = {
 };
 const HC_KEY = `health:${BASE}`;
 const HC_SIZES = [640, 960, 1280];
-const HC_SIZE_NAMES = ["8px 미만", "8–16", "16–32", "32–64", "64px 이상"];
 const HC_SIZE_COLORS = ["#ef5f6b", "#f0a742", "#e3d26f", "#6fb6e3", "#4c8dff"];   // 작을수록 붉게(검출하기 어려운 쪽)
+const HC_SIZE_MARKS = [32, 16];   // '몇 px 미만이 몇 개' 로 따로 적을 경계 — 서버의 칸 경계에 있는 것만 적는다(hcUnder)
 const HC_SPLIT_COLORS = { train: "#4c8dff", val: "#3ecf8e", test: "#f0a742", none: "#4a505c" };
 const HC_SPLIT_NAMES = { train: "train", val: "val", test: "test", none: "미배정" };
 const HC_DOMAIN_NAMES = { cctv: "CCTV", noncctv: "비CCTV", drone: "드론", none: "미분류" };
@@ -42,13 +42,18 @@ function hcPct(n, total) {
 function hcRestoreControls() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(HC_KEY) || "{}") || {}; } catch { /* 없으면 기본 */ }
-  if (["approved", "all"].includes(saved.scope)) $("#hc-scope").value = saved.scope;
-  if (["drop", "keep"].includes(saved.masked)) $("#hc-masked").value = saved.masked;
+  // 칸에 있는 값만 받는다(값 목록을 여기에 따로 적지 않는다 — index.html 의 option 이 서버의 SCOPES·masked 와 맞는다)
+  for (const [sel, v] of [["#hc-scope", saved.scope], ["#hc-masked", saved.masked]]) {
+    if ([...$(sel).options].some((o) => o.value === v)) $(sel).value = v;
+  }
   H.savedSize = Number(saved.imgsz) || 0;
 }
 
+/** 조절 칸 값을 남긴다. 입력 크기 칸은 첫 응답 뒤에야 채워진다 — 그 전에는 지난번에 남긴 값을 그대로 둔다
+ *  (2026-11-15 리뷰에서 고침: 첫 응답 전에 범위를 바꾸면 빈 칸을 읽어 0 을 남겼고, 다음에 열면 남겨 둔 크기가 사라졌다). */
 function hcSaveControls() {
-  const v = { scope: $("#hc-scope").value, masked: $("#hc-masked").value, imgsz: Number($("#hc-imgsz").value) || 0 };
+  const imgsz = H.sizeReady ? Number($("#hc-imgsz").value) || 0 : H.savedSize;
+  const v = { scope: $("#hc-scope").value, masked: $("#hc-masked").value, imgsz };
   try { localStorage.setItem(HC_KEY, JSON.stringify(v)); } catch { /* 저장 못 해도 그만 */ }
 }
 
@@ -61,24 +66,33 @@ function hcFillSizes(def, cur) {
   H.sizeReady = true;
 }
 
-function hcQuery() {
+/** /api/health 의 조건. heat(hcHeatParams 의 꼴)를 주면 히트맵도 같은 요청으로 받는다 — 서버가 같은 스냅샷으로, 덮인 몫을
+ *  한 번만 재서 함께 준다(2026-11-15 리뷰: 전에는 열 때마다 DB 를 두 번 읽고 두 번 쟀다). */
+function hcQuery(heat = null) {
   const q = new URLSearchParams({ scope: $("#hc-scope").value, masked: $("#hc-masked").value });
   const size = H.sizeReady ? $("#hc-imgsz").value : (H.savedSize || "");
   if (size) q.set("imgsz", String(size));
+  if (heat) {
+    q.set("heat", "1");
+    if (heat.cls !== "") q.set("cls", heat.cls);
+    if (heat.cam !== "") q.set("camera", heat.cam);
+  }
   return q;
 }
 
 async function hcLoad() {
-  const seq = ++H.seq;
+  const seq = ++H.seq, heatSeq = ++H.heatSeq, p = hcHeatParams();
   $("#health").classList.add("loading");
   try {
-    const d = await api(`/api/health?${hcQuery()}`);
+    const d = await api(`/api/health?${hcQuery(p)}`);
     if (seq !== H.seq) return;
     H.data = d;
     if (!H.sizeReady || Number($("#hc-imgsz").value) !== d.imgsz) hcFillSizes(d.default_imgsz, d.imgsz);
-    hcRender();
+    hcRender();     // 히트맵의 클래스·카메라 칸도 다시 채운다 — 고른 값이 새 범위에 없으면 '전체' 로 돌린다
     $("#hc-stamp").textContent = `${new Date().toLocaleTimeString()} 기준`;
-    await hcLoadHeat();
+    // 함께 온 히트맵은 물었을 때의 조건(p)으로 센 것이다. 그새 히트맵을 따로 받기 시작했거나 위에서 조건이 바뀌었으면 다시 받는다
+    if (d.heatmap && heatSeq === H.heatSeq && H.cls === p.cls && H.cam === p.cam) hcShowHeat(d.heatmap, p);
+    else await hcLoadHeat();
   } catch (err) {
     if (seq === H.seq) toast(`데이터 점검을 받지 못했습니다: ${err.message}`, true);
   } finally {
@@ -166,24 +180,43 @@ function hcSplitBar(parts) {
   return `<span class="hc-stack" title="${esc(title)}">${segs}</span>`;
 }
 
-function hcSizeBar(counts) {
+/** 박스 크기 칸의 이름 — **서버가 준 경계**(health.SIZE_EDGES)로 만든다: [8, 16, 32, 64] → "8px 미만"·"8–16"·…·"64px 이상".
+ *  칸 k 는 [edges[k-1], edges[k]) 다(health.size_bin). 2026-11-15 리뷰: 전에는 이름과 '32px 미만' 의 칸 번호를 여기에 따로
+ *  적어, 서버의 경계를 바꾸면 화면이 옛 범위로 적었다. */
+function hcSizeNames(edges) {
+  return [`${edges[0]}px 미만`, ...edges.slice(1).map((e, k) => `${edges[k]}–${e}`), `${edges[edges.length - 1]}px 이상`];
+}
+
+/** 짧은 변이 px 미만인 박스 수 — px 가 칸 경계에 없으면 null(셀 수 없다). */
+function hcUnder(counts, edges, px) {
+  const k = edges.indexOf(px);
+  return k < 0 ? null : counts.slice(0, k + 1).reduce((a, b) => a + b, 0);
+}
+
+const hcSizeColor = (k) => HC_SIZE_COLORS[Math.min(k, HC_SIZE_COLORS.length - 1)];
+
+function hcSizeBar(counts, names) {
   const total = counts.reduce((a, b) => a + b, 0);
   if (!total) return "";
-  const title = counts.map((n, k) => `${HC_SIZE_NAMES[k]} ${hcN(n)}`).join(" · ");
-  const segs = counts.map((n, k) => (n ? `<i style="width:${(100 * n / total).toFixed(2)}%;background:${HC_SIZE_COLORS[k]}"></i>` : "")).join("");
+  const title = counts.map((n, k) => `${names[k]} ${hcN(n)}`).join(" · ");
+  const segs = counts.map((n, k) => (n ? `<i style="width:${(100 * n / total).toFixed(2)}%;background:${hcSizeColor(k)}"></i>` : "")).join("");
   return `<span class="hc-stack" title="${esc(title)}">${segs}</span>`;
 }
 
 function hcRenderClasses(d) {
   const rows = [...d.classes].sort((a, b) => b.boxes - a.boxes || a.idx - b.idx);
   const max = Math.max(1, ...rows.map((r) => r.boxes));
+  // 묶음이 쓰는 분할 수(d.min_units — 서버의 health.used_splits)보다 적으면 그 분할들에 다 들어갈 수 없다
+  const camHead = "이 클래스의 박스가 있는 카메라 수." + (d.min_units > 1
+    ? ` 분할이 카메라째라 묶음이 ${d.min_units}곳 미만이면 ${d.splits.used.join("·")} 에 모두 들어갈 수 없습니다` : "");
   const body = rows.map((r) => {
-    const few = r.boxes > 0 && r.units < 3;
+    const few = r.boxes > 0 && r.units < d.min_units;       // 쓰는 분할 수보다 적은 묶음 — 서버(health.used_splits)가 준다
     const top = r.top ? `${hcPct(r.top.share, 1)}` : "";
-    const topTitle = r.top ? `박스가 가장 많은 카메라: ${r.top.camera ?? "출처 없음"}` : "";
+    const topTitle = !r.top ? "" : r.top.cameras.length
+      ? `박스가 가장 많은 곳: ${r.top.cameras.join(" + ")}` : "박스가 가장 많은 곳: 출처 없는 장면 묶음 하나";
     const cams = `${hcN(r.cameras)}${r.no_camera_boxes ? " +" : ""}`;
     const camTitle = (r.no_camera_boxes ? `출처 없는 이미지의 박스 ${hcN(r.no_camera_boxes)}개 — 분할 묶음으로는 ${hcN(r.units)}곳` : "")
-      || (few ? "카메라가 3곳 미만 — train·val·test 에 모두 들어갈 수 없습니다" : "");
+      || (few ? `묶음이 ${d.min_units}곳 미만 — ${d.splits.used.join("·")} 에 모두 들어갈 수 없습니다` : "");
     return `<tr class="link${r.boxes ? "" : " zero"}" data-act="cls" data-v="${r.idx}">`
       + `<td class="nm"><i class="sw" style="background:${classColor(r.idx)}"></i>${esc(r.name)}</td>`
       + `<td class="bar"><i style="width:${(100 * r.boxes / max).toFixed(2)}%"></i></td>`
@@ -195,8 +228,8 @@ function hcRenderClasses(d) {
       + `<td class="num dim">${r.masked_out ? hcN(r.masked_out) : ""}</td></tr>`;
   }).join("");
   $("#hc-classes").innerHTML = `<table class="tbl hc-tbl"><thead><tr><th>클래스</th><th></th><th class="num">박스</th>`
-    + `<th class="num">이미지</th><th class="num" title="이 클래스의 박스가 있는 카메라 수. 분할이 카메라째라 3곳 미만이면 train·val·test 에 모두 들어갈 수 없습니다">카메라</th>`
-    + `<th class="num" title="박스가 가장 많은 카메라 한 곳이 이 클래스 박스에서 차지하는 몫 — 높으면 한 장면에 쏠려 있습니다">한 곳 몫</th>`
+    + `<th class="num">이미지</th><th class="num" title="${esc(camHead)}">카메라</th>`
+    + `<th class="num" title="박스가 가장 많은 한 곳(분할이 통째로 옮기는 묶음 — 카메라, 출처 없는 이미지는 장면 묶음)이 이 클래스 박스에서 차지하는 몫 — 높으면 한 장면에 쏠려 있습니다">한 곳 몫</th>`
     + `<th title="이 클래스 박스의 분할별 몫 (train·val·test·미배정)">분할</th>`
     + `<th class="num" title="학습 입력(${d.imgsz})에서 박스 짧은 변의 중앙값">크기</th>`
     + `<th class="num" title="가릴 영역이 반 이상 덮어 학습 라벨에서 빠지는 박스 수${d.drop_masked ? " — 왼쪽 수치에는 들어 있지 않습니다" : " — 왼쪽 수치에 들어 있습니다"}">가려짐</th>`
@@ -208,14 +241,16 @@ function hcRenderSizes(d) {
   const counts = d.size_bins.counts, total = counts.reduce((a, b) => a + b, 0);
   $("#hc-size-sub").textContent = `— 긴 변을 ${d.imgsz} 에 맞췄을 때 박스의 짧은 변`;
   if (!total) { $("#hc-sizes").innerHTML = `<div class="dim">박스가 없습니다.</div>`; return; }
-  const under = counts[0] + counts[1] + counts[2];
+  const edges = d.size_bins.edges, names = hcSizeNames(edges);
   const legend = counts.map((n, k) => (
-    `<span><i style="background:${HC_SIZE_COLORS[k]}"></i>${HC_SIZE_NAMES[k]} <b>${hcN(n)}</b> ${hcPct(n, total)}</span>`)).join("");
+    `<span><i style="background:${hcSizeColor(k)}"></i>${names[k]} <b>${hcN(n)}</b> ${hcPct(n, total)}</span>`)).join("");
+  const under = HC_SIZE_MARKS.map((px) => [px, hcUnder(counts, edges, px)]).filter(([, n]) => n != null).map(([px, n]) => (
+    `${px}px 미만 <b>${hcN(n)}</b>개 (${hcPct(n, total)})`)).join(" · ");
   const rows = [...d.classes].filter((r) => r.boxes).sort((a, b) => a.median_px - b.median_px).map((r) => (
     `<div class="hc-row"><span class="nm"><i class="sw" style="background:${classColor(r.idx)}"></i>${esc(r.name)}</span>`
-    + `${hcSizeBar(r.sizes)}<span class="num">${r.median_px}px</span></div>`)).join("");
-  $("#hc-sizes").innerHTML = `<div class="hc-big">${hcSizeBar(counts)}</div><div class="hc-legend">${legend}</div>`
-    + `<div class="hc-line">32px 미만 <b>${hcN(under)}</b>개 (${hcPct(under, total)}) · 16px 미만 <b>${hcN(counts[0] + counts[1])}</b>개 (${hcPct(counts[0] + counts[1], total)})</div>`
+    + `${hcSizeBar(r.sizes, names)}<span class="num">${r.median_px}px</span></div>`)).join("");
+  $("#hc-sizes").innerHTML = `<div class="hc-big">${hcSizeBar(counts, names)}</div><div class="hc-legend">${legend}</div>`
+    + (under ? `<div class="hc-line">${under}</div>` : "")
     + `<div class="hc-sub">클래스별 (작은 것부터, 오른쪽은 중앙값)</div>${rows}`;
 }
 
@@ -367,18 +402,23 @@ async function hcLoadHeat() {
   try {
     const h = await api(`/api/health/heatmap?${hcHeatQuery(p)}`);
     if (seq !== H.heatSeq) return;
-    H.heat = h;
-    H.heatQ = p;
-    H.hover = -1;
-    hcTip(null);
-    $("#hc-heat-info").textContent = h.boxes
-      ? `박스 ${hcN(h.boxes)}개 · 이미지 ${hcN(h.images)}장 · 가장 많은 칸 ${hcN(h.max)}개`
-      : "이 조건의 박스가 없습니다";
-    hcHeatBackground(h.sample_id);
-    hcDrawHeat();
+    hcShowHeat(h, p);
   } catch (err) {
     if (seq === H.heatSeq) toast(`박스 위치를 받지 못했습니다: ${err.message}`, true);
   }
+}
+
+/** 받은 히트맵 h 를 그린다. p 는 그것을 물은 조건(hcHeatParams) — 칸을 누르면 이 조건으로 묻는다(hcOpenCell). */
+function hcShowHeat(h, p) {
+  H.heat = h;
+  H.heatQ = p;
+  H.hover = -1;
+  hcTip(null);
+  $("#hc-heat-info").textContent = h.boxes
+    ? `박스 ${hcN(h.boxes)}개 · 이미지 ${hcN(h.images)}장 · 가장 많은 칸 ${hcN(h.max)}개`
+    : "이 조건의 박스가 없습니다";
+  hcHeatBackground(h.sample_id);
+  hcDrawHeat();
 }
 
 /** 마우스 위치의 칸 [x, y, 번호] — 그림 밖이면 null. */
@@ -446,50 +486,25 @@ async function hcOpenCell(x, y) {
   await hcOpenIds(cell.ids, cell.more);
 }
 
-/** 왼쪽 필터의 지금 값 — hcOpenFiltered 가 목록을 못 받으면 이것으로 되돌린다(hcSetFilters). */
-function hcFilterState() {
-  return {
-    status: $("#filter-status").value, classes: [...S.filterClasses], empty: S.filterEmpty,
-    camera: S.filterCamera, domain: S.filterDomain, split: S.filterSplit,
-    tagF: { ...S.tagF, inc: [...S.tagF.inc], exc: [...S.tagF.exc] },
-  };
-}
-
-/** 왼쪽 필터를 f(hcFilterState 의 꼴)로 맞춘다 — 상태 칸·필터 값·칸의 표시까지. 목록은 받지 않는다. */
-function hcSetFilters(f) {
-  $("#filter-status").value = f.status;
-  S.filterClasses.clear();
-  for (const c of f.classes) S.filterClasses.add(c);
-  S.filterEmpty = f.empty;
-  S.filterCamera = f.camera;
-  S.filterDomain = f.domain;
-  S.filterSplit = f.split;
-  S.tagF = f.tagF;
-  for (const [sel, v] of [["#filter-camera", f.camera], ["#filter-domain", f.domain], ["#filter-split", f.split]]) {
-    $(sel).value = v;
-    $(sel).classList.toggle("on", !!v);
-  }
-  tagFilter?.render();
-  syncClassFilter();
-}
-
 /** 왼쪽 필터를 이 조건 하나로 맞추고(다른 필터는 푼다) 이미지 보기를 연다. 상태 칸은 지금 범위를 따른다.
+ *  필터를 읽고 쓰는 것은 app.js 의 noFilters·filterState·setFilters 다(필터 풀기와 함께 쓴다 — 여기에 따로 적지 않는다).
  *  목록을 받지 못하면 필터를 앞 상태로 되돌린다 — 필터만 새 조건이고 목록은 옛 것인 채로 두지 않는다(openIds 와 같다,
  *  2026-11-15 리뷰에서 고침). 목록을 받은 뒤의 실패(첫 장 열기)는 되돌리지 않는다 — 목록이 이미 새 조건이다. */
 async function hcOpenFiltered({ cls = null, camera = "", split = "", tag = null, tagNone = false } = {}) {
   if (H.opening || navBusy()) return;
   H.opening = true;
-  const prev = hcFilterState();
+  const prev = filterState();
   try {
-    hcSetFilters({
-      // 서버가 준 상태 필터 — 범위 '휴지통만 빼고 전부' 는 목록의 '전체'(휴지통 포함)가 아니라 'live' 다 (2026-11-15)
-      status: H.data.list_status, classes: cls != null ? [cls] : [], empty: false, camera, domain: "", split,
-      tagF: { inc: tag != null ? [tag] : [], exc: [], any: false, none: tagNone },
-    });
+    // 상태 칸은 서버가 준 값 — 범위 '휴지통만 빼고 전부' 는 목록의 '전체'(휴지통 포함)가 아니라 'live' 다 (2026-11-15)
+    const want = noFilters(H.data.list_status);
+    if (cls != null) want.classes.push(cls);
+    if (tag != null) want.tagF.inc.push(tag);
+    want.tagF.none = tagNone;
+    setFilters({ ...want, camera, split });
     try {
       await loadImageList(new Set([0]));     // 필터가 바뀌었으니 첫 묶음부터 (app.js reloadList 와 같다)
     } catch (err) {
-      hcSetFilters(prev);
+      setFilters(prev);
       syncListControls();                    // loadImageList 가 새 조건으로 맞춰 둔 칸 잠금·필터 요약을 되돌린다
       throw err;
     }
@@ -530,7 +545,9 @@ $("#hc-heat-cam").addEventListener("change", (e) => { e.target.blur(); H.cam = e
 
 $("#hc-heat-canvas").addEventListener("mousemove", (e) => {
   const c = hcHeatCell(e), k = c ? c[2] : -1, n = c && H.heat ? H.heat.cells[k] : 0;
-  if (k !== H.hover) { H.hover = n ? k : -1; hcDrawHeat(); }
+  // 표시할 칸이 바뀔 때만 다시 그린다 — 빈 칸 위에서는 표시가 없으니(-1) 그대로다(전에는 움직일 때마다 다시 그렸다)
+  const hover = n ? k : -1;
+  if (hover !== H.hover) { H.hover = hover; hcDrawHeat(); }
   hcTip(n ? `박스 ${hcN(n)}개 — 눌러서 이미지 보기` : null, e);
   $("#hc-heat-canvas").style.cursor = n ? "pointer" : "default";
 });

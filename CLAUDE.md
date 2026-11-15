@@ -186,9 +186,16 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
   `loadImageNow`)를 떼어 `tests/nav_harness.js` 에서 **그대로** 돌린다 — 키 반복·서버 응답·사진 도착만 가짜 시계로 일으키고,
   이 함수들이 부르는 그 밖의 화면 함수는 아무것도 안 하는 대역이 받는다. ↑·↓ 를 누르고 있으면 계속 넘어가는지(src/autolabel/CLAUDE.md)
   를 지킨다. 이 다섯 함수의 이름을 바꾸면 테스트의 `PARTS` 도 맞춘다.
-- `tests/test_js_health.py`(11-15)는 같은 방식으로 health.js 의 이미지 보기로 넘기기(`hcOpenCell`·`hcOpenIds`·`hcOpenFiltered`·
-  `hcLoadHeat` 와 `hcHeatParams`·`hcHeatQuery`·`hcFilterState`·`hcSetFilters`)를 `tests/health_harness.js` 에서 돌린다 — 기다리는
-  일(서버 응답·목록 받기)에 단계마다 답하며 그 사이에 '다른 보기로 감'·'조절 칸을 바꿈' 을 끼워 넣는다. 이름을 바꾸면 `PARTS` 도.
+- `tests/test_js_health.py`(11-15)는 같은 방식으로 health.js 의 화면 열기·이미지 보기로 넘기기(`hcLoad`·`hcLoadHeat`·
+  `hcOpenCell`·`hcOpenIds`·`hcOpenFiltered` 와 그것들이 쓰는 함수 — 테스트의 `PARTS`)와 app.js 의 `noFilters`·`filterState`·
+  `setFilters`(`APP_PARTS`)를 `tests/health_harness.js` 에서 돌린다 — 기다리는 일(서버 응답·목록 받기)에 단계마다 답하며 그
+  사이에 '다른 보기로 감'·'조절 칸을 바꿈' 을 끼워 넣는다. 이름을 바꾸면 그 목록도 맞춘다.
+- `tests/test_js_views.py`(11-15)는 app.js 의 보기 표 `VIEWS`(맨 왼쪽 `const VIEWS = {` … `};`)와 `viewOf`·`setView`·
+  `viewKeydown` 을 돌린다 — 표에 `key` 없는 보기를 하나 더 넣어 Space·S·V 가 숨은 라벨링으로 새지 않는지, 표의 이름이
+  index.html 의 단추·style.css 와 같은지 본다(src/autolabel/CLAUDE.md '보기는 `VIEWS` 표 한 곳').
+- `tests/test_health_dataset.py`(11-15)는 **진짜 학습 세트(`trainer.build_dataset`)와 내보내기(`export_yolo`)를 임시 폴더에
+  만들어** 라벨 줄 수를 분할·클래스별로 `health.report` 와 견준다 — 가릴 영역이 빼는 박스의 판정(`masks.drops`·`applies_to`)을
+  셋 중 하나가 따로 적기 시작하면 여기서 어긋난다. 그림 파일을 실제로 쓰는 몇 안 되는 테스트다(작은 JPEG 넉 장).
 - **좌표가 '같은 자리' 인지는 반올림한 값을 견주지 말고 `masks.same_rect`(화면 `sameRect`)로 본다** — 네 좌표의 차가 모두
   `SAME`(7.5e-8) 이하. 11-12 에 테스트로 찾아 고쳤다: 소수 7자리 반올림 키는 픽셀에 딱 맞춘 좌표(2560·1280 폭)가 반올림 경계에
   자주 걸려, 화면이 영역을 {cx, cy, w, h} 로 들었다 되돌리는 끝자리 잡음만으로 다른 자리가 됐다(같은 템플릿을 두 번 더하면 겹쳐

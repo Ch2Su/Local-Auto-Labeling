@@ -24,7 +24,7 @@ from typing import Callable
 import yaml
 
 from .config import Config, resolve
-from .masks import split_boxes, write_masked
+from .masks import applies_to, split_boxes, write_masked
 from .split import SplitReport, ensure_splits
 from .store import Store
 from .yolo_io import write_yolo_txt
@@ -122,7 +122,7 @@ def build_dataset(cfg: Config, store: Store) -> BuildReport:
         split = assign[row["id"]]
 
         rects = masks.get(row["id"])
-        if rects and split == "test":       # 평가는 실제 화면 그대로 — 칠하지도, 박스를 빼지도 않는다
+        if rects and not applies_to(split):     # test — 평가는 실제 화면 그대로: 칠하지도, 박스를 빼지도 않는다 (masks.py)
             report.masked_test += 1
             rects = None
         if rects:

@@ -2111,18 +2111,47 @@ function toggleFilters(open = $("#filters-body").classList.contains("hidden")) {
   try { localStorage.setItem("filtersOpen", open ? "1" : "0"); } catch { /* 저장 못 해도 그만 */ }
 }
 
-/** 클래스·카메라·도메인·분할·태그 필터를 모두 푼다(상태·정렬은 그대로). */
-function clearFilters() {
+/* 왼쪽 필터를 통째로 읽고 쓰기 (2026-11-15) — 필터 풀기(clearFilters)와 데이터 점검의 눌러 넘기기·되돌리기(health.js
+ * hcOpenFiltered)가 함께 쓴다. 전에는 '필터를 전부 맞추는' 같은 줄들이 두 곳에 따로 있어, 필터를 새로 만들면 둘 다 고쳐야 했다.
+ * **목록 필터를 새로 만들면 noFilters·filterState·setFilters 세 함수에 넣는다**(목록 주소는 listUrl, 한 줄 요약은
+ * renderFilterSummary). tests/test_js_health.py 가 이 셋을 health.js 와 함께 node 로 돌린다 — 이름을 바꾸면 거기도. */
+
+/** 아무 필터도 안 건 값(상태 칸만 status). */
+function noFilters(status) {
+  return { status, classes: [], empty: false, camera: "", domain: "", split: "",
+           tagF: { inc: [], exc: [], any: false, none: false } };
+}
+
+/** 왼쪽 필터의 지금 값 — 상태 칸과 클래스·카메라·도메인·분할·태그 필터. 사본이라 setFilters 로 되돌릴 수 있다. */
+function filterState() {
+  return {
+    status: $("#filter-status").value, classes: [...S.filterClasses], empty: S.filterEmpty,
+    camera: S.filterCamera, domain: S.filterDomain, split: S.filterSplit,
+    tagF: { ...S.tagF, inc: [...S.tagF.inc], exc: [...S.tagF.exc] },
+  };
+}
+
+/** 왼쪽 필터를 f(filterState 의 꼴)로 맞춘다 — 상태 칸·필터 값·칸의 표시까지. 목록은 받지 않는다(부르는 쪽이 받는다). */
+function setFilters(f) {
+  $("#filter-status").value = f.status;
   S.filterClasses.clear();
-  S.filterEmpty = false;
-  S.filterCamera = S.filterDomain = S.filterSplit = "";
-  S.tagF = { inc: [], exc: [], any: false, none: false };
-  for (const s of ["#filter-camera", "#filter-domain", "#filter-split"]) {
-    $(s).value = "";
-    $(s).classList.remove("on");
+  for (const c of f.classes) S.filterClasses.add(c);
+  S.filterEmpty = f.empty;
+  S.filterCamera = f.camera;
+  S.filterDomain = f.domain;
+  S.filterSplit = f.split;
+  S.tagF = f.tagF;
+  for (const [sel, v] of [["#filter-camera", f.camera], ["#filter-domain", f.domain], ["#filter-split", f.split]]) {
+    $(sel).value = v;
+    $(sel).classList.toggle("on", !!v);
   }
   tagFilter?.render();
   syncClassFilter();
+}
+
+/** 클래스·카메라·도메인·분할·태그 필터를 모두 푼다(상태·정렬은 그대로). */
+function clearFilters() {
+  setFilters(noFilters($("#filter-status").value));
   reloadList();
 }
 
@@ -3701,27 +3730,59 @@ $("#list-width-reset").onclick = resetListWidth;
 /* 보기 전환 (2026-11-04) — 라벨링 ↔ 이미지 보기(gallery.js). 한 페이지 안이라 필터·지금 이미지·되돌리기가
  * 그대로 남는다. 마지막 보기는 다시 열어도 남긴다(프로젝트마다). */
 const VIEW_KEY = `view:${BASE}`;
+
+/* 라벨링 말고의 보기는 **이 표 한 곳에** 적는다 (2026-11-15 — 전에는 보기를 하나 더할 때마다 setView 의 세 곳·keydown·처음 열
+ * 때의 목록·style.css 의 숨김 목록을 따로 고쳤고, keydown 을 빠뜨리면 숨은 라벨링에 Space 승인이 먹었다). 이름은 body 의
+ * `view-<이름>` 클래스·#view-switch 단추의 data-view 와 같다(tests/test_js_views.py 가 단추와 이 표를 견준다).
+ *   show·hide  setView 가 그 보기로 들어갈 때·나갈 때 부른다
+ *   key        그 보기에서의 키 입력을 전부 여기로 넘긴다. **없으면 키를 버린다** — 숨은 라벨링에 Space(승인)·S·Q 가 먹지 않는
+ *              쪽이 기본이라, 새 보기를 더할 때 keydown 을 손대지 않아도 안전하다
+ *   vToggle    V 가 라벨링 ↔ 이 보기를 오간다(이미지 보기만)
+ *   full       레이아웃 세 칸을 통째로 쓴다 — body.view-full 이 왼쪽 목록·가운데·오른쪽 칸을 숨긴다(style.css)
+ * 함수는 뒤에 읽히는 스크립트(gallery.js·capture.js·health.js)에 있어서 부를 때 찾는다. */
+const VIEWS = {
+  gallery: { show: () => galleryShow(), hide: () => galleryHide(), key: (e) => galleryKey(e), vToggle: true },
+  capture: { show: () => captureShow(), hide: () => captureHide(), key: (e) => captureKey(e), full: true },   // 2026-11-10
+  health: { show: () => healthShow(), hide: () => healthHide(), full: true },                                 // 2026-11-15
+};
+
+/** 표에 있는 보기면 그 줄, 아니면(라벨링·모르는 이름) null. */
+function viewOf(name) {
+  return Object.hasOwn(VIEWS, name) ? VIEWS[name] : null;
+}
+
 async function setView(v) {
   if (v === VIEW) return;
-  if (VIEW === "gallery") galleryHide();
-  if (VIEW === "capture") captureHide();
-  if (VIEW === "health") healthHide();
+  viewOf(VIEW)?.hide();
   VIEW = v;
-  document.body.classList.toggle("view-gallery", v === "gallery");
-  document.body.classList.toggle("view-capture", v === "capture");    // 영상 캡처 (2026-11-10, capture.js)
-  document.body.classList.toggle("view-health", v === "health");      // 데이터 점검 (2026-11-15, health.js)
+  const view = viewOf(v);
+  for (const name of Object.keys(VIEWS)) document.body.classList.toggle(`view-${name}`, name === v);
+  document.body.classList.toggle("view-full", !!view?.full);
   document.querySelectorAll("#view-switch .seg-btn").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
   try { localStorage.setItem(VIEW_KEY, v); } catch { /* 저장 못 해도 그만 */ }
   closeMenus();
-  if (v === "gallery") await galleryShow();
-  else if (v === "capture") await captureShow();
-  else if (v === "health") await healthShow();
+  if (view) await view.show();
   else {
     resizeCanvas();
     markCurrent();
     // 이미지 보기에서 연 이미지(필터를 바꾸면 첫 장)는 예측을 받지 않았다 — 돌아와서 받는다 (fetchPreds)
     if (S.predOn && !S.pred && !S.predLoading) fetchPreds(0);
   }
+}
+
+/** 지금 보기가 이 키를 가져가는가 — 라벨링이 아닌 보기에서는 키를 그 보기에 넘기거나(key) **버리고** true 를 돌려준다.
+ *  숨은 라벨링 이미지에 Space(승인)·S·Q 가 먹으면 안 된다. V(라벨링 ↔ 이미지 보기)는 라벨링과 vToggle 보기에서만 먹는다 —
+ *  영상 캡처·데이터 점검에서는 V 도 보기를 바꾸지 않는다. */
+function viewKeydown(e) {
+  const view = viewOf(VIEW);
+  if ((!view || view.vToggle) && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "v" || e.key === "V" || e.key === "ㅍ")) {
+    e.preventDefault();
+    setView(view ? "label" : "gallery");
+    return true;
+  }
+  if (!view) return false;
+  if (view.key) view.key(e);
+  return true;
 }
 document.querySelectorAll("#view-switch .seg-btn").forEach((b) => {
   b.onclick = () => { b.blur(); setView(b.dataset.view); };
@@ -3795,18 +3856,9 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
   if (e.key === "Escape" && document.querySelector(".menu-list:not(.hidden)")) { closeMenus(); return; }
-  // 영상 캡처(capture.js)에서는 키를 모두 그쪽으로 — V 도(보기를 바꾸지 않는다). 숨은 라벨링에 Space 승인이 먹으면 안 된다
-  if (VIEW === "capture") { captureKey(e); return; }
-  // 데이터 점검(health.js)은 키를 쓰지 않는다 — 숨은 라벨링에 Space(승인)·S·Q 가 먹지 않게 여기서 끝낸다(V 도)
-  if (VIEW === "health") return;
-  // V: 라벨링 ↔ 이미지 보기. 이미지 보기에서는 키를 그쪽(gallery.js)에 넘긴다 — Space 가 뒤에 숨은
-  // 라벨링 이미지를 승인하면 안 된다 (2026-11-04)
-  if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "v" || e.key === "V" || e.key === "ㅍ")) {
-    e.preventDefault();
-    setView(VIEW === "gallery" ? "label" : "gallery");
-    return;
-  }
-  if (VIEW === "gallery") { galleryKey(e); return; }
+  // 라벨링이 아닌 보기(이미지 보기·영상 캡처·데이터 점검 — VIEWS)에서는 키를 그 보기가 받거나 버린다. V 도 여기서 본다.
+  // 숨은 라벨링 이미지에 Space 승인이 먹으면 안 된다 (2026-11-04)
+  if (viewKeydown(e)) return;
 
   // Ctrl 을 누르고 있는 동안만 모드를 반대로. (누르는 순간부터 커서도 바뀐다)
   if (e.key === "Control" || e.ctrlKey) {
@@ -3951,7 +4003,7 @@ async function loadProjects() {
     // 지난번에 이미지 보기·영상 캡처에서 닫았으면 그대로 연다(#ids= 로 연 때는 라벨링 그대로)
     let last = null;
     try { last = localStorage.getItem(VIEW_KEY); } catch { /* 없으면 라벨링 */ }
-    if (last === "gallery" || last === "capture" || last === "health") await setView(last);
+    if (viewOf(last)) await setView(last);
   } catch (err) {
     toast(`초기화 실패: ${err.message}`, true);
   }

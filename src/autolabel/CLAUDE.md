@@ -166,8 +166,8 @@
     않게 `capman.commit_lock` → `ingest_lock` 순서로 쥔다(넣기도 같은 순서 — 바꾸면 서로 막힌다). 지운 카메라를 고른 캡처 세션은
     카메라를 비운다(`forget_cameras`). 빈 카메라 폴더는 지우지 않는다. 화면 목록의 `db`·`files` 는 `_camera_rows` 가 붙인다. 화면은 계열(접두어+번호)마다 다음 번호를 제안하고(공개 데이터셋만 있는
     계열은 뺌), 처음 보는 접두어·`test` 고정은 한 번 더 묻는다(키에 지명이 드러나면 문서·커밋에 쓸 수 없다 — 루트 CLAUDE.md git 절).
-  - **키는 app.js keydown 이 `VIEW === "capture"` 면 V 보다 먼저 `captureKey` 로만 넘긴다** — 숨은 라벨링에 Space(승인)·S·Q 가
-    먹으면 안 된다(11-10 에 확인). 크게 보기는 공용 대화상자가 아니라 `#cap-preview`(키도 captureKey).
+  - **영상 캡처에서 키는 `captureKey` 로만 간다 — V 도**(app.js `VIEWS` 표의 `capture.key`, `vToggle` 없음 → `viewKeydown`) —
+    숨은 라벨링에 Space(승인)·S·Q 가 먹으면 안 된다(11-10 에 확인). 크게 보기는 공용 대화상자가 아니라 `#cap-preview`(키도 captureKey).
   - **뽑은 프레임은 끌지 않는다 (11-12 사용자 요청).** 크롬은 페이지 안의 `<img>` 를 끌 때도 dataTransfer 에 'Files' 와 그 JPEG
     을 실어, `#capture` 의 끌어다 놓기가 영상인 줄 알고 `capUpload` 로 넘겼다(실측: 칸을 다른 칸에 놓으면 이름 '0'·image/jpeg 파일).
     칸·크게 보기 그림은 `draggable=false`, `#cap-grid`·`#cap-preview` 의 dragstart 는 막는다. 끌기가 없으면 끌었다 놓은 것이
@@ -176,19 +176,30 @@
 - **데이터 점검 보기 (2026-11-15 사용자 요청 — `health.py`·`web/health.js`, 사용법은 README '데이터 점검')** — 같은 페이지의 네
   번째 보기(`setView('health')`·`body.view-health`). **읽기만 한다**: `GET /api/health?scope=approved|all&masked=drop|keep&imgsz=`
   와 `GET /api/health/heatmap?…&cls=&camera=&cell=x,y` 둘뿐이고, `store.health_snapshot`(읽기 트랜잭션 하나)이 준 줄을
-  `health.report`·`heatmap` 이 센다(파일은 열지 않는다 — 141장 0.02초, 캐시 없음, 열 때마다 새로).
+  `health.report`·`heatmap`·`cell_images` 가 센다(파일은 열지 않는다 — 141장 0.02초, 캐시 없음, 열 때마다 새로).
+  - **덮인 몫은 한 요청에 한 번만, 필요한 박스만 잰다 (11-15 리뷰).** 화면을 열 때는 `/api/health?heat=1&cls=&camera=` 한 번 —
+    같은 스냅샷·같은 판정(`masked_out` → `report`·`heatmap` 의 `gone=`)으로 히트맵을 `heatmap` 에 함께 싣는다(화면 `hcLoad` →
+    `hcShowHeat`. 함께 온 것이 지금 조건과 안 맞을 때만 따로 받는다). 히트맵만 다시 받을 때는 태그 수를 세지 않고
+    (`health_snapshot(tags=False)`) 거른 뒤 남은 박스만, 칸을 누를 때(`cell=`)는 **격자 없이 그 칸의 박스만** 잰다. 히트맵
+    요청을 새로 만들면 수치 요청과 따로 재게 하지 말 것.
   - **가릴 영역이 반 이상 덮은 박스는 기본으로 어느 수치에도 넣지 않는다**(`health.masked_out` — 학습 세트의
     `masks.split_boxes` 와 같은 판정). 그날 DB 는 승인 박스 1,277개 가운데 619개가 그런 박스였다(영역으로 덮은 자리에 자동 라벨
     박스가 남는다) — 640 입력에서 짧은 변 32px 미만이 넣고 세면 79%, 빼면 62% 다. **이 DB 의 박스를 SQL 로 바로 세어 말할
     때도 가려진 박스를 뺐는지 밝힐 것**(11-15 에 내가 79% 를 그냥 말했다). **test 분할 이미지의 박스는 빼지 않는다** —
     학습 세트·내보내기가 test 는 칠하지도 빼지도 않는다(`trainer.build_dataset`·`export_yolo` 의 `split == "test"`). 영역을 먼저
     덮고 나중에 test 로 배정된 이미지가 있으면 `masks.test_images` 와 '눈여겨볼 것' 에 나온다(11-15 리뷰에서 고침 — 그 전에는
-    분할을 안 보고 빼서 test 박스가 적게 세어졌다). **이 판정은 세 곳(trainer·export·health)에 따로 있다 — 바꾸면 셋 다.**
+    분할을 안 보고 빼서 test 박스가 적게 세어졌다). **판정은 `masks.py` 한 곳에 있다** — 박스가 빠지는가는 `masks.drops`,
+    test 예외는 `masks.applies_to` 이고 trainer·export·health 가 함께 쓴다(11-15 — 전에는 셋이 따로 적었다. 다시 따로 적지 말
+    것). `tests/test_health_dataset.py` 가 진짜 학습 세트·내보내기를 임시 폴더에 만들어 라벨 줄 수를 `health.report` 와 견준다.
   - 박스 크기는 긴 변을 imgsz 에 맞췄을 때의 짧은 변(`short_side`)이다. DB 의 원시 크기로 세서 EXIF 로 돌려 보는 그림은
-    어긋난다(파일을 열어야 알 수 있어 그대로 뒀다). 클래스의 `units` 는 분할이 통째로 옮기는 단위(카메라 → `grp` → 한 장)이고
-    3 미만이면 알린다. '눈여겨볼 것'(`_notes`)에는 숫자로 확인되는 것만 넣는다 — 많다·적다 같은 판단은 넣지 말 것.
-  - 눌러 넘기기: 클래스·카메라·태그·분할은 왼쪽 필터를 그 조건 하나로 바꾼다(`hcOpenFiltered` — `S.filter*`·`S.tagF`·칸 값을
-    고치고 `reloadList` → `setView('gallery')`. **목록 필터를 새로 만들면 여기서도 풀 것**). 상태 칸은 서버가 준
+    어긋난다(파일을 열어야 알 수 있어 그대로 뒀다). 클래스의 `units` 는 분할이 통째로 옮기는 단위다(`health.unit_ids` — 같은
+    카메라, **또는 `grp` 가 같은 이미지**: dHash 로 이어진 두 카메라는 한 묶음이다. 둘 다 없으면 그 한 장. grp 는 분할을 한 번
+    돌린 뒤에야 생긴다). '한 곳 몫'(`top`)도 이 묶음으로 센다 — 출처 없는 이미지 전부를 한 곳으로 치지 않는다. 묶음이 **쓰는
+    분할 수**(`health.used_splits` — 비율 0 인 val·test 는 뺀다)보다 적으면 알리고, 그 수는 응답의 `min_units`·`splits.used` 로
+    화면에 준다. **화면에 서버의 값을 따로 적지 말 것** — 박스 크기 칸의 이름과 '32px 미만' 도 `size_bins.edges` 로 만든다
+    (`hcSizeNames`·`hcUnder`, 11-15 리뷰). '눈여겨볼 것'(`_notes`)에는 숫자로 확인되는 것만 넣는다 — 많다·적다 같은 판단은 넣지 말 것.
+  - 눌러 넘기기: 클래스·카메라·태그·분할은 왼쪽 필터를 그 조건 하나로 바꾼다(`hcOpenFiltered` — app.js 의 `noFilters`·
+    `setFilters` 로 맞추고 목록을 받은 뒤 `setView('gallery')`). 상태 칸은 서버가 준
     `list_status` 로 맞춘다 — 범위 all(휴지통만 뺀 전부)은 목록의 `all`(휴지통도 넣는다)이 아니라 `live`(`store.LIVE`, 상태
     필터의 '휴지통 빼고 전체')다. `_list_where` 의 그 조건과 `health_snapshot` 의 WHERE 는 같은 이미지를 줘야 한다
     (`tests/test_health.py` 가 범위마다 견준다 — 11-15 리뷰에서 고침: `all` 로 넘겨 휴지통 이미지가 섞였다). 객체 수 막대·히트맵 칸은 id
@@ -197,12 +208,13 @@
     **화면에 그려진 히트맵의 조건**(`H.heatQ` — `hcLoadHeat` 가 물을 때의 `hcHeatParams` 를 남긴다)으로 묻고, 받는 사이 다른
     보기로 갔거나(`healthHide`) 히트맵을 다시 받기 시작했으면(`H.heatSeq`) 버린다 — 전에는 지금 조절 칸 값으로 물었고, 늦게 온
     응답이 라벨링으로 간 사람을 이미지 보기로 끌고 갔다. 받는 동안에도 `H.opening` 이라 두 번 누르기는 한 번만 묻는다.
-    `hcOpenFiltered` 는 필터를 바꾸기 전 값(`hcFilterState`)을 들고 있다가 **목록을 못 받으면 되돌린다**(`hcSetFilters` +
+    `hcOpenFiltered` 는 필터를 바꾸기 전 값(`filterState`)을 들고 있다가 **목록을 못 받으면 되돌린다**(`setFilters` +
     `syncListControls` — `openIds` 와 같은 약속: 필터 칸만 새 조건이고 목록은 옛 것인 채로 두지 않는다. 목록을 받은 뒤의
-    실패는 되돌리지 않는다). 세 길 모두 끝에 `VIEW === "health"` 일 때만 이미지 보기로 바꾼다. **목록 필터를 새로 만들면
-    `hcFilterState`·`hcSetFilters` 에도 넣을 것**(안 넣으면 눌러 넘길 때 안 풀리고, 실패했을 때 안 돌아온다).
-  - 키: app.js keydown 이 `VIEW === "health"` 면 아무 단축키도 넘기지 않는다(V 도) — 영상 캡처처럼 숨은 라벨링에 Space 승인이
-    먹으면 안 된다. 응답은 요청 번호(`H.seq`·`H.heatSeq`)로 마지막 것만 쓴다. 수치의 뜻을 바꾸면 health.py 머리말·README·화면
+    실패는 되돌리지 않는다). 세 길 모두 끝에 `VIEW === "health"` 일 때만 이미지 보기로 바꾼다.
+  - 키: 데이터 점검은 키를 쓰지 않는다 — app.js `VIEWS` 표의 `health` 에 `key` 가 없어 `viewKeydown` 이 버린다(V 도. 아래
+    '보기는 `VIEWS` 표 한 곳'). 응답은 요청 번호(`H.seq`·`H.heatSeq`)로 마지막 것만 쓴다. 조절 칸은 `hcSaveControls` 가
+    남기는데 입력 크기 칸은 첫 응답 뒤에야 채워지므로 그 전에는 지난 값(`H.savedSize`)을 그대로 남긴다. 히트맵은 표시할 칸이
+    바뀔 때만 다시 그린다(빈 칸 위에서 마우스를 움직여도 그대로). 수치의 뜻을 바꾸면 health.py 머리말·README·화면
     문구(index.html 의 `title`)를 함께 고칠 것.
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
   가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
@@ -222,6 +234,16 @@
   **그런 줄이 남아 있으면 서버 쪽 묶음(100개씩…) 경계가 밀려 있다** — 묶음을 펼칠 때는 펼친 묶음을 전부 새로 받고(`toggleChunk` —
   그 묶음만 받으면 사이의 이미지가 어느 묶음에도 안 나왔다), 다시 받은 뒤 보던·넘어갈 이미지가 닫힌 묶음으로 밀렸으면
   `openChunkWith()` 가 그 묶음을 펼친다.
+- **보기는 app.js 의 `VIEWS` 표 한 곳에 적는다 (11-15 리뷰).** 라벨링 말고의 보기(이미지 보기·영상 캡처·데이터 점검)마다
+  `show`·`hide`(setView 가 부른다)·`key`(그 보기의 키 처리 — **없으면 키를 버린다**)·`vToggle`(V 가 라벨링과 오간다 — 이미지
+  보기만)·`full`(세 칸을 통째로 쓴다 — `body.view-full` 이 왼쪽 목록·가운데·오른쪽 칸을 숨긴다, style.css 한 줄)을 적는다.
+  `setView`·`viewKeydown`·처음 열 때의 마지막 보기(`viewOf`)가 이 표만 본다 — **보기를 더할 때 그 셋과 keydown 을 따로 고치지
+  말 것**(전에는 다섯 곳을 나란히 고쳤고, keydown 을 빠뜨리면 숨은 라벨링에 Space 승인이 먹었다). 더할 것은 표의 한 줄,
+  index.html 의 단추(`data-view`)와 `<section id="<이름>">`, style.css 의 `body:not(.view-<이름>) #<이름> { display: none }`
+  뿐이다 — `tests/test_js_views.py` 가 표·단추·CSS 의 이름을 견주고, 표에 `key` 없는 보기를 하나 더 넣어 키가 새지 않는지 본다.
+- **왼쪽 필터를 통째로 읽고 쓰는 것은 app.js 의 `noFilters`·`filterState`·`setFilters` 다 (11-15 리뷰)** — 필터 풀기
+  (`clearFilters`)와 데이터 점검의 눌러 넘기기·되돌리기(`hcOpenFiltered`)가 함께 쓴다. **목록 필터를 새로 만들면 이 세 함수에
+  넣을 것**(안 넣으면 필터 풀기·눌러 넘기기에서 안 풀리고, 실패했을 때 안 돌아온다 — 목록 주소는 `listUrl`, 요약은 아래).
 - **화면 구성(11-04 개편)** — 작업 버튼은 상단 `데이터`·`모델` 메뉴(`.menu-item`, id 는 그대로라 onclick 도 그대로),
   왼쪽 필터는 접히는 `필터` 칸(`renderFilterSummary` 가 한 줄 요약 — 새 필터를 넣으면 거기도 넣을 것), 태그 필터는
   여러 개 넣고(포함) 빼는(제외) 찾기 칸(`makeTagFilter`, 11-04 — select 가 아니고 상태는 `S.tagF` 하나다. 코드로 바꾸면

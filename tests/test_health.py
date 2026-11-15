@@ -81,8 +81,9 @@ def test_approved_scope_counts_only_what_training_sees(store, data, cams):
     assert [row["name"] for row in r["classes"]] == CLASSES                 # DB 의 클래스 순서 그대로, 박스가 없어도 줄은 있다
     assert (c["car"]["boxes"], c["car"]["images"], c["car"]["cameras"], c["car"]["units"]) == (3, 3, 2, 2)
     assert (c["person"]["boxes"], c["person"]["images"], c["person"]["cameras"]) == (5, 2, 1)
-    assert c["person"]["top"] == {"camera": "cam-01", "share": 1.0}
-    assert c["car"]["top"] == {"camera": "cam-01", "share": round(2 / 3, 4)}
+    assert c["person"]["top"] == {"share": 1.0, "cameras": ["cam-01"]}
+    assert c["car"]["top"] == {"share": round(2 / 3, 4), "cameras": ["cam-01"]}
+    assert (r["min_units"], r["splits"]["used"]) == (3, ["train", "val", "test"])
     assert c["cone"]["boxes"] == 0 and c["cone"]["top"] is None and c["cone"]["median_px"] is None
     assert c["car"]["median_px"] == 90.0 and c["person"]["median_px"] == 6.4
 
@@ -149,6 +150,26 @@ def test_notes_say_only_what_the_numbers_show(store, data, cams):
     assert not any(n["text"].startswith("test 에") for n in rep(store, cams, test=0.0)["notes"])
 
 
+def test_the_unit_warning_counts_only_the_splits_in_use(store, data, cams):
+    """묶음이 **쓰는 분할 수**보다 적을 때만 알린다 — test 를 안 쓰면 두 곳이면 된다.
+
+    2026-11-15 리뷰에서 고침: 늘 3 과 견줘, test_ratio 0 인 설정에서 카메라 두 곳에 있는 클래스(여기서는 car)에도
+    'train·val·test 에 모두 들어갈 수 없습니다' 를 냈다.
+    """
+    assert health.used_splits(0.2, 0.15) == ["train", "val", "test"]
+    assert health.used_splits(0.2, 0.0) == ["train", "val"]
+    assert health.used_splits(0.0, 0.0) == ["train"]
+
+    r = rep(store, cams, test=0.0)
+    assert (r["min_units"], r["splits"]["used"]) == (2, ["train", "val"])
+    few = next(n["text"] for n in r["notes"] if "곳 미만인 클래스" in n["text"])
+    assert few.startswith("카메라(묶음)가 2곳 미만인 클래스") and "train·val 에 모두" in few and "test" not in few
+    assert "person(1)" in few and "truck(1)" in few and "car" not in few      # car 는 두 곳 — train·val 에 들어간다
+
+    r = rep(store, cams, val=0.0, test=0.0)                                    # 분할을 안 나누면 알릴 것이 없다
+    assert r["min_units"] == 1 and not any("곳 미만인 클래스" in n["text"] for n in r["notes"])
+
+
 def test_legacy_images_count_their_scene_group_as_one_unit(store, add_image):
     """출처 없는 이미지는 장면 묶음(grp)이 분할 단위다 — 같은 묶음 두 장은 한 곳, 묶음이 없으면 장마다 한 곳."""
     a = add_image("a.jpg", boxes=[box(CAR)])
@@ -156,8 +177,37 @@ def test_legacy_images_count_their_scene_group_as_one_unit(store, add_image):
     add_image("c.jpg", boxes=[box(CAR)])
     car = by_name(rep(store)["classes"])["car"]
     assert (car["units"], car["cameras"], car["no_camera_boxes"]) == (3, 0, 3)
+    # '한 곳 몫' 도 묶음으로 센다 — 출처 없는 석 장은 서로 다른 장면이라 한 곳이 1/3 이다(전에는 카메라 '없음' 한 곳 100%)
+    assert car["top"] == {"share": round(1 / 3, 4), "cameras": []}
     store.set_groups([(a, "g1"), (b, "g1")])
+    car = by_name(rep(store)["classes"])["car"]
+    assert (car["units"], car["top"]) == (2, {"share": round(2 / 3, 4), "cameras": []})
+
+
+def test_cameras_the_split_joined_count_as_one_unit(store, add_image):
+    """dHash 로 이어진 두 카메라는 분할이 한 묶음으로 옮긴다(grp 가 같다) — 따로 세면 '곳 미만' 경고를 놓친다.
+
+    같은 장면을 두 번 녹화해 자동 카메라 둘로 들어온 때가 그렇다. 2026-11-15 리뷰에서 고침: 전에는 카메라가 있으면 grp 를
+    보지 않아 3곳으로 세고 조용했다.
+    """
+    one = add_image("a.jpg", camera="vid-01", boxes=[box(CAR), box(CAR)])
+    two = add_image("b.jpg", camera="vid-02", boxes=[box(CAR)])
+    add_image("c.jpg", camera="cam-03", boxes=[box(CAR)])
+    car = by_name(rep(store)["classes"])["car"]
+    assert (car["units"], car["cameras"]) == (3, 3)                     # 분할 전(grp 없음) — 카메라로만 안다
+
+    store.set_groups([(one, "g000001"), (two, "g000001")])              # 분할이 두 카메라를 한 묶음으로 적었다
+    r = rep(store)
+    car = by_name(r["classes"])["car"]
+    assert (car["units"], car["cameras"]) == (2, 3)
+    assert car["top"] == {"share": 0.75, "cameras": ["vid-01", "vid-02"]}
+    assert any("3곳 미만인 클래스" in n["text"] and "car(2)" in n["text"] for n in r["notes"])
+
+    # 같은 카메라에 묶음 키가 아직 없는 새 이미지가 들어와도(다음 분할 전) 그 카메라는 한 곳이다
+    add_image("d.jpg", camera="vid-01", boxes=[box(CAR)])
     assert by_name(rep(store)["classes"])["car"]["units"] == 2
+    ids = health.unit_ids(store.health_snapshot()["images"])
+    assert ids[one] == ids[two] == min(ids) and len(set(ids.values())) == 2
 
 
 def test_boxes_the_masks_drop_from_training_are_left_out_of_every_number(store, data):
@@ -274,15 +324,34 @@ def test_heatmap_bins_box_centres_and_filters(store, data):
     cars = health.heatmap(snap, cls=CAR)
     assert (cars["boxes"], cars["cells"][centre], cars["cells"][person]) == (3, 3, 0)
 
-    two = health.heatmap(snap, camera="cam-02", cell=(gw // 2, gh // 2))
+    two = health.heatmap(snap, camera="cam-02")
     assert (two["boxes"], two["sample_id"]) == (1, data["c"])
-    assert two["cell"] == {"x": gw // 2, "y": gh // 2, "n": 1, "ids": [data["c"]], "more": 0}
+    # 칸을 눌렀을 때 — 그 칸에 박스 중심이 있는 이미지(히트맵과 같은 조건으로 거른다)
+    assert health.cell_images(snap, (gw // 2, gh // 2), camera="cam-02") == {
+        "x": gw // 2, "y": gh // 2, "n": 1, "ids": [data["c"]], "more": 0}
+    assert health.cell_images(snap, (gw // 2, gh // 2), cls=PERSON)["ids"] == []
+    assert health.cell_images(snap, (0, 0))["n"] == 0
 
     none = health.heatmap(snap, camera="__none__")    # 출처 없는 이미지 — 박스는 없어도 바탕에 깔 그림은 준다
     assert (none["boxes"], none["sample_id"]) == (0, data["legacy"])
 
-    hit = health.heatmap(snap, cell=(int(0.1 * gw), int(0.9 * gh)))["cell"]
+    hit = health.cell_images(snap, (int(0.1 * gw), int(0.9 * gh)))
     assert hit["ids"] == sorted([data["a"], data["b"]]) and hit["n"] == 2
+
+
+def test_a_cell_agrees_with_the_heatmap_about_masked_boxes(store, data):
+    """칸을 누르면 그 칸의 박스만 다시 잰다(`cell_images`) — 히트맵이 센 것과 같은 박스를 넣고 빼야 한다."""
+    gw, gh = health.GRID
+    centre = (gw // 2, gh // 2)
+    store.set_masks(data["a"], [(0.375, 0.375, 0.525, 0.625)])       # a 의 큰 차를 60% 덮는다 — 빠진다
+    snap = store.health_snapshot()
+    assert health.heatmap(snap)["cells"][centre[1] * gw + centre[0]] == 2
+    assert health.cell_images(snap, centre)["ids"] == sorted([data["b"], data["c"]])
+    assert health.cell_images(snap, centre, drop_masked=False)["ids"] == sorted([data["a"], data["b"], data["c"]])
+    # 한 번 잰 판정(gone)을 넘겨도, 걸러 가며 재도 히트맵은 같다
+    gone = health.masked_out(snap)
+    for kw in ({}, {"cls": CAR}, {"camera": "cam-01"}, {"cls": PERSON, "camera": "cam-01"}):
+        assert health.heatmap(snap, gone=gone, **kw) == health.heatmap(snap, **kw), kw
 
 
 def test_a_centre_on_the_far_edge_stays_inside_the_grid():
@@ -332,7 +401,10 @@ def test_the_endpoint_serves_the_report_and_reads_only(client, cfg, store, data,
     assert client.get("/api/health", params={"masked": "keep"}).json()["drop_masked"] is False
 
     h = client.get("/api/health/heatmap", params={"cls": CAR, "camera": "cam-01", "cell": "24,13"}).json()
-    assert (h["boxes"], h["sample_id"], h["cell"]["ids"]) == (2, data["b"], sorted([data["a"], data["b"]]))
+    assert (h["grid"], h["cell"]["ids"]) == ([48, 27], sorted([data["a"], data["b"]]))
+    assert "cells" not in h                                   # 칸을 물으면 격자는 다시 세지 않는다 — 그 칸만 준다
+    h = client.get("/api/health/heatmap", params={"cls": CAR, "camera": "cam-01"}).json()
+    assert (h["boxes"], h["sample_id"], "cell" in h) == (2, data["b"], False)
     for bad in ("48,0", "0,27", "a,b", "3"):
         assert client.get("/api/health/heatmap", params={"cell": bad}).status_code == 400, bad
     assert client.get("/api/health/heatmap", params={"cls": -1}).status_code == 400
@@ -340,6 +412,33 @@ def test_the_endpoint_serves_the_report_and_reads_only(client, cfg, store, data,
 
     assert store.health_snapshot(approved_only=False) == before
     assert {i: store.get_image(i)["updated_at"] for i in data.values()} == stamp
+
+
+def test_the_report_can_carry_the_heatmap_of_the_same_snapshot(client, store, data):
+    """화면을 열 때는 한 번만 묻는다 — `heat=1` 이면 /api/health 가 같은 스냅샷·같은 판정으로 히트맵도 싣는다.
+
+    2026-11-15 리뷰에서 고침: 전에는 열 때마다 /api/health 와 /api/health/heatmap 이 DB 를 따로 읽고 덮인 몫을 따로 쟀다.
+    함께 온 히트맵은 따로 받은 것과 같아야 하고, 수치는 `heat` 를 주든 안 주든 같아야 한다.
+    """
+    store.set_masks(data["a"], [(0.375, 0.375, 0.525, 0.625)])       # a 의 큰 차가 빠진다 — 판정을 함께 쓰는지 보려고
+    plain = client.get("/api/health").json()
+    assert "heatmap" not in plain
+    for extra in ({}, {"cls": CAR}, {"camera": "cam-01"}, {"cls": PERSON, "camera": "cam-01", "masked": "keep"},
+                  {"scope": "all", "camera": "__none__"}):
+        both = client.get("/api/health", params={"heat": 1, **extra}).json()
+        alone = client.get("/api/health/heatmap", params=extra).json()
+        assert both.pop("heatmap") == alone, extra
+        base = {k: v for k, v in extra.items() if k in ("scope", "masked")}
+        assert both == client.get("/api/health", params=base).json(), extra    # cls·camera 는 히트맵만 거른다
+    assert client.get("/api/health", params={"heat": 1, "cls": -1}).status_code == 400
+
+    # 히트맵만 받을 때는 태그 수를 세지 않는다(쓰지 않는다)
+    day = store.create_tag("day")
+    store.set_image_tag([data["a"]], day, True)
+    lean = store.health_snapshot(tags=False)
+    full = store.health_snapshot()
+    assert (lean["tags"], lean["untagged"]) == ([], 0) and full["tags"][0]["n"] == 1
+    assert {k: lean[k] for k in ("images", "boxes", "masks")} == {k: full[k] for k in ("images", "boxes", "masks")}
 
 
 def test_the_list_status_of_a_scope_lists_exactly_that_scopes_images(client, store, data):

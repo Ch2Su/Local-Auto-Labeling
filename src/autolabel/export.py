@@ -29,7 +29,7 @@ from pathlib import Path
 import yaml
 
 from .config import ROOT, Config, resolve
-from .masks import split_boxes, write_masked
+from .masks import applies_to, split_boxes, write_masked
 from .split import SPLITS
 from .store import Store
 from .yolo_io import write_yolo_txt
@@ -176,7 +176,7 @@ def export_yolo(
 
         suffix = src.suffix
         rects = masks.get(row["id"])
-        if rects and (not with_images or row.get("split") == "test"):
+        if rects and (not with_images or not applies_to(row.get("split"))):
             # 라벨만 내보내면 받는 쪽은 원본을 쓴다 — 칠하지 않은 그림에서 박스만 빼면 그 사람들이 배경이 된다.
             # test 는 실제 화면 그대로(masks.py). 둘 다 DB 박스를 그대로 쓴다.
             report.masked_raw += 1

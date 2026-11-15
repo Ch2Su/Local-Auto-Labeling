@@ -14,6 +14,9 @@ docs/label-rules.md)를 **학습 세트를 만들 때만** 회색(114)으로 칠
 - **test 는 칠하지 않는다** — 평가는 실제 화면 그대로여야 한다. 서버는 test 이미지(분할이 test 이거나 cameras.yaml 에서
   test 로 고정한 카메라)에 영역을 받지 않고, 학습 세트도 test 분할은 원본·박스 그대로 쓴다. `tools/test_baseline.py` 는
   원래부터 원본 그림과 DB 박스를 읽는다.
+- **'어느 박스가 라벨에서 빠지는가' 는 여기 두 함수가 정한다** — `drops`(덮인 몫이 DROP 이상)와 `applies_to`(test 분할에는
+  적용하지 않는다). 학습 세트·내보내기·데이터 점검(health.py)이 함께 쓴다(2026-11-15) — 그쪽에 판정을 따로 적지 말 것.
+  결과가 같은지는 tests/test_health_dataset.py 가 견준다.
 - 라벨된 박스와 겹친 몫은 그 물체도 칠해진 채로 학습된다 — 조금은 괜찮고(가려진 물체와 같다), 크게 덮어야 하면 그림
   가장자리면 잘라 낸다(`tools/crop_images.py`). 검수 화면은 반 미만으로 덮이는 박스를 '⚠ n% 가림' 으로 알린다.
 - 원본을 직접 읽는 분석 도구(label_qa·test_tiles·domain_review 등)는 영역을 모른다(읽기 전용이라 그대로 둔다) —
@@ -148,13 +151,28 @@ def covered(box, rects: Sequence[Rect]) -> float:
     return min(1.0, inside / area)
 
 
+def applies_to(split: str | None) -> bool:
+    """이 분할의 이미지에 가릴 영역을 **적용하는가** — 그 자리를 칠하고, 반 넘게 가려진 박스를 라벨에서 빼는가.
+
+    test 에는 적용하지 않는다(평가는 실제 화면 그대로 — 칠하지도, 박스를 빼지도 않는다). **이 예외는 여기 한 곳에 둔다** —
+    학습 세트(trainer.build_dataset)·내보내기(export_yolo)·데이터 점검(health — '가려진 박스')이 함께 쓴다. 2026-11-15 전에는
+    셋이 따로 적었고, health 가 이 예외를 빠뜨려 test 의 박스를 적게 셌다.
+    """
+    return split != "test"
+
+
+def drops(box, rects: Sequence[Rect]) -> bool:
+    """영역들이 이 박스를 학습 라벨에서 빼는가 — 합집합이 박스 넓이의 DROP 이상을 덮는다(split_boxes·health 가 함께 쓴다)."""
+    return bool(rects) and covered(box, rects) >= DROP
+
+
 def split_boxes(boxes: Sequence, rects: Sequence[Rect]) -> tuple[list, list]:
     """(학습 라벨에 남길 박스, 가려져 뺄 박스). 영역이 없으면 전부 남긴다."""
     if not rects:
         return list(boxes), []
     keep, drop = [], []
     for b in boxes:
-        (drop if covered(b, rects) >= DROP else keep).append(b)
+        (drop if drops(b, rects) else keep).append(b)
     return keep, drop
 
 

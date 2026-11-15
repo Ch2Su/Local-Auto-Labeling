@@ -768,8 +768,10 @@ body.view-gallery .filters-head .caret { visibility: hidden; }
 /* ── 영상 캡처 (2026-11-10, capture.js) ─────────────── */
 /* body.view-capture 일 때 레이아웃 세 칸을 통째로 이 화면이 쓴다(왼쪽 설정 300px + 그리드) */
 body:not(.view-capture) #capture { display: none; }
-body.view-capture .panel-left, body.view-capture .list-resizer, body.view-capture .stage,
-body.view-capture #panel-label { display: none; }
+/* 세 칸을 통째로 쓰는 보기(app.js VIEWS 의 full — 영상 캡처·데이터 점검)는 body.view-full 이 왼쪽 목록·가운데·오른쪽 칸을
+   숨긴다. 보기를 더할 때 이 목록을 다시 적지 않는다 (2026-11-15) */
+body.view-full .panel-left, body.view-full .list-resizer, body.view-full .stage,
+body.view-full #panel-label { display: none; }
 .capture {
   grid-column: 1 / -1; min-width: 0; min-height: 0;
   display: grid; grid-template-columns: 300px 1fr;
@@ -895,10 +897,8 @@ body.view-capture #panel-label { display: none; }
 .cap-preview.off .cap-pv-img img { opacity: 0.4; filter: grayscale(1); }
 
 /* ── 데이터 점검 (2026-11-15, health.js) ─────────────── */
-/* body.view-health 일 때 레이아웃 세 칸을 통째로 이 화면이 쓴다(영상 캡처와 같은 방식). 구르는 것은 .hc-body 하나다 */
+/* body.view-health 일 때 레이아웃 세 칸을 통째로 이 화면이 쓴다(위 body.view-full — 영상 캡처와 같다). 구르는 것은 .hc-body 하나다 */
 body:not(.view-health) #health { display: none; }
-body.view-health .panel-left, body.view-health .list-resizer, body.view-health .stage,
-body.view-health #panel-label { display: none; }
 .health { grid-column: 1 / -1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .hc-bar {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex: none;

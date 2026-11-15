@@ -39,7 +39,9 @@ from .config import ROOT, Config, resolve
 from .export import default_export_dir, export_yolo
 from .health import GRID as HEALTH_GRID
 from .health import SCOPES as HEALTH_SCOPES
+from .health import cell_images as health_cell_images
 from .health import heatmap as health_heatmap
+from .health import masked_out as health_masked_out
 from .health import report as health_report
 from .ingest import discover_classes, ingest
 from .jobs import JobManager
@@ -655,51 +657,68 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
 
     # ── 데이터 점검 (2026-11-15 사용자 요청, health.py · web/health.js): 지금 데이터의 생김새를 센다. 읽기만 한다 ──
 
-    def _health_snapshot(scope: str) -> dict:
+    def _health_snapshot(scope: str, *, tags: bool = True) -> dict:
         if scope not in HEALTH_SCOPES:
             raise HTTPException(400, f"알 수 없는 범위: {scope}")
-        return store.health_snapshot(approved_only=scope == "approved")
+        return store.health_snapshot(approved_only=scope == "approved", tags=tags)
 
     def _health_masked(masked: str) -> bool:
         if masked not in ("drop", "keep"):
             raise HTTPException(400, f"masked 는 drop 또는 keep 입니다: {masked}")
         return masked == "drop"
 
+    def _health_cls(cls: int | None) -> int | None:
+        if cls is not None and cls < 0:
+            raise HTTPException(400, f"없는 클래스 번호입니다: {cls}")
+        return cls
+
     @app.get("/api/health")
-    def get_health(scope: str = "approved", imgsz: int | None = None, masked: str = "drop") -> dict:
+    def get_health(scope: str = "approved", imgsz: int | None = None, masked: str = "drop",
+                   heat: bool = False, cls: int | None = None, camera: str | None = None) -> dict:
         """데이터 점검 화면의 수치 전부. `scope=approved` 는 승인 이미지만(학습에 들어가는 것), `all` 은 휴지통만 뺀다.
         `imgsz` 는 박스 크기를 잴 학습 입력 크기(비우면 model.imgsz) — 긴 변을 거기에 맞췄을 때의 짧은 변 px 로 센다.
-        `masked=drop`(기본)은 가릴 영역이 반 이상 덮어 학습 라벨에서 빠지는 박스를 세지 않고, `keep` 은 DB 박스를 전부 센다."""
+        `masked=drop`(기본)은 가릴 영역이 반 이상 덮어 학습 라벨에서 빠지는 박스를 세지 않고, `keep` 은 DB 박스를 전부 센다.
+        `heat=1` 이면 **같은 스냅샷으로** 히트맵도 `heatmap` 에 싣는다(`cls`·`camera` 는 /api/health/heatmap 과 같고 히트맵만
+        거른다) — 화면을 열 때 DB 를 두 번 읽고 덮인 몫을 두 번 재지 않게(2026-11-15)."""
         size = int(cfg.imgsz) if imgsz is None else int(imgsz)
         if not 32 <= size <= 8192:
             raise HTTPException(400, "imgsz 는 32~8192 입니다.")
         drop = _health_masked(masked)
+        heat_cls = _health_cls(cls) if heat else None
         snap = _health_snapshot(scope)
+        gone = health_masked_out(snap) if heat else None    # 덮인 몫을 한 번만 재서 수치와 히트맵이 함께 쓴다
         reg, error = _cameras()
-        out = health_report(snap, store.get_classes(), reg, scope=scope, imgsz=size, drop_masked=drop,
+        out = health_report(snap, store.get_classes(), reg, scope=scope, imgsz=size, drop_masked=drop, gone=gone,
                             val_ratio=float(cfg.get("train.val_ratio", 0.2)),
                             test_ratio=float(cfg.get("train.test_ratio", 0.0)), counts=store.counts())
         # list_status: 이 범위와 **같은 이미지**를 주는 목록 상태 필터 — 화면이 줄을 눌러 이미지 보기로 넘길 때 쓴다.
         # 범위 all 은 휴지통을 빼므로 목록의 'all'(휴지통 포함)이 아니라 LIVE 다 (2026-11-15 리뷰에서 고침)
         out.update(default_imgsz=int(cfg.imgsz), camera_error=error, none_camera=NO_CAMERA, none_split=NO_SPLIT,
                    list_status="approved" if scope == "approved" else LIVE)
+        if heat:
+            out["heatmap"] = health_heatmap(snap, cls=heat_cls, camera=camera or None, drop_masked=drop, gone=gone)
         return out
 
     @app.get("/api/health/heatmap")
     def get_health_heatmap(scope: str = "approved", cls: int | None = None, camera: str | None = None,
                            cell: str | None = None, masked: str = "drop") -> dict:
         """박스 중심이 놓인 자리의 격자(정규화 좌표, health.GRID). `cls`·`camera`(출처 없음은 `__none__`)로 거르고,
-        `cell=x,y` 를 주면 그 칸에 박스 중심이 있는 이미지 id 도 준다(많으면 앞의 1,000개). `masked` 는 /api/health 와 같다."""
+        `cell=x,y` 를 주면 격자 대신 **그 칸에 박스 중심이 있는 이미지 id 만** 준다(`cell` — 많으면 앞의 1,000개).
+        `masked` 는 /api/health 와 같다. 조건을 바꿔 히트맵만 다시 받을 때·칸을 누를 때 쓴다(화면을 열 때는 /api/health 의
+        `heat=1`). 태그 수는 세지 않고, 덮인 몫은 거른 뒤 남은 박스만 잰다."""
         drop = _health_masked(masked)
-        if cls is not None and cls < 0:
-            raise HTTPException(400, f"없는 클래스 번호입니다: {cls}")
+        cls = _health_cls(cls)
         at = None
         if cell:
             m = re.fullmatch(r"(\d{1,3}),(\d{1,3})", cell.strip())
             if not m or int(m[1]) >= HEALTH_GRID[0] or int(m[2]) >= HEALTH_GRID[1]:
                 raise HTTPException(400, f"칸은 x,y 로 적습니다(0~{HEALTH_GRID[0] - 1}, 0~{HEALTH_GRID[1] - 1}): {cell}")
             at = (int(m[1]), int(m[2]))
-        return health_heatmap(_health_snapshot(scope), cls=cls, camera=camera or None, cell=at, drop_masked=drop)
+        snap = _health_snapshot(scope, tags=False)
+        if at is not None:      # 칸을 눌렀을 때 — 그 칸의 박스만 잰다(격자 전체를 다시 세지 않는다, 2026-11-15)
+            return {"grid": list(HEALTH_GRID),
+                    "cell": health_cell_images(snap, at, cls=cls, camera=camera or None, drop_masked=drop)}
+        return health_heatmap(snap, cls=cls, camera=camera or None, drop_masked=drop)
 
     # ── 태그 (2026-11-03): 비슷한 이미지끼리 사람이 이름을 붙여 묶는다. 라벨이 아니다 ──
 

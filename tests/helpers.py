@@ -54,6 +54,18 @@ def screen_round_trip(r) -> tuple[float, float, float, float]:
     return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
 
 
+def run_node(node: str, script: str, folder: Path):
+    """script 를 node 로 돌려 표준 출력의 JSON 을 돌려준다 — 화면 코드(JS)의 함수를 글자로 떼어 돌리는 테스트용."""
+    import json
+    import subprocess
+
+    path = folder / "run.js"
+    path.write_text(script, encoding="utf-8")
+    done = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=120)
+    assert done.returncode == 0, f"node 실패:\n{done.stderr}"
+    return json.loads(done.stdout)
+
+
 def plain_name(i: int) -> str:
     """이름 규칙(연번·스크린샷)에 걸리지 않는 이름 — 숫자가 없다."""
     return f"p{chr(97 + i // 26 % 26)}{chr(97 + i % 26)}{'x' * (i // 676)}.jpg"

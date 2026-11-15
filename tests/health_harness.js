@@ -42,13 +42,14 @@ async function scenario(sc) {
   const S = { filterClasses: new Set([1]), filterEmpty: false, filterCamera: "old-cam", filterDomain: "cctv",
               filterSplit: "train", tagF: { inc: [7], exc: [9], any: true, none: false }, images: [{ id: 11 }] };
   const H = { data: { list_status: "live", scope: "all" }, heat: { cells: [] }, seq: 3, heatSeq: 5, opening: false,
-              heatQ: { scope: "approved", masked: "drop", cls: "", cam: "cam-01" }, cls: "2", cam: "", hover: -1 };
+              heatQ: { scope: "approved", masked: "drop", cls: "", cam: "cam-01" }, cls: "2", cam: "", hover: -1,
+              sizeReady: false, savedSize: 960 };          // 입력 크기 칸은 아직 안 채워졌고, 지난번에 960 을 남겨 두었다
   const filters = () => ({
     status: $("#filter-status").value, classes: [...S.filterClasses], empty: S.filterEmpty,
     camera: S.filterCamera, domain: S.filterDomain, split: S.filterSplit, tagF: JSON.parse(JSON.stringify(S.tagF)),
     selects: ["#filter-camera", "#filter-domain", "#filter-split"].map((s) => [$(s).value, $(s).on]),
   });
-  const log = { api: [], opened: [], views: [], toasts: [], listedWith: [], loaded: [], syncs: 0, renders: 0 };
+  const log = { api: [], opened: [], views: [], toasts: [], listedWith: [], loaded: [], syncs: 0, renders: 0, saved: null };
 
   const world = {
     S, H, $,
@@ -68,13 +69,16 @@ async function scenario(sc) {
     syncListControls: () => { log.syncs++; },
     syncClassFilter: () => {},
     tagFilter: { render: () => { log.renders++; } },
+    localStorage: { setItem: (key, value) => { log.saved = JSON.parse(value); } },
+    // 진짜 hcRender 는 히트맵의 클래스·카메라 칸을 다시 채우며, 고른 값이 새 범위에 없으면 '전체' 로 돌린다
+    hcRender: () => { if (sc.renderResets) { H.cls = ""; H.cam = ""; } },
   };
   const env = new Proxy(world, {
     // node 의 전역(Promise·URLSearchParams·Set …)은 그대로 쓰고, 그 밖의 이름은 전부 대역에서 찾는다
     has: (t, k) => typeof k === "string" && (k in t || !(k in globalThis)),
     get: (t, k) => (typeof k !== "string" ? undefined : k in t ? t[k] : anything),
   });
-  const hc = new Function("env", `with (env) {\n${CODE}\nreturn { hcOpenCell, hcOpenIds, hcOpenFiltered, hcLoadHeat };\n}`)(env);
+  const hc = new Function("env", `with (env) {\n${CODE}\nreturn { hcOpenCell, hcOpenIds, hcOpenFiltered, hcLoadHeat, hcLoad, hcSaveControls };\n}`)(env);
 
   const answer = (ok, value) => {
     const p = pending.shift();
@@ -87,6 +91,9 @@ async function scenario(sc) {
     else if (step === "ids") hc.hcOpenIds(...args);
     else if (step === "filtered") hc.hcOpenFiltered(...args);
     else if (step === "loadheat") hc.hcLoadHeat();
+    else if (step === "load") hc.hcLoad();
+    else if (step === "save") hc.hcSaveControls();
+    else if (step === "sizes") { H.sizeReady = true; $("#hc-imgsz").value = args[0]; }   // 첫 응답이 입력 크기 칸을 채웠다
     else if (step === "leave") { H.seq++; H.heatSeq++; world.VIEW = "label"; }      // healthHide + setView('label')
     else if (step === "reheat") H.heatSeq++;                                         // 히트맵을 다시 받기 시작했다
     else if (step === "controls") { H.cls = args[0].cls; H.cam = args[0].cam; }      // 조절 칸을 바꿨다

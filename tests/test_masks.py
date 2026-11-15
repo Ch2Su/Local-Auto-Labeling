@@ -8,8 +8,8 @@ import pytest
 from PIL import Image
 
 from autolabel import masks
-from autolabel.masks import (DROP, GRAY, SAME, clean, covered, has_rect, merge, paint, pixel_rect, same_rect, same_rects,
-                             split_boxes, subtract, write_masked)
+from autolabel.masks import (DROP, GRAY, SAME, applies_to, clean, covered, drops, has_rect, merge, paint, pixel_rect,
+                             same_rect, same_rects, split_boxes, subtract, write_masked)
 from autolabel.yolo_io import Box
 from helpers import pixel_rects, screen_round_trip
 
@@ -87,6 +87,21 @@ def test_split_boxes_drops_from_half_covered():
 def test_split_boxes_without_rects_keeps_everything():
     boxes = [BOX, Box(0, 0.1, 0.1, 0.1, 0.1)]
     assert split_boxes(boxes, []) == (boxes, [])
+
+
+def test_drops_is_the_one_rule_split_boxes_uses():
+    """박스 하나의 판정(`drops`)과 목록을 가르는 `split_boxes` 는 같은 답을 낸다 — 데이터 점검(health)은 `drops` 를 쓴다."""
+    rects = [(0.25, 0.25, 0.5, 0.75)]
+    boxes = [Box(2, 0.5, 0.5, 0.5, 0.5), Box(2, 0.5625, 0.5, 0.5, 0.5), Box(2, 0.9, 0.9, 0.1, 0.1)]
+    assert [drops(b, rects) for b in boxes] == [True, False, False]
+    assert split_boxes(boxes, rects)[1] == [b for b in boxes if drops(b, rects)]
+    assert drops(boxes[0], []) is False                 # 영역이 없으면 빠질 것도 없다
+
+
+def test_masks_apply_to_every_split_but_test():
+    """test 는 평가라 실제 화면 그대로 — 칠하지도, 박스를 빼지도 않는다. 이 예외는 `applies_to` 한 곳에 둔다
+    (trainer.build_dataset·export_yolo·health 가 함께 쓴다 — 결과는 tests/test_health_dataset.py 가 견준다)."""
+    assert [applies_to(s) for s in ("train", "val", None, "", "test")] == [True, True, True, True, False]
 
 
 # ----------------------------------------------------------------- 영역 목록 다루기
