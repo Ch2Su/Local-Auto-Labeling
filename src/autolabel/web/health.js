@@ -11,9 +11,10 @@
 const H = {
   inited: false,
   data: null,       // 마지막 /api/health 응답
-  heat: null,       // 마지막 히트맵 응답
+  heat: null,       // 마지막 히트맵 응답 — 화면에 그려진 것
+  heatQ: null,      // 그 히트맵을 받은 조건(hcHeatParams) — 칸을 누르면 지금 조절 칸이 아니라 이것으로 묻는다
   seq: 0,           // 늦게 온 응답은 버린다(범위를 연달아 바꿀 때)
-  heatSeq: 0,
+  heatSeq: 0,       // 히트맵을 받기 시작할 때·다른 보기로 갈 때 오른다 — 칸 누르기(hcOpenCell)의 응답도 이것으로 버린다
   cls: "",          // 히트맵 클래스("" = 전체)
   cam: "",          // 히트맵 카메라("" = 전체)
   hover: -1,        // 마우스가 올라간 칸 번호
@@ -299,10 +300,15 @@ function hcRenderHeatControls(d) {
   cam.value = H.cam;
 }
 
-function hcHeatQuery(cell = null) {
-  const q = new URLSearchParams({ scope: $("#hc-scope").value, masked: $("#hc-masked").value });
-  if (H.cls !== "") q.set("cls", H.cls);
-  if (H.cam !== "") q.set("camera", H.cam);
+/** 지금 조절 칸의 히트맵 조건. 받아서 그린 히트맵의 조건은 H.heatQ 에 남긴다(hcLoadHeat). */
+function hcHeatParams() {
+  return { scope: $("#hc-scope").value, masked: $("#hc-masked").value, cls: H.cls, cam: H.cam };
+}
+
+function hcHeatQuery(p, cell = null) {
+  const q = new URLSearchParams({ scope: p.scope, masked: p.masked });
+  if (p.cls !== "") q.set("cls", p.cls);
+  if (p.cam !== "") q.set("camera", p.cam);
   if (cell) q.set("cell", `${cell[0]},${cell[1]}`);
   return q;
 }
@@ -357,11 +363,12 @@ function hcDrawHeat() {
 }
 
 async function hcLoadHeat() {
-  const seq = ++H.heatSeq;
+  const seq = ++H.heatSeq, p = hcHeatParams();
   try {
-    const h = await api(`/api/health/heatmap?${hcHeatQuery()}`);
+    const h = await api(`/api/health/heatmap?${hcHeatQuery(p)}`);
     if (seq !== H.heatSeq) return;
     H.heat = h;
+    H.heatQ = p;
     H.hover = -1;
     hcTip(null);
     $("#hc-heat-info").textContent = h.boxes
@@ -403,7 +410,8 @@ async function hcOpenIds(ids, more = 0) {
   H.opening = true;
   try {
     await openIds(ids);
-    await setView("gallery");
+    // 받는 사이 다른 보기로 갔으면 끌고 오지 않는다 — 목록은 그 보기에서도 이 id 들이다
+    if (VIEW === "health") await setView("gallery");
     if (more) toast(`앞의 ${hcN(ids.length)}장만 열었습니다 (${hcN(more)}장 더 있습니다)`);
   } catch (err) {
     toast(`목록으로 열지 못했습니다: ${err.message}`, true);
@@ -412,28 +420,82 @@ async function hcOpenIds(ids, more = 0) {
   }
 }
 
-/** 왼쪽 필터를 이 조건 하나로 맞추고(다른 필터는 푼다) 이미지 보기를 연다. 상태 칸은 지금 범위를 따른다. */
+/** 히트맵의 칸 (x, y) 에 박스 중심이 있는 이미지를 이미지 보기로 연다.
+ *  **화면에 그려진 히트맵의 조건**(H.heatQ)으로 묻는다 — 조절 칸을 바꿔 새로 받는 중이어도 눈에 보이는 칸의 이미지가 열린다.
+ *  받는 사이 다른 보기로 갔거나(healthHide) 히트맵을 다시 받기 시작했으면(H.heatSeq) 결과를 버리고, 받는 동안에도 H.opening
+ *  이라 두 번 누르기는 한 번만 묻는다 (2026-11-15 리뷰에서 고침: 전에는 늦게 온 응답이 라벨링으로 간 사람을 이미지 보기로
+ *  끌고 갔고, 조건은 지금 조절 칸 값이라 그려진 것과 다른 칸의 이미지가 열릴 수 있었다). */
+async function hcOpenCell(x, y) {
+  if (!H.heat || !H.heatQ || H.opening || navBusy()) return;
+  const seq = H.heatSeq;
+  let cell = null;
+  H.opening = true;
+  try {
+    cell = (await api(`/api/health/heatmap?${hcHeatQuery(H.heatQ, [x, y])}`)).cell;
+  } catch (err) {
+    if (seq === H.heatSeq) toast(`그 칸의 이미지를 받지 못했습니다: ${err.message}`, true);
+    return;
+  } finally {
+    H.opening = false;
+  }
+  if (seq !== H.heatSeq) return;
+  if (!cell || !cell.ids.length) {
+    toast("그 칸의 박스가 그새 없어졌습니다 — ↻ 새로 고침으로 다시 세어 보세요", true);
+    return;
+  }
+  await hcOpenIds(cell.ids, cell.more);
+}
+
+/** 왼쪽 필터의 지금 값 — hcOpenFiltered 가 목록을 못 받으면 이것으로 되돌린다(hcSetFilters). */
+function hcFilterState() {
+  return {
+    status: $("#filter-status").value, classes: [...S.filterClasses], empty: S.filterEmpty,
+    camera: S.filterCamera, domain: S.filterDomain, split: S.filterSplit,
+    tagF: { ...S.tagF, inc: [...S.tagF.inc], exc: [...S.tagF.exc] },
+  };
+}
+
+/** 왼쪽 필터를 f(hcFilterState 의 꼴)로 맞춘다 — 상태 칸·필터 값·칸의 표시까지. 목록은 받지 않는다. */
+function hcSetFilters(f) {
+  $("#filter-status").value = f.status;
+  S.filterClasses.clear();
+  for (const c of f.classes) S.filterClasses.add(c);
+  S.filterEmpty = f.empty;
+  S.filterCamera = f.camera;
+  S.filterDomain = f.domain;
+  S.filterSplit = f.split;
+  S.tagF = f.tagF;
+  for (const [sel, v] of [["#filter-camera", f.camera], ["#filter-domain", f.domain], ["#filter-split", f.split]]) {
+    $(sel).value = v;
+    $(sel).classList.toggle("on", !!v);
+  }
+  tagFilter?.render();
+  syncClassFilter();
+}
+
+/** 왼쪽 필터를 이 조건 하나로 맞추고(다른 필터는 푼다) 이미지 보기를 연다. 상태 칸은 지금 범위를 따른다.
+ *  목록을 받지 못하면 필터를 앞 상태로 되돌린다 — 필터만 새 조건이고 목록은 옛 것인 채로 두지 않는다(openIds 와 같다,
+ *  2026-11-15 리뷰에서 고침). 목록을 받은 뒤의 실패(첫 장 열기)는 되돌리지 않는다 — 목록이 이미 새 조건이다. */
 async function hcOpenFiltered({ cls = null, camera = "", split = "", tag = null, tagNone = false } = {}) {
   if (H.opening || navBusy()) return;
   H.opening = true;
+  const prev = hcFilterState();
   try {
-    // 서버가 준 상태 필터 — 범위 '휴지통만 빼고 전부' 는 목록의 '전체'(휴지통 포함)가 아니라 'live' 다 (2026-11-15)
-    $("#filter-status").value = H.data.list_status;
-    S.filterClasses.clear();
-    S.filterEmpty = false;
-    if (cls != null) S.filterClasses.add(cls);
-    S.filterCamera = camera;
-    S.filterDomain = "";
-    S.filterSplit = split;
-    S.tagF = { inc: tag != null ? [tag] : [], exc: [], any: false, none: tagNone };
-    for (const [sel, v] of [["#filter-camera", camera], ["#filter-domain", ""], ["#filter-split", split]]) {
-      $(sel).value = v;
-      $(sel).classList.toggle("on", !!v);
+    hcSetFilters({
+      // 서버가 준 상태 필터 — 범위 '휴지통만 빼고 전부' 는 목록의 '전체'(휴지통 포함)가 아니라 'live' 다 (2026-11-15)
+      status: H.data.list_status, classes: cls != null ? [cls] : [], empty: false, camera, domain: "", split,
+      tagF: { inc: tag != null ? [tag] : [], exc: [], any: false, none: tagNone },
+    });
+    try {
+      await loadImageList(new Set([0]));     // 필터가 바뀌었으니 첫 묶음부터 (app.js reloadList 와 같다)
+    } catch (err) {
+      hcSetFilters(prev);
+      syncListControls();                    // loadImageList 가 새 조건으로 맞춰 둔 칸 잠금·필터 요약을 되돌린다
+      throw err;
     }
-    tagFilter?.render();
-    syncClassFilter();
-    await reloadList();
-    await setView("gallery");
+    if (S.images.length) await loadImage(S.images[0].id);
+    // 받는 사이 다른 보기로 갔으면 끌고 오지 않는다 — 필터와 목록은 그 보기에서도 이 조건이다
+    if (VIEW === "health") await setView("gallery");
   } catch (err) {
     toast(`목록을 받지 못했습니다: ${err.message}`, true);
   } finally {
@@ -473,13 +535,7 @@ $("#hc-heat-canvas").addEventListener("mousemove", (e) => {
   $("#hc-heat-canvas").style.cursor = n ? "pointer" : "default";
 });
 $("#hc-heat-canvas").addEventListener("mouseleave", () => { H.hover = -1; hcTip(null); hcDrawHeat(); });
-$("#hc-heat-canvas").addEventListener("click", async (e) => {
+$("#hc-heat-canvas").addEventListener("click", (e) => {
   const c = hcHeatCell(e);
-  if (!c || !H.heat || !H.heat.cells[c[2]] || H.opening) return;
-  try {
-    const h = await api(`/api/health/heatmap?${hcHeatQuery([c[0], c[1]])}`);
-    if (h.cell && h.cell.ids.length) await hcOpenIds(h.cell.ids, h.cell.more);
-  } catch (err) {
-    toast(`그 칸의 이미지를 받지 못했습니다: ${err.message}`, true);
-  }
+  if (c && H.heat && H.heat.cells[c[2]]) hcOpenCell(c[0], c[1]);
 });

@@ -193,6 +193,14 @@
     필터의 '휴지통 빼고 전체')다. `_list_where` 의 그 조건과 `health_snapshot` 의 WHERE 는 같은 이미지를 줘야 한다
     (`tests/test_health.py` 가 범위마다 견준다 — 11-15 리뷰에서 고침: `all` 로 넘겨 휴지통 이미지가 섞였다). 객체 수 막대·히트맵 칸은 id
     목록으로 연다(`openIds`) — 목록 API 가 GET `?ids=` 라 서버가 `health.ID_CAP`(1,000)개까지만 싣는다.
+  - **넘기는 길은 기다리는 동안 바뀐 것을 본다 (11-15 리뷰에서 고침, `tests/test_js_health.py`).** 히트맵 칸(`hcOpenCell`)은
+    **화면에 그려진 히트맵의 조건**(`H.heatQ` — `hcLoadHeat` 가 물을 때의 `hcHeatParams` 를 남긴다)으로 묻고, 받는 사이 다른
+    보기로 갔거나(`healthHide`) 히트맵을 다시 받기 시작했으면(`H.heatSeq`) 버린다 — 전에는 지금 조절 칸 값으로 물었고, 늦게 온
+    응답이 라벨링으로 간 사람을 이미지 보기로 끌고 갔다. 받는 동안에도 `H.opening` 이라 두 번 누르기는 한 번만 묻는다.
+    `hcOpenFiltered` 는 필터를 바꾸기 전 값(`hcFilterState`)을 들고 있다가 **목록을 못 받으면 되돌린다**(`hcSetFilters` +
+    `syncListControls` — `openIds` 와 같은 약속: 필터 칸만 새 조건이고 목록은 옛 것인 채로 두지 않는다. 목록을 받은 뒤의
+    실패는 되돌리지 않는다). 세 길 모두 끝에 `VIEW === "health"` 일 때만 이미지 보기로 바꾼다. **목록 필터를 새로 만들면
+    `hcFilterState`·`hcSetFilters` 에도 넣을 것**(안 넣으면 눌러 넘길 때 안 풀리고, 실패했을 때 안 돌아온다).
   - 키: app.js keydown 이 `VIEW === "health"` 면 아무 단축키도 넘기지 않는다(V 도) — 영상 캡처처럼 숨은 라벨링에 Space 승인이
     먹으면 안 된다. 응답은 요청 번호(`H.seq`·`H.heatSeq`)로 마지막 것만 쓴다. 수치의 뜻을 바꾸면 health.py 머리말·README·화면
     문구(index.html 의 `title`)를 함께 고칠 것.
