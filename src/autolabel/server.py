@@ -32,6 +32,7 @@ from starlette.datastructures import Headers
 from starlette.requests import ClientDisconnect
 from starlette.responses import JSONResponse, PlainTextResponse
 
+from .camera_move import MoveBlocked, apply_move, plan_move
 from .camera_rename import RenameBlocked, RenameStuck, apply_rename, plan_rename
 from .capture import MAX_EVERY, MAX_FRAMES, MIN_EVERY, CaptureError, CaptureManager
 from .config import ROOT, Config, resolve
@@ -136,6 +137,13 @@ class BulkMaskTemplateIn(BaseModel):
     ids: list[int]
     template_id: int
     mode: Literal["add", "remove"] = "add"
+
+
+class BulkCameraIn(BaseModel):
+    # 고른 이미지만 다른(등록된) 카메라로 옮긴다 (2026-11-15, camera_move.py). dry_run 은 무엇이 바뀔지만 센다(확인 문구용)
+    ids: list[int] = Field(min_length=1, max_length=20000)
+    camera: str = Field(min_length=1, max_length=40)
+    dry_run: bool = False
 
 
 class ClassIn(BaseModel):
@@ -610,7 +618,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
 
     @app.get("/api/cameras")
     def list_cameras() -> dict:
-        """카메라 필터용: DB 에 있는 카메라(휴지통 제외)와 등록 파일의 장소·형태 (docs/provenance.md)."""
+        """카메라 필터용: DB 에 있는 카메라(휴지통 제외)와 등록 파일의 장소·형태 (docs/provenance.md).
+        registered 는 등록 파일의 카메라 전부(이미지가 아직 없는 것도) — 이미지 보기의 '카메라 옮기기' 가 고를 목록이다."""
         reg, error = _cameras()
         counts = store.camera_counts()
         cams = [{"key": k, "n": n, "place": reg[k].place if k in reg else None,
@@ -618,7 +627,10 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
                   "mount": reg[k].mount if k in reg else None,
                   "split": reg[k].split if k in reg else None}
                 for k, n in sorted((k, n) for k, n in counts.items() if k)]
-        return {"cameras": cams, "no_camera": counts.get(None, 0), "none_key": NO_CAMERA, "error": error}
+        registered = [{"key": k, "n": counts.get(k, 0), "place": c.place, "kind": c.kind, "split": c.split}
+                      for k, c in sorted(reg.items())]
+        return {"cameras": cams, "registered": registered, "no_camera": counts.get(None, 0), "none_key": NO_CAMERA,
+                "error": error}
 
     @app.get("/api/domains")
     def list_domains() -> dict:
@@ -1529,6 +1541,74 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         cams, error = _camera_rows()
         return {"removed": removed, "cameras": cams, "camera_error": error}
 
+    # ── 고른 이미지만 다른 카메라로 (2026-11-15 사용자 요청, camera_move.py) — 이미지 보기 오른쪽 칸의 '카메라 옮기기' ──
+
+    def _move_plan(ids: list[int], key: str):
+        """(계획, 등록 카메라). 등록 파일을 못 읽으면 400, 옮길 수 없으면 409 — 아무것도 바꾸지 않는다."""
+        cams, error = _cameras()
+        if error:
+            raise HTTPException(400, f"카메라 등록 파일을 읽지 못했습니다:\n{error}")
+        try:
+            return plan_move(cfg, store, ids, key, cams), cams
+        except MoveBlocked as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    def _move_in_job(ids: list[int], key: str) -> dict:
+        """작업 큐에서 옮기고 끝날 때까지 기다린다 — 카메라 키 바꾸기(_rename_with_files)와 같은 이유: 파일 경로를 읽는
+        학습·자동 라벨링·정리와 겹치지 않게(도는 작업이 있으면 409, 옮기는 동안은 다른 작업이 시작되지 않는다)."""
+        box: dict = {}
+
+        def work(job) -> dict:
+            try:
+                with capman.commit_lock, ingest_lock:
+                    plan, cams = _move_plan(ids, key)           # 기다리는 사이에 바뀌었을 수 있다 — 다시 본다
+                    report = apply_move(cfg, store, plan, cams)
+            except HTTPException as exc:
+                box["http"] = exc
+                raise RuntimeError(exc.detail) from None
+            except Exception as exc:
+                box["error"] = exc
+                raise
+            box["out"] = report
+            return {k: v for k, v in report.items() if k not in ("rows", "left", "names")}
+
+        try:
+            job = jobs.start("camera_move", work)
+        except RuntimeError:
+            cur = jobs.current()
+            name = _JOB_NAMES.get(cur.kind, cur.kind) if cur else "다른"
+            raise HTTPException(409, f"'{name}' 작업이 도는 중이라 옮길 수 없습니다 — 파일 이름·폴더를 바꾸는 일이라 다른 "
+                                     "작업과 겹치지 않게 합니다. 끝난 뒤 다시 하세요.") from None
+        deadline = time.monotonic() + 600
+        while job.status == "running" and not ({"out", "http", "error"} & box.keys()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if "http" in box:
+            raise box["http"]
+        if "error" in box:      # apply_move 는 DB 를 고치기 전의 실패면 만든 새 이름을 지운다 — 그 뒤로는 예외를 내지 않는다
+            exc = box["error"]
+            raise HTTPException(500, f"옮기지 못했습니다(바뀐 것 없음): {type(exc).__name__}: {exc}")
+        if "out" not in box:
+            raise HTTPException(504, "아직 옮기는 중입니다(10분 넘게) — 끝나면 라벨링 화면의 작업 칸에 뜹니다. 그 뒤 새로 고치세요.")
+        return box["out"]
+
+    @app.post("/api/bulk/camera")
+    def bulk_camera(payload: BulkCameraIn) -> dict:
+        """고른 이미지를 다른(이미 등록된) 카메라로 옮긴다 — 파일 이름 앞머리·카메라 폴더·DB(camera·path·name·촬영 시각)를
+        함께, 묶음(grp)은 비운다(camera_move.py). 이미 그 카메라인 이미지는 건너뛴다(same).
+        막는 것(409, 아무것도 안 바꿈): 등록 안 된 카메라, 없는·출처 없는 이미지, 분할이 정해진 이미지를 옮기면 그 카메라가 두
+        분할에 걸치는 때, 가릴 영역이 있는 이미지를 test 고정 카메라로, 새 경로가 이미 쓰이는 때, 다른 작업이 도는 때.
+        dry_run 이면 세기만 한다(화면의 확인 문구). /api/images/... 밑에 두지 않는다(위 '이미지 보기 탭' 주석)."""
+        ids = list(dict.fromkeys(payload.ids))
+        key = payload.camera.strip()
+        with capman.commit_lock, ingest_lock:
+            plan, _ = _move_plan(ids, key)          # 막힐 것은 작업을 만들기 전에 알린다
+        if payload.dry_run or not plan.items:
+            return {"ok": True, "dry_run": payload.dry_run, **plan.summary(), "rows": []}
+        report = _move_in_job(ids, key)
+        print(f"[{label}] 카메라 옮김: {report['moved']}장 -> {key}"
+              + (f" (못 지운 옛 이름 {report['left_n']}개)" if report["left_n"] else ""))
+        return {"ok": True, "dry_run": False, **report, "place": _camera_place(key)}
+
     @app.get("/api/capture")
     def capture_list() -> dict:
         cams, error = _camera_rows()
@@ -1669,7 +1749,7 @@ def create_multi_app(projects: list, *, bind_host: str | None = None) -> FastAPI
 # 작업 이름 (화면 app.js watchJob 의 표와 같다) — 다른 작업 때문에 막을 때 알리는 데 쓴다
 _JOB_NAMES = {"scan": "폴더 스캔", "predict": "자동 라벨링", "train": "학습", "resume": "이어서 학습", "train_wsl": "WSL 학습",
               "resume_wsl": "WSL 이어하기", "tidy": "정리", "purge": "휴지통 비우기", "export": "내보내기",
-              "camera_rename": "카메라 키 바꾸기"}
+              "camera_rename": "카메라 키 바꾸기", "camera_move": "카메라 옮기기"}
 
 
 def _start(jobs: JobManager, kind: str, work) -> dict:

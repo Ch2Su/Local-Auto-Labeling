@@ -2006,6 +2006,8 @@ async function loadCameras() {
   S.filterCamera = [...sel.options].some((o) => o.value === keep) ? keep : "";
   sel.value = S.filterCamera;
   sel.classList.toggle("on", !!S.filterCamera);
+  S.camReg = data.registered || [];     // 등록된 카메라 전부(이미지가 없는 것도) — 이미지 보기의 '카메라 옮기기' (gallery.js)
+  if (typeof renderGalleryCam === "function") renderGalleryCam();
 }
 
 /* ── 클래스 필터 ──────────────────────────────────────
@@ -2959,6 +2961,32 @@ function renderStatusButtons() {
   $("#btn-approve").classList.toggle("hidden", inTrash);
 }
 
+/** 가운데 위의 이름·정보 줄. meta 는 서버가 준 그대로(GET /api/images/{id}) — S.cur 의 크기는 사진이 뜨면 화면 크기로
+ *  바뀌므로(EXIF 회전) 그것으로 그리지 않는다. 이미지를 열 때와, 이름·카메라가 서버에서 바뀐 뒤(refreshCurMeta). */
+function renderImgMeta(meta) {
+  $("#img-name").textContent = shortName(meta.name);
+  $("#img-name").title = meta.name;          // 원래 파일 이름 (shortName)
+  $("#img-meta").textContent =
+    `${meta.width}×${meta.height} · ${meta.status} · ${meta.split || "미배정"} · 불확실도 ${meta.uncertainty}` +
+    (meta.model_version ? ` · ${meta.model_version}` : "") +
+    // 출처(docs/provenance.md): 시각은 카메라 현지 시각 그대로(시간대 표기는 뗀다)
+    (meta.camera ? ` · 카메라 ${meta.camera}${meta.camera_place ? `(${meta.camera_place})` : ""}` +
+      (meta.captured_at ? ` ${meta.captured_at.replace("T", " ").slice(0, 19)}` : " · 촬영 시각 모름") : "");
+}
+
+/** 지금 이미지의 이름·카메라·촬영 시각이 서버에서 바뀐 뒤(카메라 옮기기 — gallery.js bulkCamera) 그 칸들만 다시 받는다.
+ *  이미지를 다시 열지 않는다 — 박스·가릴 영역·되돌리기·확대는 그대로다(옮기기는 그것들을 바꾸지 않는다). */
+async function refreshCurMeta() {
+  if (!S.cur) return;
+  const id = S.cur.id;
+  const meta = await api(`/api/images/${id}`);
+  if (!S.cur || S.cur.id !== id) return;          // 그새 다른 이미지로 갔다
+  for (const k of ["name", "path", "camera", "captured_at", "camera_place", "grp", "split"]) S.cur[k] = meta[k];
+  S.maskBlock = meta.mask_block || null;          // test 로 고정한 카메라로 옮겼으면 가릴 영역을 둘 수 없다
+  renderMaskTemplates();
+  renderImgMeta({ ...meta, status: S.cur.status });
+}
+
 /** 목록 줄·화살표·변경 기록에서 연다 — 받지 못하면 알린다(부르는 쪽이 기다리지 않는다). */
 function openImage(id) {
   loadImage(id).catch((err) => toast(`이미지를 열지 못했습니다: ${err.message}`, true));
@@ -3022,14 +3050,7 @@ async function loadImageNow(id) {
 
   renderStatusButtons();
 
-  $("#img-name").textContent = shortName(meta.name);
-  $("#img-name").title = meta.name;          // 원래 파일 이름 (shortName)
-  $("#img-meta").textContent =
-    `${meta.width}×${meta.height} · ${meta.status} · ${meta.split || "미배정"} · 불확실도 ${meta.uncertainty}` +
-    (meta.model_version ? ` · ${meta.model_version}` : "") +
-    // 출처(docs/provenance.md): 시각은 카메라 현지 시각 그대로(시간대 표기는 뗀다)
-    (meta.camera ? ` · 카메라 ${meta.camera}${meta.camera_place ? `(${meta.camera_place})` : ""}` +
-      (meta.captured_at ? ` ${meta.captured_at.replace("T", " ").slice(0, 19)}` : " · 촬영 시각 모름") : "");
+  renderImgMeta(meta);
   renderDomainBar();
   renderTagList();
   $("#save-state").textContent = "";
@@ -3327,7 +3348,7 @@ function watchJob(id) {
       return;
     }
     S.jobKind = job.status === "running" ? job.kind : null;     // 도는 작업 — 자동 라벨링 중 승인 확인(setStatusNow)
-    $("#job-kind").textContent = { scan: "폴더 스캔", predict: "자동 라벨링", train: "학습", resume: "이어서 학습", train_wsl: "WSL 학습", resume_wsl: "WSL 이어하기", tidy: "정리", purge: "휴지통 비우기", export: "내보내기", camera_rename: "카메라 키 바꾸기" }[job.kind] || job.kind;
+    $("#job-kind").textContent = { scan: "폴더 스캔", predict: "자동 라벨링", train: "학습", resume: "이어서 학습", train_wsl: "WSL 학습", resume_wsl: "WSL 이어하기", tidy: "정리", purge: "휴지통 비우기", export: "내보내기", camera_rename: "카메라 키 바꾸기", camera_move: "카메라 옮기기" }[job.kind] || job.kind;
     $("#job-status").textContent = { running: "진행 중…", done: "완료", error: "실패" }[job.status];
     $("#job-status").className = job.status;
     const stopBtn = $("#job-stop");

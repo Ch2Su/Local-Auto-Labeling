@@ -850,6 +850,48 @@ class Store:
             con.executemany("UPDATE images SET camera=? WHERE id=?", [(old, i) for i in undo["camera_ids"]])
             con.executemany("UPDATE mask_templates SET camera=? WHERE id=?", [(old, i) for i in undo["template_ids"]])
 
+    def images_for_move(self, image_ids: list[int]) -> dict[int, dict]:
+        """고른 이미지만 다른 카메라로 옮길 때(camera_move.py, 2026-11-15) 보는 것 — {id: {id, path, camera, split,
+        captured_at, grp, masked 가릴 영역 수}}. 없는 id 는 빠진다. 휴지통 이미지도 본다(그 파일도 카메라 폴더에 있다)."""
+        ids = list(dict.fromkeys(image_ids))
+        out: dict[int, dict] = {}
+        with self.connect() as con:
+            for k in range(0, len(ids), 500):
+                part = ids[k:k + 500]
+                for r in con.execute(
+                        "SELECT id, path, camera, split, captured_at, grp,"
+                        " (SELECT COUNT(*) FROM masks m WHERE m.image_id = images.id) AS masked"
+                        f" FROM images WHERE id IN ({','.join('?' * len(part))})", part):
+                    out[int(r["id"])] = dict(r)
+        return out
+
+    def camera_splits(self, camera: str) -> dict[str, int]:
+        """그 카메라 이미지의 분할별 장수(휴지통 포함, 미배정은 뺀다) — 분할이 정해진 이미지를 옮겨 넣어도 되는지 본다."""
+        with self.connect() as con:
+            rows = con.execute("SELECT split, COUNT(*) AS n FROM images WHERE camera=? AND split IS NOT NULL"
+                               " GROUP BY split", (camera,)).fetchall()
+        return {r["split"]: int(r["n"]) for r in rows}
+
+    def move_camera_rows(self, rows: list[tuple[int, str, str, str, str, str | None]]) -> int:
+        """고른 이미지를 다른 카메라로 (2026-11-15, camera_move.py) — 한 트랜잭션: (id, 지금 경로, 새 경로, 지금 카메라,
+        새 카메라, 새 촬영 시각)마다 path·name·camera·captured_at 을 바꾸고 **grp 를 비운다**(묶음은 카메라째라 옛 카메라의
+        묶음 키를 달고 가면 안 된다 — 비워 두면 다음 분할이 묶음을 다시 센다). 지금 경로·카메라가 그사이 바뀐 행이 하나라도
+        있으면 아무것도 안 바꾸고 RuntimeError. updated_at 은 그대로다(rename_camera_rows 와 같은 이유). 그 이미지에서 만든
+        가릴 영역 템플릿의 camera 도 따라 바꾼다 — 돌려주는 것은 그렇게 바꾼 템플릿 수."""
+        if not rows:
+            return 0
+        with _write_lock, self.connect() as con:
+            con.execute("BEGIN IMMEDIATE")      # 읽고 쓰는 사이에 다른 연결이 끼지 않게 처음부터 쓰기 잠금
+            templates = 0
+            for i, src, dst, old, new, captured_at in rows:
+                cur = con.execute("UPDATE images SET path=?, name=?, camera=?, captured_at=?, grp=NULL"
+                                  " WHERE id=? AND path=? AND camera=?", (dst, Path(dst).name, new, captured_at, i, src, old))
+                if cur.rowcount != 1:
+                    raise RuntimeError(f"이미지 id {i} 의 경로나 카메라가 그사이 바뀌었습니다 — 아무것도 바꾸지 않았습니다. 다시 하세요.")
+                templates += con.execute("UPDATE mask_templates SET camera=? WHERE image_id=? AND camera=?",
+                                         (new, i, old)).rowcount
+        return templates
+
     def backup_to(self, dst: Path) -> Path:
         """DB 를 dst 로 뜬다(sqlite backup — 서버가 쓰는 중이어도 일관된 사본). 카메라 키 바꾸기처럼 행을 많이 바꾸기 전에."""
         dst.parent.mkdir(parents=True, exist_ok=True)

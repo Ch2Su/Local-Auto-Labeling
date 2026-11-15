@@ -289,6 +289,13 @@
       <button class="btn btn-sm" data-gdomain="noncctv" title="고른 이미지를 모두 비CCTV 로 (W)">비CCTV <kbd>W</kbd></button>
       <button class="btn btn-sm" data-gdomain="drone" title="고른 이미지를 모두 드론으로 (E)">드론 <kbd>E</kbd></button>
     </div>
+    <!-- 카메라 옮기기 (2026-11-15, 서버 camera_move.py): 고른 이미지만 다른(등록된) 카메라로 — 파일 이름 앞머리·카메라
+         폴더·DB 를 함께 바꾼다. 카메라를 통째로 다른 키로 바꾸는 것은 영상 캡처 탭의 '고치기…' -->
+    <div class="panel-head"><span>카메라</span><span id="gs-cam" class="dim"></span></div>
+    <div class="gs-mtpl">
+      <select id="gs-cam-sel" title="고른 이미지를 옮길 카메라 — 등록된 카메라 전부(이미지가 아직 없는 것도). 새 카메라는 영상 캡처 탭의 '＋ 새로' 로 등록합니다"></select>
+      <button id="gs-cam-move" class="btn btn-sm" title="고른 이미지만 이 카메라로 옮깁니다 — 파일을 그 카메라 폴더로 옮기고 이름 앞머리를 바꿉니다. 박스·가릴 영역·태그·상태는 그대로입니다. 분할이 이미 정해진 이미지는 같은 분할의 카메라로만 옮길 수 있습니다">옮기기</button>
+    </div>
     <!-- 가릴 영역 템플릿 (2026-11-10): 고른 이미지 모두에 더하거나 뺀다. 일괄 수정 묶음이라 상단 '변경 기록' 에서 되돌린다 -->
     <div class="panel-head"><span>가릴 영역 템플릿</span><span id="gs-mtpl-n" class="dim"></span></div>
     <div class="gs-mtpl">

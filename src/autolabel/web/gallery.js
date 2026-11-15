@@ -458,12 +458,106 @@ async function bulkMaskTemplate(mode) {
   }
 }
 
+/* 카메라 옮기기 (2026-11-15, 사용자 요청 — 서버 camera_move.py) — 고른 이미지만 다른(등록된) 카메라로 옮긴다. 같은 카메라가
+ * 화면을 돌린 동안과 제자리로 돌아온 뒤를 다른 키로 나눠 두는데 한 키로 몰아 넣었을 때 쓴다. 서버가 파일을 그 카메라 폴더로
+ * 옮기고 이름 앞머리를 바꾸며 DB(카메라·경로·이름·촬영 시각)를 함께 고친다. 박스·가릴 영역·태그·상태는 그대로다.
+ * 먼저 dry_run 으로 무엇이 바뀔지 받아 확인창에 보인다 — 막히는 이유(분할이 정해진 이미지·겹치는 이름·도는 작업)도 거기서
+ * 나온다. 고를 목록은 등록된 카메라 전부다(S.camReg — app.js loadCameras, 이미지가 아직 없는 카메라도). */
+const GS_CAM_KEY = `gsCam:${BASE}`;       // 고른 카메라 — 탭(프로젝트)마다 카메라가 따로라 주소별로
+
+let gsCamSig = null;                      // 지금 select 에 그려 둔 카메라 목록 — 달라졌을 때만 option 을 다시 만든다
+function renderGalleryCam() {
+  const sel = $("#gs-cam-sel");
+  if (!sel) return;
+  const reg = S.camReg || [];
+  const sig = reg.map((c) => `${c.key}:${c.place || ""}:${c.split || ""}:${c.n}`).join("|");
+  if (sig !== gsCamSig) {
+    gsCamSig = sig;
+    let want = sel.value;
+    if (!want) { try { want = localStorage.getItem(GS_CAM_KEY) || ""; } catch { /* 없으면 첫 카메라 */ } }
+    sel.innerHTML = "";
+    const add = (value, text, title = "") => {
+      const o = document.createElement("option");
+      o.value = value; o.textContent = text; o.title = title;
+      sel.appendChild(o);
+    };
+    if (!reg.length) add("", "등록된 카메라 없음 — 영상 캡처 탭에서 등록합니다");
+    for (const c of reg) {
+      add(c.key, `${c.key}${c.place ? ` · ${c.place}` : ""} (${c.n})`,
+          [c.kind, c.split && `split 고정 ${c.split}`].filter(Boolean).join(" · "));
+    }
+    if (reg.some((c) => c.key === want)) sel.value = want;
+  }
+  // 고른 것의 카메라 분포 — 어디서 옮기는지 보이게
+  const cc = new Map();
+  for (const id of G.sel) {
+    const it = G.items[G.pos.get(id)];
+    if (it) cc.set(it.camera || "", (cc.get(it.camera || "") || 0) + 1);
+  }
+  $("#gs-cam").textContent = [...cc].sort((a, b) => b[1] - a[1])
+    .map(([k, c]) => `${k || "출처 없음"} ${c.toLocaleString()}`).join(" · ");
+  $("#gs-cam-move").disabled = !reg.length || !G.sel.size;
+}
+
+async function bulkCamera() {
+  if (G.busy) return;
+  const key = $("#gs-cam-sel").value;
+  if (!key) { toast("옮길 카메라를 먼저 고르세요 (없으면 영상 캡처 탭의 '＋ 새로' 로 등록합니다)", true); return; }
+  const ids = selIds();
+  if (!ids.length) { toast("이미지를 먼저 고르세요 (클릭·Shift+클릭·Ctrl+A)"); return; }
+  G.busy = true;
+  try {
+    let plan;
+    try {
+      plan = await api("/api/bulk/camera", { method: "POST", body: { ids, camera: key, dry_run: true } });
+    } catch (err) {
+      toast(`옮길 수 없습니다: ${err.message}`, true);
+      return;
+    }
+    if (!plan.moved) { toast(`고른 ${ids.length.toLocaleString()}장은 이미 카메라 ${key} 입니다`); return; }
+    const from = Object.entries(plan.from).map(([k, n]) => `${k} ${n.toLocaleString()}장`).join(", ");
+    const names = plan.names.map(([a, b]) => (a === b ? `  ${a} (이름 그대로)` : `  ${a}\n   → ${b}`)).join("\n");
+    if (!confirm(`고른 이미지 ${plan.moved.toLocaleString()}장(${from})을 카메라 '${key}' 로 옮깁니다.\n`
+      + "파일을 그 카메라 폴더로 옮기고 이름 앞머리를 바꿉니다. 박스·가릴 영역·태그·상태는 그대로입니다.\n\n"
+      + names + (plan.moved > plan.names.length ? `\n  … 그 밖에 ${(plan.moved - plan.names.length).toLocaleString()}장` : "")
+      + (plan.same ? `\n\n이미 ${key} 인 ${plan.same.toLocaleString()}장은 건너뜁니다.` : "")
+      + (plan.kept ? `\n카메라 폴더 밖에 있는 ${plan.kept.toLocaleString()}장은 파일은 그대로 두고 카메라만 바꿉니다.` : "")
+      + (plan.no_file ? `\n파일이 없는 ${plan.no_file.toLocaleString()}장은 경로만 바꿉니다.` : "")
+      + "\n\n계속할까요?")) return;
+    // 라벨링 쪽 지금 이미지의 저장부터 끝낸다 — 옮기는 것은 박스가 아니지만, 남은 수정을 들고 이름이 바뀌지 않게
+    if (!(await saveBeforeLeaving())) return;
+    let r;
+    try {
+      r = await api("/api/bulk/camera", { method: "POST", body: { ids, camera: key } });
+    } catch (err) {
+      toast(`옮기지 못했습니다: ${err.message}`, true);
+      return;
+    }
+    const by = new Map(r.rows.map((x) => [x.id, x]));
+    applyToRows([...by.keys()], (im) => { im.camera = by.get(im.id).camera; im.name = by.get(im.id).name; });
+    loadCameras();                // 카메라별 장수(필터·옮기기 목록)
+    toast(`${r.moved.toLocaleString()}장을 카메라 ${key} 로 옮겼습니다`
+      + (r.left_n ? ` — 옛 이름 ${r.left_n}개를 지우지 못했습니다(다른 프로그램이 열어 둠): ${r.left[0]}` : ""), !!r.left_n);
+    // 라벨링 쪽 지금 이미지가 대상이었으면 이름·카메라·촬영 시각 줄을 서버 값으로 맞춘다
+    if (S.cur && by.has(S.cur.id)) {
+      try {
+        await refreshCurMeta();
+      } catch (err) {
+        toast(`옮기기는 됐지만 라벨링 화면의 지금 이미지 정보를 다시 읽지 못했습니다 — 그 이미지를 다시 여세요 (${err.message})`, true);
+      }
+    }
+  } finally {
+    G.busy = false;
+  }
+}
+
 /* ───────────────────────── 오른쪽 ───────────────────────── */
 
 function renderGallerySide() {
   const n = G.sel.size;
   $("#gs-n").textContent = n ? `${n.toLocaleString()}장` : "없음";
   renderGalleryMtpl();
+  renderGalleryCam();
 
   // 미리 보기: 지금 칸(없으면 고른 것 가운데 첫 장)
   const pv = $("#gs-preview");
@@ -481,7 +575,8 @@ function renderGallerySide() {
     pv.querySelector(".nm").textContent = shortName(im.name);   // 꼬리를 뗀 이름 — 원래 이름은 마우스를 올리면
     pv.querySelector(".nm").title = im.name;
     pv.querySelector(".meta").textContent = `${im.id} · ${im.width}×${im.height} · ${im.status} · `
-      + `${im.split || "미배정"} · ${DOMAIN_NAME[im.domain] || "미분류"} · 박스 ${im.n_boxes}`;
+      + `${im.split || "미배정"} · ${DOMAIN_NAME[im.domain] || "미분류"} · 박스 ${im.n_boxes}`
+      + (im.camera ? ` · 카메라 ${im.camera}` : "");
     const names = tagNames(im);
     pv.querySelector(".tags").textContent = names.length ? names.map((x) => `#${x}`).join(" ") : "태그 없음";
   }
@@ -615,6 +710,11 @@ $("#gs-mtpl-sel").addEventListener("change", (e) => {
   try { localStorage.setItem(GS_MTPL_KEY, e.target.value); } catch { /* 저장 못 해도 그만 */ }
   e.target.blur();                  // 포커스가 남으면 ↑·↓ 가 템플릿을 바꾼다
 });
+$("#gs-cam-sel").addEventListener("change", (e) => {
+  try { localStorage.setItem(GS_CAM_KEY, e.target.value); } catch { /* 저장 못 해도 그만 */ }
+  e.target.blur();                  // 포커스가 남으면 ↑·↓ 가 카메라를 바꾼다
+});
+$("#gs-cam-move").onclick = (e) => { e.currentTarget.blur(); bulkCamera(); };
 $("#gs-mtpl-add").onclick = (e) => { e.currentTarget.blur(); bulkMaskTemplate("add"); };
 $("#gs-mtpl-remove").onclick = (e) => { e.currentTarget.blur(); bulkMaskTemplate("remove"); };
 $("#gs-tag-q").addEventListener("input", renderGallerySide);
