@@ -3416,7 +3416,7 @@ function watchJob(id) {
       const early = job.result && job.result.stopped_early;
       toast(
         job.status === "done"
-          ? `${$("#job-kind").textContent} ${early ? "중단됨 (가중치는 저장됨)" : "완료"}`
+          ? `${$("#job-kind").textContent} ${early ? "중단됨 — 운영 가중치는 그대로입니다" : "완료"}`
           : `실패: ${job.error}`,
         job.status === "error"
       );
@@ -3490,7 +3490,7 @@ $("#btn-train-wsl").onclick = () => {
   const msg = "WSL(Linux)에서 모델을 재학습합니다.\n\n"
     + "· 승인된 라벨로 데이터셋을 새로 만들어 WSL 로 복사한 뒤 학습합니다\n"
     + "· Windows 학습보다 약 4배 빠릅니다 (epoch 258초 → 62초, 실측)\n"
-    + "· GPU 를 오래 점유합니다. 끝나면 models/best.pt 가 교체됩니다 (이전 것은 best.prev.pt)\n\n"
+    + "· GPU 를 오래 점유합니다. 끝까지 가면 models/best.pt 가 교체됩니다 (이전 것은 best.prev.pt — 중단하면 그대로)\n\n"
     + "계속할까요?";
   if (confirm(msg)) startJob("train_wsl", {});
 };

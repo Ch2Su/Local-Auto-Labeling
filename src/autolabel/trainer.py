@@ -518,9 +518,9 @@ def attach_callbacks(model, should_stop: Callable[[], bool] | None) -> dict:
 def promote_weights(best: Path, cfg: Config) -> Path | None:
     """학습 결과 best.pt 를 운영 가중치(models/best.pt)로 올린다. 백업 경로를 돌려준다.
 
-    덮어쓰기 전에 기존 운영 가중치를 `best.prev.pt` 로 한 벌 남긴다. 학습을 도중에
-    끊어도 이 경로를 타므로(정상 중단 경로), 끊을 때마다 운영 가중치가 조용히
-    바뀐다. 실제로 epoch 3 짜리(mAP 0.44)가 0.72 짜리를 덮어쓴 적이 있다.
+    덮어쓰기 전에 기존 운영 가중치를 `best.prev.pt` 로 한 벌 남긴다. **사람이 멈춘 학습에는
+    부르지 않는다**(2026-11-16 — `_finish`·`wsl_train.train`). 그 전에는 끊을 때마다 이 경로를 타서
+    운영 가중치가 조용히 바뀌었다 — epoch 3 짜리(mAP 0.44)가 0.72 짜리를 덮어쓴 적이 있다.
     이름을 `.pt` 로 끝내는 이유는 Ultralytics 가 확장자를 검사해서
     (`best.pt.bak_...` 같은 이름은 검증에 못 넣는다) 바로 비교할 수 있게 하려는 것.
 
@@ -537,6 +537,12 @@ def promote_weights(best: Path, cfg: Config) -> Path | None:
         shutil.copy2(out, prev)
     shutil.copy2(best, out)
     return prev
+
+
+def stopped_note(best: Path | str, cfg: Config) -> str:
+    """멈춘 학습의 로그 끝에 찍는 안내 — 운영 가중치를 바꾸지 않았다는 것과, 그 결과를 쓰려면 무엇을 복사할지."""
+    return (f"\n중단한 학습이라 운영 가중치({cfg.weights})는 바꾸지 않았습니다.\n"
+            f"이 학습의 결과를 쓰려면 직접 복사하세요: {best}\n")
 
 
 def clear_stale_snapshot(run_dir: Path, stopped: bool) -> bool:
@@ -556,9 +562,18 @@ def clear_stale_snapshot(run_dir: Path, stopped: bool) -> bool:
 
 
 def _finish(cfg: Config, results, state: dict, extra: dict) -> dict:
-    """최고 가중치를 models/ 로 올리고(promote_weights) 결과 dict 를 만든다."""
+    """끝까지 간 학습의 최고 가중치를 models/ 로 올리고(promote_weights) 결과 dict 를 만든다.
+
+    **사람이 멈춘 학습은 올리지 않는다 (2026-11-16 사용자 결정).** 전에는 멈출 때마다 그 시점의 best.pt 가 운영 가중치를
+    덮었다 — epoch 3 짜리(mAP 0.44)가 0.72 짜리를 덮은 적이 있고, 두 번 끊으면 best.prev.pt 까지 밀려났다. 멈춘 학습의
+    결과를 쓰고 싶으면 `run_best` 를 손으로 복사한다. 조기 종료(patience)는 끝난 학습이라 올린다(`state["stopped"]` 는
+    사람이 멈춘 때만 참이다).
+    """
     out = cfg.weights
-    prev = promote_weights(Path(results.save_dir) / "weights" / "best.pt", cfg)
+    best = Path(results.save_dir) / "weights" / "best.pt"
+    prev = None if state["stopped"] else promote_weights(best, cfg)
+    if state["stopped"]:
+        print(stopped_note(best, cfg), end="", flush=True)
     clear_stale_snapshot(Path(results.save_dir), state["stopped"])
 
     metrics = {}
@@ -574,6 +589,8 @@ def _finish(cfg: Config, results, state: dict, extra: dict) -> dict:
         "run_dir": str(results.save_dir),
         "weights": str(out),
         "previous_weights": str(prev) if prev else None,
+        "promoted": not state["stopped"] and best.exists(),
+        "run_best": str(best),
         "stopped_early": state["stopped"],
         "resume_snapshot": state["snapshot"],
         "metrics": metrics,

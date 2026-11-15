@@ -5,8 +5,8 @@
 1. DB 로 데이터셋 폴더(config 의 data.dataset)를 만든다 (Windows, `trainer.build_dataset` 그대로)
 2. WSL 홈으로 복사한다 (`wsl/sync_dataset.sh` — 이미지·라벨만, `.npy`·DB 는 안 간다)
 3. `wsl` 로 `wsl/train_wsl.py` 를 띄우고 출력을 작업 로그로 중계한다
-4. 끝나면 best.pt 를 운영 가중치로 올린다 (`trainer.promote_weights` — 이전 것은
-   `best.prev.pt`. Windows 학습 버튼과 같은 규칙이다)
+4. 끝까지 가면 best.pt 를 운영 가중치로 올린다 (`trainer.promote_weights` — 이전 것은
+   `best.prev.pt`. 중단한 학습은 올리지 않는다, 2026-11-16. Windows 학습 버튼과 같은 규칙이다)
 
 왜 WSL 인가 (2026-09-12 실측, yolo26s / 640 / batch 20 / train 4,792장, 양쪽 모두
 Ultralytics 8.4.142·같은 인자): epoch 258초 → 62초 (중앙값). 288 epoch 을 5.0시간에
@@ -42,7 +42,7 @@ from pathlib import Path
 from .config import Config
 from .store import Store
 from .trainer import (
-    ResumePoint, build_dataset, promote_weights, resume_point_in, train_args, uses_dataset,
+    ResumePoint, build_dataset, promote_weights, resume_point_in, stopped_note, train_args, uses_dataset,
 )
 
 REPO = Path(__file__).resolve().parents[2]          # 저장소 루트
@@ -421,7 +421,11 @@ def train(cfg: Config, store: Store, job, *, resume: bool = False) -> dict:
     stopped = bool(int(_STOPPED.findall(tail)[-1])) if _STOPPED.findall(tail) else False
     run_dir = s.unc(run_linux)
 
-    prev = promote_weights(run_dir / "weights" / "best.pt", cfg)
+    # 사람이 멈춘 학습은 운영 가중치로 올리지 않는다 (2026-11-16 사용자 결정 — trainer._finish 와 같은 규칙)
+    best = run_dir / "weights" / "best.pt"
+    prev = None if stopped else promote_weights(best, cfg)
+    if stopped:
+        print(stopped_note(best, cfg), end="", flush=True)
     snap = run_dir / "weights" / "resume.pt"
     _resume_cache.clear()        # 방금 체크포인트가 바뀌었다
     return {
@@ -429,6 +433,8 @@ def train(cfg: Config, store: Store, job, *, resume: bool = False) -> dict:
         "run_dir": run_linux,
         "weights": str(cfg.weights),
         "previous_weights": str(prev) if prev else None,
+        "promoted": not stopped and best.exists(),
+        "run_best": str(best),
         "stopped_early": stopped,
         "resume_snapshot": f"{run_linux}/weights/resume.pt" if stopped and snap.exists() else None,
         "metrics": _read_metrics(run_dir),

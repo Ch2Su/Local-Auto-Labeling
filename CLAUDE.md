@@ -341,8 +341,8 @@ visible-3(yolo26s 7클래스, epoch 156, val 0.654, sha256 `ca1f9f5c…`)은 `be
 `best_detectview_y26m.pt` 는 DetectView 배포 모델 원본의 사본(7클래스, sha256 `785b3542…`)이다 — 셋의 test 비교는
 docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운영 m 과 같게 바꿨다**(`model.base` `weights/yolo26m.pt`·
 `train.batch` 10·epochs 100·close_mosaic 10 — 경로를 빼면 Ultralytics 전체 설정이 그 학습과 같다).
-**`best.pt`·`best.prev.pt` 는 학습이 끝날 때뿐 아니라 중단할 때마다 그 시점 best 로 밀려난다** — 운영할 가중치는 늘
-`best_<이름>.pt` 로 따로 둔다.
+**`best.pt`·`best.prev.pt` 는 학습이 끝까지 갈 때마다 밀려난다**(11-16 부터 중단한 학습은 건드리지 않는다 — 함정 8) —
+`best.prev.pt` 는 한 벌뿐이니 운영할 가중치는 늘 `best_<이름>.pt` 로 따로 둔다.
 
 **다른 디스크 백업은 `C:\local_auto_labeling_backup\20261031\` 와 그 위에 차례로 더하는 `20261105\`·`20261110\`** 다(C: 는 E: 와 다른 물리 디스크).
 셋을 차례로 덮으면 11-10 에 비우기 직전의 이미지·DB 가 된다. **그 뒤에 새로 모은 데이터는 아직 C: 에 없다.**
@@ -421,8 +421,11 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
      워커가 먼저 죽기 때문이다. epoch 하나만 잃는다).
    - 스냅샷은 **사람이 멈춘 때만** 남기고, 끝난 학습(조기 종료·완주, strip 된 `last.pt`)은 이어하기 대상에서 뺀다. 이어하기는
      **이 설정의 데이터셋으로 돈 학습만** 고른다(`trainer.uses_dataset`).
-   - **정상 중단도 운영 가중치를 바꾼다** — `_finish()` 가 그 학습의 best.pt 로 `models/best.pt` 를 덮고 이전 것은
-     `best.prev.pt` 로 남긴다(되돌리려면 그것을 복사한다).
+   - **사람이 멈춘 학습은 운영 가중치를 바꾸지 않는다 (11-16 사용자 결정 — 그 전에는 멈출 때마다 바뀌었다).**
+     `trainer._finish()`·`wsl_train.train()` 이 끝까지 간 학습(조기 종료 포함)만 `promote_weights` 로 올리고 이전 것을
+     `best.prev.pt` 로 남긴다. 멈춘 학습은 로그 끝에 그 학습의 best.pt 경로를 찍는다(결과의 `run_best`·`promoted`) — 쓰려면
+     손으로 복사한다. WSL 의 `--stop-at N` 도 멈춘 학습으로 친다. 규칙은 두 곳에 따로 있으니 고치면 둘 다
+     (`tests/test_promote.py`). `tools/finetune.py --promote` 는 원래부터 멈춘 학습을 올리지 않았다.
    - 끝난 학습의 `epochN.pt` 는 지워도 되지만(`best.pt`·`last.pt`·그래프·`results.csv` 만 남긴다) **지우기 전에 물을 것.** WSL
      안에서 지워도 `E:\WSL\Ubuntu\ext4.vhdx` 는 저절로 줄지 않는다.
 9. **Windows 는 VRAM 이 모자라도 OOM 을 내지 않고 공유 메모리로 넘겨 조용히 느려진다**(배치당 1.3초 → 45초, 사람이 PC 를 쓸
