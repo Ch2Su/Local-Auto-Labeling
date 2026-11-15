@@ -267,6 +267,7 @@ DOMAINS = ("cctv", "noncctv", "drone")   # images.domain 에 넣을 수 있는 �
 NO_DOMAIN = "__none__"   # 도메인 필터에서 '미분류' 를 뜻하는 값
 NO_SPLIT = "__none__"    # 분할 필터에서 '미배정'(다음 학습·split 때 배정)을 뜻하는 값
 NO_TAG = "__none__"      # 태그 필터에서 '태그 없음' 을 뜻하는 값
+LIVE = "live"            # 목록의 상태 필터에서 '휴지통만 뺀 전부' — 'all' 은 휴지통도 넣는다 (데이터 점검의 범위 all, 2026-11-15)
 TAG_NAME_MAX = 40
 TEMPLATE_NAME_MAX = 40   # 가릴 영역 템플릿 이름
 
@@ -336,7 +337,9 @@ def _list_where(
     """
     parts: list[str] = []
     args: list = []
-    if status and status != "all":
+    if status == LIVE:               # 휴지통만 뺀 전부 — health_snapshot(approved_only=False) 와 같은 조건이어야 한다
+        parts.append("i.status != 'trashed'")
+    elif status and status != "all":
         parts.append("i.status=?")
         args.append(status)
     if camera == NO_CAMERA:          # 카메라(출처, docs/provenance.md) — 다른 조건과 AND

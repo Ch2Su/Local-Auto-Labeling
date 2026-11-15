@@ -166,14 +166,14 @@ def test_boxes_the_masks_drop_from_training_are_left_out_of_every_number(store, 
     2026-11-15 의 실제 DB 는 승인 박스 1,277개 가운데 619개가 그런 박스였다(영역으로 덮은 자리에 자동 라벨 박스가 남아 있다) —
     넣고 세면 클래스 균형과 박스 크기가 학습이 보는 것과 달라진다.
     """
-    assert rep(store)["masks"] == {"images": 0, "rects": 0, "dropped": 0}
+    assert rep(store)["masks"] == {"images": 0, "rects": 0, "dropped": 0, "test_images": 0}
     # a 의 큰 차(0.375~0.625)의 왼쪽 60% 를 덮고, 작은 사람은 건드리지 않는다
     store.set_masks(data["a"], [(0.375, 0.375, 0.525, 0.625)])
     # c 의 큰 차는 40% 만 덮는다 — 남는다
     store.set_masks(data["c"], [(0.375, 0.375, 0.475, 0.625), (0.0, 0.0, 0.01, 0.01)])
 
     r = rep(store)
-    assert r["drop_masked"] is True and r["masks"] == {"images": 2, "rects": 3, "dropped": 1}
+    assert r["drop_masked"] is True and r["masks"] == {"images": 2, "rects": 3, "dropped": 1, "test_images": 0}
     c = by_name(r["classes"])
     assert (r["boxes"], c["car"]["boxes"], c["car"]["images"], c["car"]["masked_out"], c["person"]["masked_out"]) == (8, 2, 2, 1, 0)
     assert r["size_bins"]["counts"] == [5, 0, 0, 1, 2] and r["splits"]["boxes"]["none"] == 8
@@ -200,6 +200,38 @@ def test_an_image_whose_boxes_are_all_masked_counts_as_empty(store, add_image):
     store.set_masks(i, [(0.0, 0.0, 1.0, 1.0)])
     assert (rep(store)["empty"], rep(store)["boxes"]) == (1, 0)
     assert (rep(store, drop=False)["empty"], rep(store, drop=False)["boxes"]) == (0, 1)
+
+
+def test_boxes_under_masks_on_test_images_are_not_dropped(store, add_image):
+    """test 분할은 학습 세트·내보내기가 칠하지도, 박스를 빼지도 않는다(trainer.build_dataset·export_yolo 의 split == "test").
+
+    영역은 검수하며 먼저 덮고 분할은 나중에 정해지므로 영역이 있는 이미지가 test 로 갈 수 있다. 2026-11-15 리뷰에서 고침:
+    전에는 분할을 안 보고 빼서 test 의 박스가 labels/test 보다 적게 세어지고 'test 에 박스가 없는 클래스' 가 잘못 떴다.
+    """
+    tr = add_image("tr.jpg", camera="cam-01", boxes=[box(CAR)])
+    te = add_image("te.jpg", camera="cam-02", boxes=[box(CAR)])
+    add_image("va.jpg", camera="cam-03", boxes=[box(CAR)], split="val")
+    for i in (tr, te):                                # 둘 다 박스를 통째로 덮는다 — 그 뒤에 분할이 정해진다
+        store.set_masks(i, [(0.0, 0.0, 1.0, 1.0)])
+    store.set_splits([(tr, "train"), (te, "test")])
+
+    r = rep(store)
+    car = by_name(r["classes"])["car"]
+    assert (r["boxes"], car["boxes"], car["masked_out"]) == (2, 2, 1)         # train 의 한 개만 빠진다
+    assert car["split"] == {"train": 0, "val": 1, "test": 1, "none": 0}
+    assert r["splits"]["boxes"] == {"train": 0, "val": 1, "test": 1, "none": 0}
+    assert r["masks"] == {"images": 2, "rects": 2, "dropped": 1, "test_images": 1}
+    cams = {row["key"]: (row["masked"], row["masked_out"], row["boxes"]) for row in r["cameras"]}
+    assert cams == {"cam-01": (1, 1, 0), "cam-02": (1, 0, 1), "cam-03": (0, 0, 1)}
+    notes = [n["text"] for n in r["notes"]]
+    assert not any(t.startswith("test 에 박스가 없는 클래스") for t in notes)
+    assert any("가릴 영역이 있는 test 이미지 1장" in t for t in notes)
+
+    snap = store.health_snapshot()
+    assert health.masked_out(snap) == [True, False, False]                     # 박스 순서 = 이미지 id 순서(tr, te, va)
+    centre = (health.GRID[1] // 2) * health.GRID[0] + health.GRID[0] // 2
+    assert health.heatmap(snap)["cells"][centre] == 2
+    assert health.heatmap(snap, drop_masked=False)["cells"][centre] == 3
 
 
 def test_tag_counts_follow_the_scope(store, data):
@@ -308,3 +340,26 @@ def test_the_endpoint_serves_the_report_and_reads_only(client, cfg, store, data,
 
     assert store.health_snapshot(approved_only=False) == before
     assert {i: store.get_image(i)["updated_at"] for i in data.values()} == stamp
+
+
+def test_the_list_status_of_a_scope_lists_exactly_that_scopes_images(client, store, data):
+    """줄을 눌러 이미지 보기로 넘길 때 화면이 거는 상태 필터(`list_status`)는 그 범위와 **같은 이미지**를 준다.
+
+    2026-11-15 리뷰에서 고침: 범위 '휴지통만 빼고 전부' 를 목록의 '전체'(`status=all` — 휴지통도 넣는다)로 넘겨, 표의 장수와
+    이미지 보기의 장수가 달랐고 거기서 여러 장 바꾸기를 하면 휴지통 이미지에도 먹었다. 이제 `status=live`(store.LIVE).
+    """
+    def listed(**params):
+        d = client.get("/api/images", params={"limit": 1000, **params}).json()
+        return sorted(im["id"] for im in d["images"]), d["total"]
+
+    for scope in health.SCOPES:
+        status = client.get("/api/health", params={"scope": scope}).json()["list_status"]
+        want = [im["id"] for im in store.health_snapshot(approved_only=scope == "approved")["images"]]
+        assert listed(status=status) == (want, len(want)), scope                     # 필터 없는 길 — 상태별 수로 센다
+        cam = [i for i in want if store.get_image(i)["camera"] == "cam-01"]
+        assert listed(status=status, camera="cam-01") == (cam, len(cam)), scope      # 필터를 건 길 — count_images
+    assert status == "live" and data["trash"] not in want
+    assert listed(status="live", camera="cam-03") == ([], 0)                         # cam-03 은 휴지통의 한 장뿐이다
+    # 목록의 '전체' 는 전과 같이 휴지통도 넣는다
+    assert listed(status="all", camera="cam-03") == ([data["trash"]], 1)
+    assert listed(status="all")[1] == len(data)

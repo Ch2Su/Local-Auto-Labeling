@@ -52,7 +52,7 @@ from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
 from .stopper import StopSignal
-from .store import DOMAINS, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, Store, TagFilter, TemplateExists
+from .store import DOMAINS, LIVE, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, Store, TagFilter, TemplateExists
 from .tidy import prune_missing, purge_trashed, tidy_approved
 from .trainer import find_resume_point
 from .trainer import resume_train as run_resume
@@ -604,7 +604,10 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
                                        camera=camera, domain=domain, split=split, tag=tag_f)
         else:
             counts = store.counts()
-            total = counts["total"] if status in ("all", None) else counts.get(status, 0)
+            if status == LIVE:          # 휴지통만 뺀 전부 (store._list_where)
+                total = counts["total"] - counts.get("trashed", 0)
+            else:
+                total = counts["total"] if status in ("all", None) else counts.get(status, 0)
         return {"total": total, "offset": offset, "images": [_list_row(r) for r in rows]}
 
     def _cameras() -> tuple[dict, str | None]:
@@ -676,7 +679,10 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         out = health_report(snap, store.get_classes(), reg, scope=scope, imgsz=size, drop_masked=drop,
                             val_ratio=float(cfg.get("train.val_ratio", 0.2)),
                             test_ratio=float(cfg.get("train.test_ratio", 0.0)), counts=store.counts())
-        out.update(default_imgsz=int(cfg.imgsz), camera_error=error, none_camera=NO_CAMERA, none_split=NO_SPLIT)
+        # list_status: 이 범위와 **같은 이미지**를 주는 목록 상태 필터 — 화면이 줄을 눌러 이미지 보기로 넘길 때 쓴다.
+        # 범위 all 은 휴지통을 빼므로 목록의 'all'(휴지통 포함)이 아니라 LIVE 다 (2026-11-15 리뷰에서 고침)
+        out.update(default_imgsz=int(cfg.imgsz), camera_error=error, none_camera=NO_CAMERA, none_split=NO_SPLIT,
+                   list_status="approved" if scope == "approved" else LIVE)
         return out
 
     @app.get("/api/health/heatmap")

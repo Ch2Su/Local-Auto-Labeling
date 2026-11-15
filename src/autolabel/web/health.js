@@ -417,7 +417,8 @@ async function hcOpenFiltered({ cls = null, camera = "", split = "", tag = null,
   if (H.opening || navBusy()) return;
   H.opening = true;
   try {
-    $("#filter-status").value = H.data && H.data.scope === "all" ? "all" : "approved";
+    // 서버가 준 상태 필터 — 범위 '휴지통만 빼고 전부' 는 목록의 '전체'(휴지통 포함)가 아니라 'live' 다 (2026-11-15)
+    $("#filter-status").value = H.data.list_status;
     S.filterClasses.clear();
     S.filterEmpty = false;
     if (cls != null) S.filterClasses.add(cls);

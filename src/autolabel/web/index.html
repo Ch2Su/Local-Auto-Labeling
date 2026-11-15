@@ -75,6 +75,7 @@
         <option value="skipped">건너뜀</option>
         <option value="trashed">휴지통</option>
         <option value="all">전체</option>
+        <option value="live" title="휴지통만 뺀 전부 — 데이터 점검의 범위 '휴지통만 빼고 전부' 와 같은 이미지입니다">휴지통 빼고 전체</option>
         <option value="ids" hidden>지정한 id</option>
       </select>
       <select id="filter-order" title="정렬 기준">
@@ -477,7 +478,7 @@
           <option value="approved">승인만</option>
           <option value="all">휴지통만 빼고 전부</option>
         </select></label>
-      <label class="hc-ctl" title="가릴 영역이 넓이의 반 이상을 덮은 박스는 학습 라벨에서 빠집니다(DB 에는 그대로). 빼고 세면 학습이 보는 것과 같고, 넣고 세면 DB 의 박스 전부입니다">가려진 박스
+      <label class="hc-ctl" title="가릴 영역이 넓이의 반 이상을 덮은 박스는 학습 라벨에서 빠집니다(DB 에는 그대로). 빼고 세면 학습이 보는 것과 같고, 넣고 세면 DB 의 박스 전부입니다. test 분할 이미지는 학습 세트가 칠하지 않아 어느 쪽이든 그대로 셉니다">가려진 박스
         <select id="hc-masked">
           <option value="drop">빼고 셈 (학습과 같게)</option>
           <option value="keep">넣고 셈 (DB 전부)</option>

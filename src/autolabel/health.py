@@ -16,6 +16,10 @@ train·val·test 에 다 들어갈 수 없다), **학습 입력에서의 박스 
 - **가릴 영역이 반 이상 덮은 박스는 기본으로 세지 않는다**(`masked_out` — 학습 세트와 같은 식: `masks.covered` 가 `masks.DROP`
   이상, trainer.build_dataset). DB 에는 남아 있지만 학습 라벨에는 없는 박스라, 넣고 세면 클래스 균형·박스 크기가 학습이 보는
   것과 달라진다. 화면의 '가려진 박스' 로 넣고 셀 수도 있다(`drop_masked=False`).
+  **test 분할 이미지의 박스는 가려졌어도 뺀 것으로 치지 않는다** — 학습 세트와 내보내기가 test 는 칠하지도, 박스를 빼지도
+  않는다(평가는 실제 화면 그대로: trainer.build_dataset·export_yolo 의 `split == "test"`). 영역은 검수하며 먼저 덮고 분할은
+  나중에 정해지므로 영역이 있는 이미지가 test 로 갈 수 있다 — 그런 이미지 수는 `masks.test_images`(2026-11-15 리뷰에서 고침:
+  전에는 분할을 안 보고 빼서 test 의 박스 수·크기가 학습 세트의 labels/test 보다 적게 나왔다).
 """
 
 from __future__ import annotations
@@ -96,10 +100,17 @@ def masked_out(snap: dict) -> list[bool]:
 
     학습 세트를 만들 때와 같은 판정이다(`masks.split_boxes`). 화면 글자·먼 배경을 영역으로 덮으면 그 아래의 자동 라벨 박스가
     DB 에 남는다 — 2026-11-15 의 DB 는 승인 박스 1,277개 가운데 619개가 그랬다. 그래서 수치는 기본으로 이 박스를 빼고 센다.
+    **test 분할 이미지의 박스는 빠지지 않는다**(학습 세트가 test 는 칠하지도 빼지도 않는다 — 머리말) — 늘 False.
     """
     rects = _rects(snap)
-    return [image_id in rects and covered(_Rect(cx, cy, w, h), rects[image_id]) >= DROP
+    whole = _test_ids(snap)
+    return [image_id in rects and image_id not in whole and covered(_Rect(cx, cy, w, h), rects[image_id]) >= DROP
             for image_id, _c, cx, cy, w, h in snap["boxes"]]
+
+
+def _test_ids(snap: dict) -> set[int]:
+    """test 분할 이미지 — 가릴 영역이 있어도 학습 세트·내보내기가 원본 그대로 쓰는 이미지."""
+    return {im["id"] for im in snap["images"] if im.get("split") == "test"}
 
 
 def report(snap: dict, classes: list[str], cameras: dict, *, scope: str, imgsz: int,
@@ -208,6 +219,7 @@ def report(snap: dict, classes: list[str], cameras: dict, *, scope: str, imgsz: 
         })
     cam_rows.sort(key=lambda r: (r["key"] is None, -r["images"], r["key"] or ""))
 
+    n_test_masked = len(_test_ids(snap) & rects.keys())     # 영역이 있는 test 이미지 — 그 박스는 빼지 않았다(masked_out)
     sizes = Counter((im["width"], im["height"]) for im in images).most_common()
     domains = Counter(im["domain"] or "none" for im in images)
 
@@ -227,14 +239,15 @@ def report(snap: dict, classes: list[str], cameras: dict, *, scope: str, imgsz: 
         "cameras": cam_rows,
         "sizes": [{"w": w, "h": h, "n": n} for (w, h), n in sizes[:8]], "sizes_more": max(0, len(sizes) - 8),
         "domains": dict(domains),
-        "masks": {"images": len(rects), "rects": len(snap["masks"]), "dropped": n_gone},
+        "masks": {"images": len(rects), "rects": len(snap["masks"]), "dropped": n_gone, "test_images": n_test_masked},
         "tags": snap["tags"], "untagged": snap["untagged"],
-        "notes": _notes(class_rows, split_images, len(images), n_gone, drop_masked, val_ratio, test_ratio),
+        "notes": _notes(class_rows, split_images, len(images), n_gone, drop_masked, val_ratio, test_ratio,
+                        n_test_masked),
     }
 
 
 def _notes(class_rows: list[dict], split_images: dict, n_images: int, n_gone: int, drop_masked: bool,
-           val_ratio: float, test_ratio: float) -> list[dict]:
+           val_ratio: float, test_ratio: float, n_test_masked: int = 0) -> list[dict]:
     """눈여겨볼 것 — 숫자로 확인되는 것만 적는다(많다·적다 같은 판단은 넣지 않는다)."""
     out: list[dict] = []
     if not n_images:
@@ -264,6 +277,10 @@ def _notes(class_rows: list[dict], split_images: dict, n_images: int, n_gone: in
             f"가릴 영역이 반 이상 덮은 박스 {n_gone:,}개는 세지 않았습니다 — 학습 라벨에서 빠지는 박스입니다(DB 에는 그대로)."
             if drop_masked else
             f"가릴 영역이 반 이상 덮어 학습 라벨에서 빠지는 박스 {n_gone:,}개가 수치에 들어 있습니다.")})
+    if n_test_masked:
+        out.append({"level": "info", "text": (
+            f"가릴 영역이 있는 test 이미지 {n_test_masked:,}장 — test 는 칠하지 않으므로 그 아래의 박스도 그대로 셉니다"
+            "(학습 세트의 test 라벨과 같게).")})
     return out
 
 
