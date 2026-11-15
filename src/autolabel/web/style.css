@@ -202,6 +202,12 @@ body.list-resizing, body.list-resizing * { cursor: col-resize !important; user-s
 .sec.grow { flex: 1; }
 .sec.grow.collapsed { flex: none; }
 .sec.grow .sec-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* 박스 칸은 남는 높이를 갖되 **머리(44px) + 네 줄(23px씩) 아래로는 줄지 않는다** (2026-11-15). flex: 1 은 바탕 높이가 0 이라, 위 칸들과
+   변경 내역(최대 38%)이 높이를 다 쓰면 이 칸이 0 으로 줄어 넘친 '박스' 머리가 바로 아래 '변경 내역' 머리 위에 겹쳐 그려졌다
+   (사용자 화면 — 클래스·태그·템플릿을 다 편 채 H). 그래도 다 못 담는 낮은 창에서는 오른쪽 칸을 통째로 굴린다 — 전에는
+   넘친 아래쪽(변경 내역의 끝)이 잘려 닿을 수 없었다 */
+.sec.grow:not(.collapsed) { min-height: 136px; }
+#panel-label { overflow-y: auto; }
 
 /* ── 이미지 목록 ──────────────────────────────────── */
 .image-list, .class-list, .box-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
@@ -506,10 +512,15 @@ body.list-resizing, body.list-resizing * { cursor: col-resize !important; user-s
 .panel-head.clickable { cursor: pointer; border-top: 1px solid var(--line); }
 .panel-head.clickable:hover { background: var(--bg-3); }
 .panel-head .caret { width: 9px; color: var(--fg-dim); }
+/* 내용만큼(최대 38%) 갖되, 자리가 모자라면 박스 칸의 최소 높이(위 .sec.grow)를 남기고 **줄어든다** (2026-11-15 — 전에는
+   flex: none 이라 박스 칸을 0 으로 밀어냈다). 세 줄 넘는 내역은 120px 아래로 줄지 않고, 그보다 짧은 내역은 줄지 않는다
+   (min-height 를 그냥 주면 한두 줄짜리 내역 아래에 빈칸이 생긴다) */
 .hist-list {
   list-style: none; margin: 0; padding: 0;
-  overflow-y: auto; max-height: 38%; flex: none;
+  overflow-y: auto; max-height: 38%; flex: 0 1 auto;
 }
+.hist-list:has(li:nth-child(3)) { min-height: 120px; }
+.hist-list:not(:has(li:nth-child(3))) { flex-shrink: 0; }
 .hist-list li {
   display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; align-items: center;
   padding: 5px 10px; border-bottom: 1px solid var(--bg-3); font-size: 11px;
@@ -527,10 +538,13 @@ body.list-resizing, body.list-resizing * { cursor: col-resize !important; user-s
 /* ── 예측 비교 (P) ────────────────────────────────── */
 .btn.on { border-color: var(--accent); background: var(--accent-2); }
 .pred-head { border-top: 1px solid var(--line); }
+/* 변경 내역과 같이 줄어든다(위 .hist-list) — 네 줄 넘으면 96px 아래로는 안 준다 */
 .pred-list {
   list-style: none; margin: 0; padding: 0;
-  overflow-y: auto; max-height: 34%; flex: none;
+  overflow-y: auto; max-height: 34%; flex: 0 1 auto;
 }
+.pred-list:has(li:nth-child(4)) { min-height: 96px; }
+.pred-list:not(:has(li:nth-child(4))) { flex-shrink: 0; }
 .pred-list li {
   display: flex; align-items: center; gap: 6px;
   padding: 5px 10px; border-bottom: 1px solid var(--bg-3); font-size: 11px; cursor: pointer;

@@ -2262,7 +2262,8 @@ function toggleHistory(open = !S.histOpen) {
   try { localStorage.setItem("histOpen", open ? "1" : "0"); } catch { /* 저장 못 해도 그만 */ }
   $("#hist-list").classList.toggle("hidden", !open);
   $("#hist-caret").textContent = open ? "▾" : "▸";
-  if (open) loadHistory();
+  // 낮은 창에서는 오른쪽 칸이 통째로 굴러(style.css #panel-label) 편 내역이 화면 아래에 있을 수 있다 — 받은 뒤 보이게 내린다
+  if (open) loadHistory().then(() => { if (S.histOpen) $("#hist-list").scrollIntoView({ block: "nearest" }); });
   else if (S.ghost) { S.ghost = null; draw(); }
 }
 
