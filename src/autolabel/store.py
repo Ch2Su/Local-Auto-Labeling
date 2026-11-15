@@ -1443,15 +1443,27 @@ class Store:
             return [dict(r) for r in con.execute(sql, [*args, limit]).fetchall()]
 
     def batches(self, limit: int = 30) -> list[dict]:
-        """일괄 수정(같은 자리 일괄 수정) 묶음 목록, 최근 것부터."""
+        """일괄 수정 묶음 목록, 최근 것부터 — **일괄 수정(source 'bulk') `limit` 건**과 그 뒤에 남은 다른 줄(되돌리기 'revert' 등).
+
+        한 묶음은 (batch, source) 한 줄이고, 되돌리면 같은 이름 앞에 '취소: ' 가 붙은 revert 줄이 하나 더 생긴다(화면은 그것으로
+        '되돌림' 을 표시한다). 2026-11-16 전에는 두 종류를 함께 `limit` 줄로 잘라서, 되돌린 묶음이 많을수록 화면의 '최근 30건' 에
+        일괄 수정이 그만큼 덜 보였다(15건을 되돌렸으면 15건만). 이제 일괄 수정을 `limit` 건 고르고, 그보다 새로운 다른 줄은
+        전부 싣는다 — 되돌리기는 늘 그 일괄 수정보다 뒤라서 빠지지 않는다.
+        """
         with self.connect() as con:
             rows = con.execute(
                 "SELECT batch, source, MIN(at) AS at, COUNT(*) AS images,"
                 " MIN(id) AS first_id FROM box_history WHERE batch IS NOT NULL"
-                " GROUP BY batch, source ORDER BY first_id DESC LIMIT ?",
-                (limit,),
+                " GROUP BY batch, source ORDER BY first_id DESC"
             ).fetchall()
-        return [dict(r) for r in rows]
+        out, bulk = [], 0
+        for r in rows:
+            if r["source"] == "bulk":
+                if bulk == limit:
+                    break                   # 이보다 오래된 일괄 수정과, 그 사이의 되돌리기는 싣지 않는다
+                bulk += 1
+            out.append(dict(r))
+        return out
 
     def backup_daily(self, keep: int = 14) -> Path | None:
         """하루 한 번 DB 를 `<DB 폴더>/backups/` 로 떠 둔다. 오늘 것이 있으면 건너뛴다.

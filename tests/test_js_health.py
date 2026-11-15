@@ -67,6 +67,7 @@ SCENARIOS = {
     "filtered_list_fails": [["filtered", {"cls": 3}], ["fail", "서버가 꺼져 있습니다"]],
     "filtered_left_view": [["filtered", {"split": "test"}], ["leave"], ["answer"]],
     "filtered_empty_list": [["filtered", {"tag": 12}], ["answer", []]],
+    "filtered_save_fails": {"saveFails": True, "steps": [["filtered", {"camera": "cam-02"}]]},
     # id 목록으로 넘기기
     "ids": [["ids", [1, 2], 3], ["answer"]],
     "ids_left_view": [["ids", [1, 2], 0], ["leave"], ["answer"]],
@@ -234,6 +235,14 @@ def test_filters_go_back_when_the_list_cannot_be_fetched(hc):
     assert (got["views"], got["view"], got["loaded"]) == ([], "health", [])
     assert got["toasts"] == [["목록을 받지 못했습니다: 서버가 꺼져 있습니다", True]]
     assert got["opening"] is False
+
+
+def test_nothing_changes_when_the_edits_in_hand_cannot_be_saved(hc):
+    """라벨링에 열어 둔 장의 고치던 박스를 저장하지 못하면 필터도 목록도 보기도 그대로다 — 목록부터 바꾸면 가운데에 그 목록에
+    없는 옛 이미지가 남는다(2026-11-16, app.js reloadList 와 같은 약속)."""
+    got = hc["filtered_save_fails"]
+    assert (got["filters"], got["listedWith"], got["views"], got["view"]) == (BEFORE, [], [], "health")
+    assert (got["opening"], got["waiting"]) == (False, 0)
 
 
 def test_a_late_list_does_not_pull_you_back_either(hc):

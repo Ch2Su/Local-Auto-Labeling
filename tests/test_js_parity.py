@@ -4,13 +4,16 @@
 입력을 Python 함수에도 넣어 견준다. 떼는 규칙은 단순하다 — 맨 왼쪽에서 시작하는 `function 이름(` 부터 맨 왼쪽 `}` 줄까지,
 한 줄짜리 `const 이름 = …`. 선언의 모양을 바꿔 못 찾게 되면 그 이름을 대며 실패한다(그때는 이 파일의 규칙을 맞출 것).
 
-node 가 없으면 건너뛴다(PATH 의 node, 없으면 `C:/Program Files/nodejs/node.exe`).
+node 는 `find_node` 가 찾는다 — 환경 변수 `NODE_BIN`, PATH 의 node, `C:/Program Files/nodejs/node.exe`, 그것도 없으면 VS Code
+(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로 — node 를 깔지 않은 PC 에서도 화면 테스트가 돈다). 하나도 없으면 건너뛴다.
 """
 
 from __future__ import annotations
 
 import calendar
+import functools
 import json
+import os
 import random
 import shutil
 import subprocess
@@ -27,9 +30,36 @@ from helpers import WEB, pixel_rects, screen_round_trip
 W, H = 2560, 1440
 
 
+# node 대신 쓸 수 있는 Electron 앱 — ELECTRON_RUN_AS_NODE=1 이면 창을 띄우지 않고 node 처럼 스크립트를 돌린다
+_ELECTRON = (r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe", r"%ProgramFiles%\Microsoft VS Code\Code.exe")
+
+
+@functools.lru_cache(maxsize=1)
 def find_node() -> str | None:
-    for cand in (shutil.which("node"), r"C:\Program Files\nodejs\node.exe"):
-        if cand and Path(cand).exists():
+    """화면(JS) 테스트를 돌릴 node 의 경로, 없으면 None(그 테스트들은 건너뛴다).
+
+    차례로: 환경 변수 `NODE_BIN` → PATH 의 node → `C:\\Program Files\\nodejs\\node.exe` → VS Code 의 `Code.exe`.
+    **node 가 없는 PC 에서 화면 테스트 38개가 늘 건너뛰어졌다(2026-11-16)** — VS Code 는 Electron 이라
+    `ELECTRON_RUN_AS_NODE=1` 이면 node 로 돈다. 이름이 node 가 아닌 것을 고르면(`NODE_BIN` 에 Electron 앱을 적었을 때도) 그
+    변수를 이 프로세스의 환경에 넣는다 — 테스트가 띄우는 node 프로세스가 물려받는다(진짜 node 에는 아무 뜻 없는 변수다).
+    고른 것이 실제로 스크립트를 돌리는지 한 번 돌려 보고, 안 되면 다음 후보로 넘어간다.
+    """
+    cands = [os.environ.get("NODE_BIN"), shutil.which("node"), r"C:\Program Files\nodejs\node.exe",
+             *(os.path.expandvars(p) for p in _ELECTRON)]
+    for cand in cands:
+        if not cand or not Path(cand).exists():
+            continue
+        env = dict(os.environ)
+        if not Path(cand).stem.lower().startswith("node"):
+            env["ELECTRON_RUN_AS_NODE"] = "1"
+        try:
+            done = subprocess.run([cand, "-e", "process.stdout.write('ok')"], capture_output=True, text=True,
+                                  timeout=60, env=env)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if done.returncode == 0 and done.stdout.strip() == "ok":
+            if "ELECTRON_RUN_AS_NODE" in env:
+                os.environ["ELECTRON_RUN_AS_NODE"] = "1"
             return cand
     return None
 

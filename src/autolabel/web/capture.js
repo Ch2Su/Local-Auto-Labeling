@@ -240,6 +240,10 @@ function capReset() {
   capClosePreview();
   clearTimeout(C.keepTimer);
   clearTimeout(C.startTimer);
+  C.startTimer = null;
+  // 아직 안 남긴 시작 시각도 버린다 — 이 영상은 넣었거나 닫았다. 타이머만 끄고 이것을 남겨 두면, 다음에 다른 보기로 갈 때
+  // captureHide → capFlushStart 가 없어진 세션에 PUT 을 보냈다(404 — 2026-11-16)
+  C.startPending = null;
   C.keepDirty = false;
   C.cur = null;
   C.frames = [];

@@ -56,6 +56,7 @@ async function scenario(sc) {
     VIEW: "health",
     hcN: (n) => String(n),
     navBusy: () => false,
+    saveBeforeLeaving: async () => !sc.saveFails,          // 라벨링에 열어 둔 장의 고치던 박스 — 저장을 못 하면 false
     toast: (msg, bad) => { log.toasts.push([String(msg), !!bad]); },
     api: (path) => { log.api.push(String(path)); return wait("api", path); },
     openIds: (ids) => { log.opened.push([...ids]); return wait("ids", ids); },

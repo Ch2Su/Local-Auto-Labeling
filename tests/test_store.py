@@ -354,3 +354,25 @@ def test_revert_refuses_to_bring_back_a_class_that_no_longer_exists(store, add_i
     store.add_class(CLASSES[CONE])
     assert store.revert_batch("merge") == (2, 0)
     assert [b.cls for b in store.get_boxes(i)] == [CONE]
+
+
+def test_reverts_do_not_push_bulk_batches_out_of_the_list(store, add_image):
+    """변경 기록의 '일괄 수정' 목록은 일괄 수정을 limit 건 싣는다 — 되돌리기 줄이 그 자리를 차지하지 않는다.
+
+    2026-11-16 에 고침: 일괄 수정(bulk)과 되돌리기(revert) 줄을 함께 limit 줄로 잘라, 여러 건을 되돌린 뒤에는 화면(bulk 만 그린다)에
+    그만큼 덜 보였다 — 여기처럼 최근 줄이 전부 되돌리기면 한 건도 안 보였다.
+    """
+    ids = [add_image(f"b{k}.jpg", boxes=[box()]) for k in range(8)]
+    for k, i in enumerate(ids):                         # 묶음 여덟 — 이미지 하나씩에 영역을 더한다
+        assert store.apply_mask_template([i], [RECT_A], mode="add", batch=f"b{k}")["changed"] == 1
+    for k in range(5):                                  # 그 가운데 다섯을 되돌렸다(가장 새 줄 다섯이 전부 revert 다)
+        assert store.revert_batch(f"b{k}") == (1, 0)
+
+    rows = store.batches(limit=4)
+    bulk = [r["batch"] for r in rows if r["source"] == "bulk"]
+    undone = {r["batch"] for r in rows if r["source"] == "revert"}
+    assert bulk == ["b7", "b6", "b5", "b4"]             # 일괄 수정 넷 — 최근 것부터
+    assert "취소: b4" in undone                         # 그 묶음을 되돌린 줄도 함께 온다(화면이 '되돌림' 으로 표시한다)
+    assert all(r["first_id"] > rows[-1]["first_id"] or r is rows[-1] for r in rows)
+    assert [r["batch"] for r in store.batches(limit=30) if r["source"] == "bulk"] == [f"b{k}" for k in range(7, -1, -1)]
+    assert store.batches(limit=0) == [r for r in store.batches(limit=30) if r["source"] != "bulk"][:5]

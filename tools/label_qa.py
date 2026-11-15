@@ -22,6 +22,12 @@ DB 는 읽기 전용으로 열고(`mode=ro`) 아무것도 고치지 않는다. �
   모델 없이도 잰다(`--dup-only`). 이 행의 `pred_cls`·`pred_box` 는 예측이 아니라 **짝이 된 다른
   라벨**이고 `iou` 가 두 라벨의 IoU 다. 오토바이와 탄 사람처럼 진짜로 겹친 것도 걸린다.
 
+**가릴 영역(검수 화면 `M`)이 덮은 자리는 견주지 않는다 (2026-11-16).** 영역이 넓이의 반 이상을 덮은 라벨은 학습 라벨에서
+빠지는 박스이고(`masks.drops` — 학습 세트와 같은 판정), 그 자리의 예측은 사람이 '애매해서 안 그린다' 고 덮어 둔 물체다. 전에는
+영역을 몰라서 덮어 둔 자리의 남은 자동 라벨 박스가 `unseen` 으로, 모델이 거기서 찾은 물체가 `missing` 으로 쏟아졌다(2026-11-15 의
+DB 는 승인 박스 1,277개 중 619개가 가려진 박스였다). test 분할 이미지는 영역을 적용하지 않으니 그대로 견준다(`masks.applies_to`).
+전부 견주려면 `--keep-masked`.
+
 **train 분할의 후보는 적게 나온다.** 모델이 그 라벨을 외웠기 때문이다. 거기서도
 어긋나면 오히려 강한 신호다. val·test·미배정은 학습에 안 쓴 이미지라 편향이 없다.
 어느 모델로 돌렸는지(학습 분할)에 따라 이 해석이 달라지니 `--weights` 를 바꿀 때 주의.
@@ -34,7 +40,7 @@ import csv
 import json
 import sqlite3
 import sys
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
 from datetime import date
 from pathlib import Path
 
@@ -43,7 +49,10 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
 from autolabel.config import Config, resolve
+from autolabel.masks import applies_to, drops
 from autolabel.predictor import build_class_map
+
+_Box = namedtuple("_Box", "cx cy w h")      # masks.drops 가 읽는 꼴(정규화)
 
 STORE_CONF = 0.10       # 이 이상 예측은 전부 저장 (분석 임계값은 나중에 바꿀 수 있게)
 MATCH_IOU = 0.5
@@ -64,6 +73,8 @@ def parse_args():
     p.add_argument("--sheet", type=int, default=48, help="종류별 대조 시트에 넣을 상위 후보 수 (0=안 만듦)")
     p.add_argument("--dup-only", action="store_true",
                    help="모델 없이 라벨끼리 겹친 곳(duplicate)만 찾는다 (GPU 를 쓰지 않음)")
+    p.add_argument("--keep-masked", action="store_true",
+                   help="가릴 영역이 덮은 라벨·예측도 견준다 (기본: 학습 라벨에서 빠지는 자리는 견주지 않는다)")
     return p.parse_args()
 
 
@@ -78,8 +89,33 @@ def load_db(db: Path):
             "SELECT b.image_id, b.cls, b.cx, b.cy, b.w, b.h FROM boxes b "
             "JOIN images i ON i.id = b.image_id WHERE i.status='approved'"):
         gt[r["image_id"]].append((r["cls"], r["cx"], r["cy"], r["w"], r["h"]))
+    masks = defaultdict(list)
+    try:
+        for r in con.execute(
+                "SELECT m.image_id, m.x1, m.y1, m.x2, m.y2 FROM masks m "
+                "JOIN images i ON i.id = m.image_id WHERE i.status='approved' ORDER BY m.image_id, m.id"):
+            masks[r["image_id"]].append((r["x1"], r["y1"], r["x2"], r["y2"]))
+    except sqlite3.OperationalError:    # masks 표가 생기기 전(2026-11-09)의 DB — 보관해 둔 옛 DB 도 읽을 수 있게
+        pass
     con.close()
-    return classes, images, gt
+    return classes, images, gt, masks
+
+
+def applied_rects(images: list[dict], masks) -> dict[int, list]:
+    """가릴 영역을 **적용하는** 이미지의 영역 {이미지 id: [(x1, y1, x2, y2)]} — 학습 세트와 같은 규칙이다(`masks.applies_to`):
+    test 분할은 평가라 칠하지도, 박스를 빼지도 않으니 여기서도 영역이 없는 것으로 본다."""
+    return {im["id"]: masks[im["id"]] for im in images if masks.get(im["id"]) and applies_to(im["split"])}
+
+
+def unmasked_labels(gt_rows: list, rects) -> list:
+    """영역이 반 이상 덮은 라벨을 뺀 목록 — 학습 라벨에 남는 박스만(`masks.drops`)."""
+    return [r for r in gt_rows if not drops(_Box(*r[1:]), rects)]
+
+
+def unmasked_preds(preds: list, rects) -> list:
+    """영역이 반 이상 덮은 예측을 뺀 목록. preds 의 항목은 [클래스, conf, x1, y1, x2, y2](정규화 xyxy)."""
+    return [p for p in preds
+            if not drops(_Box((p[2] + p[4]) / 2, (p[3] + p[5]) / 2, p[4] - p[2], p[5] - p[3]), rects)]
 
 
 def predict_all(cfg: Config, weights: str, images: list[dict], classes: list[str], args, out: Path):
@@ -285,10 +321,18 @@ def main():
     out = resolve(args.out) if args.out else resolve(f"runs/label_qa/{date.today():%Y%m%d}_{tag}")
     out.mkdir(parents=True, exist_ok=True)
 
-    classes, images, gt = load_db(cfg.db)
+    classes, images, gt, masks = load_db(cfg.db)
     images_by_id = {im["id"]: im for im in images}
     if not args.reuse and not args.dup_only:
-        predict_all(cfg, weights, images, classes, args, out)
+        predict_all(cfg, weights, images, classes, args, out)       # 예측은 그대로 다 남긴다 — 거르는 것은 분석할 때
+
+    # 가릴 영역이 덮은 자리는 견주지 않는다(머리말). 라벨은 여기서, 예측은 아래에서 장마다 거른다
+    rects = {} if args.keep_masked else applied_rects(images, masks)
+    skipped_labels = skipped_preds = 0
+    for image_id, rr in rects.items():
+        kept = unmasked_labels(gt[image_id], rr)
+        skipped_labels += len(gt[image_id]) - len(kept)
+        gt[image_id] = kept
 
     recs = [] if args.dup_only else [json.loads(line) for line in open(out / "preds.jsonl", encoding="utf-8")]
     rows = duplicate_rows(images, gt, classes)      # 라벨끼리 겹침 — 예측과 상관없이 승인 이미지 전부
@@ -296,6 +340,10 @@ def main():
         im = images_by_id.get(rec["id"])
         if im is None:
             continue
+        if rec["id"] in rects:
+            kept = unmasked_preds(rec["preds"], rects[rec["id"]])
+            skipped_preds += len(rec["preds"]) - len(kept)
+            rec = {**rec, "preds": kept}
         for kind, gcls, pcls, conf, iou, gbox, pbox in analyze_image(gt[rec["id"]], rec, args.high, args.min_side):
             ref = pbox if pbox is not None else gbox
             rows.append({
@@ -328,6 +376,12 @@ def main():
         print(f"승인 이미지 {len(images)}장, 라벨끼리 겹침(IoU ≥ {DUP_IOU}) {len(rows)}쌍")
     else:
         print(f"예측한 이미지 {len(recs)}장, 후보 {len(rows)}건 (예측 conf ≥ {args.high}, duplicate 는 라벨끼리)")
+    if args.keep_masked:
+        print("가릴 영역이 덮은 라벨·예측도 견줬습니다 (--keep-masked)")
+    elif rects:
+        print(f"가릴 영역이 있는 {len(rects)}장에서 덮인 라벨 {skipped_labels}개"
+              + ("" if args.dup_only else f"·예측 {skipped_preds}개(conf ≥ {STORE_CONF})")
+              + "는 견주지 않았습니다 — 학습 라벨에서 빠지는 자리입니다 (전부 보려면 --keep-masked)")
     splits = ["train", "val", "test", "미배정"]
     print(f"\n{'':10}" + "".join(f"{s:>12}" for s in splits))
     print(f"{'이미지':10}" + "".join(f"{split_n[s]:>12}" for s in splits))

@@ -679,6 +679,10 @@ class CaptureManager:
                 if s.deleted or s.state in RUNNING or s.state in ("uploading", "committing"):
                     raise CaptureError(409, "그사이 다시 뽑기를 시작했거나 닫았습니다 — 화면을 새로 고치세요.")
                 before, s.state = s.state, "committing"   # 그동안 다시 뽑기·닫기가 프레임을 지우지 않게
+            # 'committing' 을 파일에도 남긴다 — 프레임을 옮기는 도중 서버가 꺼지면 다시 켤 때 _load 가 이 상태를 보고
+            # '이미 옮긴 프레임은 unlabeled 에 있다' 고 알린다. 2026-11-16 전에는 메모리에서만 바꿔서, 꺼졌다 켜면 세션이
+            # 넣기 전 상태로 읽혀 그 안내가 한 번도 나오지 않았다(프레임 일부는 이미 옮겨져 화면에서 깨져 보인다).
+            s.save()
             auto = None
             if camera is None:
                 try:
@@ -686,6 +690,7 @@ class CaptureManager:
                 except BaseException:
                     with s.lock:
                         s.state = before
+                    s.save()
                     raise
 
             root = self.cfg.unlabeled / camera

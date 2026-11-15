@@ -495,6 +495,8 @@ async function hcOpenFiltered({ cls = null, camera = "", split = "", tag = null,
   H.opening = true;
   const prev = filterState();
   try {
+    // 고치던 박스(라벨링에 열어 둔 장)를 먼저 저장한다 — 못 하면 필터도 목록도 건드리지 않는다(app.js reloadList 와 같다)
+    if (!(await saveBeforeLeaving())) return;
     // 상태 칸은 서버가 준 값 — 범위 '휴지통만 빼고 전부' 는 목록의 '전체'(휴지통 포함)가 아니라 'live' 다 (2026-11-15)
     const want = noFilters(H.data.list_status);
     if (cls != null) want.classes.push(cls);

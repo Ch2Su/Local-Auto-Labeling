@@ -80,6 +80,40 @@ def test_masks_are_saved_only_when_sent(client, store, add_image):
     assert store.get_masks(i) == []
 
 
+def test_a_template_skips_a_photo_that_is_shown_turned(client, store, add_image):
+    """여러 장에 템플릿을 넣을 때 화면 비율은 **파일의 EXIF 회전을 적용해** 본다.
+
+    DB 의 크기는 회전 전 원시 크기다 — 16:9 로 찍은 폰 세로 사진은 원시 비율이 16:9 템플릿과 같지만 화면에서는 9:16 으로 돈다.
+    2026-11-16 전에는 DB 비율이 맞으면 파일을 열지 않아 그런 사진에 영역이 엉뚱한 자리에 들어갔다. 파일을 못 여는 장은 DB 의
+    크기를 믿고, 그것도 어긋나면 unreadable 로 센다.
+    """
+    from pathlib import Path
+
+    from PIL import Image
+
+    def make(name: str, *, turned: bool = False, file: bool = True, size=(192, 108)) -> int:
+        image_id = add_image(name, camera="cam-01", boxes=[box()], size=size)      # DB 에는 원시 크기가 들어간다
+        if file:
+            path = Path(store.get_image(image_id)["path"])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            exif = Image.Exif()
+            if turned:
+                exif[0x0112] = 6                    # Orientation 6 — 시계 방향으로 90도 돌려 본다
+            Image.new("RGB", size, (90, 120, 150)).save(path, exif=exif)
+        return image_id
+
+    flat, turned = make("flat.jpg"), make("turned.jpg", turned=True)
+    gone, odd = make("gone.jpg", file=False), make("odd.jpg", file=False, size=(100, 100))
+    tpl, _ = store.save_mask_template("화면 글자", [(0.0, 0.0, 0.25, 0.1)], width=1920, height=1080)
+
+    r = client.post("/api/bulk/mask-template", json={"ids": [flat, turned, gone, odd], "template_id": tpl})
+    assert r.status_code == 200
+    out = r.json()
+    assert (out["changed"], out["aspect"], out["unreadable"]) == (2, 1, 1)
+    assert store.get_masks(flat) == store.get_masks(gone) == [(0.0, 0.0, 0.25, 0.1)]
+    assert store.get_masks(turned) == [] and store.get_masks(odd) == []
+
+
 def test_test_images_take_no_masks(client, store, add_image):
     """test 는 칠하지 않는다 — 평가는 실제 화면 그대로여야 한다. 지우기만은 받는다."""
     i = add_image("a.jpg", status="approved", boxes=[box()], split="test")

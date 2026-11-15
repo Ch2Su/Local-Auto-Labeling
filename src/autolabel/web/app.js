@@ -47,6 +47,7 @@ const S = {
   saving: null,       // 진행 중인 저장 요청(Promise). 저장은 한 번에 하나만 돈다
   jobPoll: null,
   ids: null,          // 'id 로 열기' 로 지정한 목록 (필터가 "ids" 일 때 탐색 대상)
+  listAt: null,       // 지금 목록을 받았을 때의 상태·필터·정렬·묶음 크기 (listControls — reloadList 가 칸을 되돌릴 때 쓴다)
   filterClasses: new Set(),   // 클래스 필터: 고른 것을 **전부** 가진 이미지만 (교집합)
   filterEmpty: false,         // 박스가 하나도 없는 이미지만. 클래스 선택과 함께 못 쓴다
   filterCamera: "",           // 카메라(출처) 필터: "" 전체 / 카메라키 / "__none__" 출처 없음
@@ -2212,6 +2213,8 @@ function idsFromHash() {
  *  목록을 받지 못하면 앞 상태(S.ids·상태 칸·입력칸)로 되돌리고 오류를 다시 던진다 — 부르는 쪽이 알린다. 예전에는
  *  되돌리지 않아 상태 칸은 '지정한 id' 인데 목록은 그 전 것이 남았다 (2026-11-05). */
 async function openIds(ids) {
+  // 고치던 박스를 먼저 저장한다 — 못 하면 목록을 바꾸지 않는다(reloadList 와 같다, 2026-11-16). 알림은 saveBeforeLeaving 이 띄웠다
+  if (!(await saveBeforeLeaving())) throw new Error("저장하지 못한 수정이 있어 목록을 바꾸지 않았습니다.");
   const sel = $("#filter-status"), opt = sel.querySelector('option[value="ids"]'), input = $("#goto-ids");
   const prev = { ids: S.ids, status: sel.value, hidden: opt.hidden, text: input.value };
   S.ids = ids;
@@ -2958,6 +2961,7 @@ async function loadImageList(keepOpen = null) {
   if (!S.chunks.some((c) => c.open) && S.chunks.length) S.chunks[0].open = true;
 
   S.images = flatImages();
+  S.listAt = listControls();                     // 이 목록을 받은 조건 — reloadList 가 저장을 못 했을 때 칸을 이리로 되돌린다
   renderImageList();
   if (VIEW === "gallery") await galleryLoad();   // 두 보기는 같은 필터를 쓴다 — 다시 받을 때 함께
   return S.images;
@@ -3549,7 +3553,29 @@ $("#btn-mask").onclick = () => setMode(S.mode === "mask" ? "box" : "mask");
 $("#btn-prev").onclick = () => step(-1);
 $("#btn-fit").onclick = fitView;
 
+/* 목록을 마지막으로 받았을 때의 조건 (2026-11-16) — 상태·필터(filterState)에 정렬·묶음 크기를 더한 것. loadImageList 가 목록을
+ * 받을 때마다 S.listAt 에 적어 둔다. 필터 칸은 바꿨는데 목록을 다시 받지 않게 됐을 때(reloadList — 고치던 박스를 저장하지 못했다)
+ * 칸을 이것으로 되돌려 '칸은 새 조건인데 목록은 옛 것' 이 되지 않게 한다. */
+function listControls() {
+  return { ...filterState(), order: $("#filter-order").value, chunk: $("#chunk-size").value };
+}
+
+function setListControls(c) {
+  setFilters(c);
+  $("#filter-order").value = c.order;
+  $("#chunk-size").value = c.chunk;
+  syncListControls();
+}
+
+/** 필터·정렬이 바뀌었다 — 목록을 첫 묶음부터 다시 받고 첫 장을 연다.
+ *  **고치던 박스를 먼저 저장한다.** 저장하지 못하면 목록을 바꾸지 않고, 필터 칸을 받아 둔 목록의 조건으로 되돌린다. 전에는
+ *  목록부터 받고 첫 장을 열 때에야 저장을 봐서, 저장이 거절되면(test 이미지의 가릴 영역 409·잘못된 박스 422 등) 목록은 새 조건
+ *  인데 가운데에는 그 목록에 없는 옛 이미지가 남았다 (2026-11-16). */
 async function reloadList() {
+  if (!(await saveBeforeLeaving())) {
+    if (S.listAt) setListControls(S.listAt);
+    return;
+  }
   await loadImageList(new Set([0]));   // 필터가 바뀌면 첫 묶음부터 다시
   if (S.images.length) await loadImage(S.images[0].id);
 }

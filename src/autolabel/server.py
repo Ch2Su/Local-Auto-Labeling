@@ -858,10 +858,11 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         """고른 이미지들에 템플릿 영역을 더하거나(add) 뺀다(remove). 바뀐 장수와 건너뛴 이유별 장수를 돌려준다.
 
         더하기는 test 이미지(mask_block — store 가 쓰는 순간의 행으로 본다)와, 화면 비율이 템플릿을 만든 그림과 1% 넘게
-        다른 이미지를 건너뛴다(다른 카메라·크기의 그림을 엉뚱하게 덮지 않게). 비율은 DB 의 크기로 먼저 보고, 어긋날 때만
-        파일을 열어 EXIF 회전을 적용한 크기로 다시 본다(못 열면 unreadable) — 원시 비율은 같은데 90도 도는 그림은 가리지
-        못하지만 장마다 파일을 열면 1천 장에 2초가 걸렸다. 빼기는 템플릿과 좌표가 같은 영역만 빼므로 비율을 보지 않는다.
-        바뀐 이미지마다 이력(source bulk, 같은 batch)이 남는다.
+        다른 이미지를 건너뛴다(다른 카메라·크기의 그림을 엉뚱하게 덮지 않게). **비율은 파일을 열어 EXIF 회전을 적용한 화면
+        크기로 본다** — DB 의 크기는 회전 전 원시 크기라, 원시 비율은 템플릿과 같은데 90도 돌려 보는 사진(16:9 로 찍은 폰
+        세로 사진)을 가려내지 못한다. 2026-11-16 전에는 DB 비율이 맞으면 파일을 열지 않았다(1천 장에 2초를 아끼려고) — 그런
+        사진에는 영역이 엉뚱한 자리에 들어갔다. 파일을 못 열면 DB 의 크기로 보고, 그것도 어긋나면 unreadable 로 센다.
+        빼기는 템플릿과 좌표가 같은 영역만 빼므로 비율을 보지 않는다. 바뀐 이미지마다 이력(source bulk, 같은 batch)이 남는다.
         """
         if not payload.ids:
             raise HTTPException(400, "이미지를 고르세요.")
@@ -877,12 +878,13 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             keep = []
             for i in ids:
                 row = rows.get(i)                       # 없는 이미지는 store 가 missing 으로 센다
-                if row is not None and not (row["width"] and row["height"] and near(row["width"] / row["height"])):
-                    ratio = _display_ratio(row)         # 원시 크기로 어긋나면 EXIF 로 도는 그림일 수 있다
-                    if ratio is None:
-                        n_unreadable += 1
-                        continue
-                    if not near(ratio):
+                if row is not None:
+                    ratio = _display_ratio(row)         # 화면(EXIF 회전 적용) 비율 — 원시 비율만 봐서는 도는 그림을 모른다
+                    if ratio is None:                   # 파일을 못 열었다 — DB 의 크기가 맞으면 그것을 믿는다(영역은 DB 에만 쓴다)
+                        if not (row["width"] and row["height"] and near(row["width"] / row["height"])):
+                            n_unreadable += 1
+                            continue
+                    elif not near(ratio):
                         n_aspect += 1
                         continue
                 keep.append(i)
