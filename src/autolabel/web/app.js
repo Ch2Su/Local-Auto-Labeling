@@ -1058,6 +1058,7 @@ function renderBoxList() {
   $("#box-count").textContent = (S.boxes.length ? `${S.boxes.length}개` : "")
     + (S.masks.length ? ` · 가릴 영역 ${S.masks.length}` : "")
     + (overlaps.length ? ` · 겹침 ${overlaps.length}쌍` : "");
+  $("#box-count").title = $("#box-count").textContent;      // 좁으면 말줄임으로 잘린다(style.css .sec-head .dim)
   $("#btn-same").disabled = S.sel < 0;
   // 박스 목록이 바뀌는 곳(추가·삭제·클래스 변경·되돌리기)은 전부 여기를 지난다.
   if (S.predOn) updateFindings();

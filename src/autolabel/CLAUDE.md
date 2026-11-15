@@ -209,6 +209,11 @@
   (`flex: 0 1 auto` — 세 줄 넘는 내역만 120px 바닥. `:has()` 로 가르는 것은 min-height 를 그냥 주면 한 줄짜리 내역 아래에 빈칸이
   생겨서다). 그래도 못 담는 낮은 창은 오른쪽 칸이 통째로 구른다(`#panel-label { overflow-y: auto }`) — 내역을 펴면 받은 뒤 보이게
   내린다(`toggleHistory`). **오른쪽에 칸을 더하면 낮은 창에서 박스 칸이 최소 높이로 가는지 볼 것.**
+  **박스 칸은 11-15 까지 접히지 않았다**(같은 날 사용자 화면) — `.sec.grow .sec-body { display: flex }` 가 `.sec.collapsed .sec-body
+  { display: none }` 과 같은 무게로 뒤에 와서 이겼다(머리의 ▸ 만 바뀜). 지금은 `.sec.grow:not(.collapsed) .sec-body` 다 — `.sec` 의
+  몸통에 `display` 를 주는 줄을 더할 때는 접힌 것을 빼고 줄 것. 박스 칸을 접으면 변경 내역이 38% 한도 없이 남는 높이를 쓴다.
+  칸 머리(`.sec-head`)는 한 줄이다(`nowrap` — 개수 글 `.dim` 만 말줄임, 전체는 `title`): 박스 머리의 개수 글이 길어지면 제목이
+  '박/스' 로 꺾였다.
 - **왼쪽 목록 폭(11-07)** — 경계 손잡이(`#list-resizer`)를 끌면 app.js 가 `.layout` 의 `--left-w` 를 바꾸고(localStorage
   `listWidth`), CSS 의 `--left-eff`(clamp)가 창 폭에 맞춰 줄인다(가운데 420px·오른쪽 270px 은 남김, 250~900px). 창 크기
   이벤트에 기대지 말 것 — 에뮬레이션으로 창을 줄이면 resize 이벤트 없이 목록이 화면을 다 덮었다. 이미지 보기에서는

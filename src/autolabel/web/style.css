@@ -198,10 +198,19 @@ body.list-resizing, body.list-resizing * { cursor: col-resize !important; user-s
 .sec-head { cursor: pointer; user-select: none; }
 .sec-head:hover { background: var(--bg-3); }
 .sec-head .caret { width: 9px; color: var(--fg-dim); flex: none; }
+/* 머리는 한 줄로 (2026-11-15) — 박스 칸의 개수 글이 길어지면('29개 · 가릴 영역 12') 좁은 칸에서 제목이 '박/스' 로, 단추가
+   두 줄로 꺾였다. 제목·단추는 그대로 두고 개수 글(.dim)만 말줄임으로 줄인다(전체는 app.js 가 title 에 둔다) */
+.sec-head { white-space: nowrap; }
+.sec-head .dim { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sec-head .btn { flex: none; padding: 3px 7px; }
+/* 박스 머리는 간격을 조금 좁힌다 — 270px 칸에서 '29개 · 가릴 영역 12' 가 4px 모자라 말줄임됐다(1600×1257 실측 106/102px) */
+.sec[data-sec="boxes"] .sec-head { gap: 4px; }
 .sec.collapsed .sec-body { display: none; }
 .sec.grow { flex: 1; }
 .sec.grow.collapsed { flex: none; }
-.sec.grow .sec-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* :not(.collapsed) 가 없던 때는 이 줄의 display: flex 가 위 '접으면 display: none' 을 이겨(같은 무게·뒤에 온 줄) **박스 칸만
+   접히지 않았다** — 머리의 ▸ 만 바뀌고 목록은 그대로였다 (2026-11-15 사용자 화면, 접기를 넣은 11-04 부터) */
+.sec.grow:not(.collapsed) .sec-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 박스 칸은 남는 높이를 갖되 **머리(44px) + 네 줄(23px씩) 아래로는 줄지 않는다** (2026-11-15). flex: 1 은 바탕 높이가 0 이라, 위 칸들과
    변경 내역(최대 38%)이 높이를 다 쓰면 이 칸이 0 으로 줄어 넘친 '박스' 머리가 바로 아래 '변경 내역' 머리 위에 겹쳐 그려졌다
    (사용자 화면 — 클래스·태그·템플릿을 다 편 채 H). 그래도 다 못 담는 낮은 창에서는 오른쪽 칸을 통째로 굴린다 — 전에는
@@ -521,6 +530,8 @@ body.list-resizing, body.list-resizing * { cursor: col-resize !important; user-s
 }
 .hist-list:has(li:nth-child(3)) { min-height: 120px; }
 .hist-list:not(:has(li:nth-child(3))) { flex-shrink: 0; }
+/* 박스 칸을 접으면 남는 높이를 내역이 다 쓴다(38% 한도를 푼다 — 접어 둔 자리가 빈칸으로 남지 않게) */
+.sec.grow.collapsed ~ .hist-list { max-height: none; }
 .hist-list li {
   display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; align-items: center;
   padding: 5px 10px; border-bottom: 1px solid var(--bg-3); font-size: 11px;
