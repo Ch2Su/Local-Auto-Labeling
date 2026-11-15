@@ -173,6 +173,23 @@
     칸·크게 보기 그림은 `draggable=false`, `#cap-grid`·`#cap-preview` 의 dragstart 는 막는다. 끌기가 없으면 끌었다 놓은 것이
     클릭이 되므로 `capWasDrag`(누른 곳에서 6px 넘게)면 칸 클릭(넣기/빼기)과 크게 보기 바깥 클릭(닫기)을 버린다 — 칸 클릭에
     새 처리를 더하면 이 검사 뒤에 둘 것. 밖에서 끌어온 영상 파일은 그대로 받는다.
+- **데이터 점검 보기 (2026-11-15 사용자 요청 — `health.py`·`web/health.js`, 사용법은 README '데이터 점검')** — 같은 페이지의 네
+  번째 보기(`setView('health')`·`body.view-health`). **읽기만 한다**: `GET /api/health?scope=approved|all&masked=drop|keep&imgsz=`
+  와 `GET /api/health/heatmap?…&cls=&camera=&cell=x,y` 둘뿐이고, `store.health_snapshot`(읽기 트랜잭션 하나)이 준 줄을
+  `health.report`·`heatmap` 이 센다(파일은 열지 않는다 — 141장 0.02초, 캐시 없음, 열 때마다 새로).
+  - **가릴 영역이 반 이상 덮은 박스는 기본으로 어느 수치에도 넣지 않는다**(`health.masked_out` — 학습 세트의
+    `masks.split_boxes` 와 같은 판정). 그날 DB 는 승인 박스 1,277개 가운데 619개가 그런 박스였다(영역으로 덮은 자리에 자동 라벨
+    박스가 남는다) — 640 입력에서 짧은 변 32px 미만이 넣고 세면 79%, 빼면 62% 다. **이 DB 의 박스를 SQL 로 바로 세어 말할
+    때도 가려진 박스를 뺐는지 밝힐 것**(11-15 에 내가 79% 를 그냥 말했다).
+  - 박스 크기는 긴 변을 imgsz 에 맞췄을 때의 짧은 변(`short_side`)이다. DB 의 원시 크기로 세서 EXIF 로 돌려 보는 그림은
+    어긋난다(파일을 열어야 알 수 있어 그대로 뒀다). 클래스의 `units` 는 분할이 통째로 옮기는 단위(카메라 → `grp` → 한 장)이고
+    3 미만이면 알린다. '눈여겨볼 것'(`_notes`)에는 숫자로 확인되는 것만 넣는다 — 많다·적다 같은 판단은 넣지 말 것.
+  - 눌러 넘기기: 클래스·카메라·태그·분할은 왼쪽 필터를 그 조건 하나로 바꾼다(`hcOpenFiltered` — `S.filter*`·`S.tagF`·칸 값을
+    고치고 `reloadList` → `setView('gallery')`. **목록 필터를 새로 만들면 여기서도 풀 것**). 객체 수 막대·히트맵 칸은 id
+    목록으로 연다(`openIds`) — 목록 API 가 GET `?ids=` 라 서버가 `health.ID_CAP`(1,000)개까지만 싣는다.
+  - 키: app.js keydown 이 `VIEW === "health"` 면 아무 단축키도 넘기지 않는다(V 도) — 영상 캡처처럼 숨은 라벨링에 Space 승인이
+    먹으면 안 된다. 응답은 요청 번호(`H.seq`·`H.heatSeq`)로 마지막 것만 쓴다. 수치의 뜻을 바꾸면 health.py 머리말·README·화면
+    문구(index.html 의 `title`)를 함께 고칠 것.
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
   가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
   모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).
@@ -251,3 +268,8 @@
   요청은 `Sec-Fetch-Site` 가 same-origin·none 이 아니거나 `Origin` 이 Host 와 다르면 403, Host 가 루프백·bind 주소가 아니면 400
   (`--host 0.0.0.0` 이면 Host 는 안 본다). 헤더 없는 요청(urllib·curl)은 통과한다. **TestClient 는 `base_url="http://127.0.0.1:7860"`**
   으로(기본 testserver 는 400). 엔드포인트의 `-> dict` 반환 주석은 지우지 말 것 — 그 덕에 결과의 NaN 이 null 로 나간다.
+- **오류 응답(4xx·5xx)은 `Cache-Control: no-store` 로 나간다 (11-15, `no_cache_web` 미들웨어).** 크롬은 캐시 헤더가 없는 410 을
+  기한 없이 캐시한다 — `--config` 로 하나만 띄운 시험 서버에서 '원본 파일이 사라졌습니다'(410)가 파일이 돌아온 뒤에도 그 썸네일
+  주소에 남았다(같은 주소가 캐시로는 410, 캐시를 건너뛰면 200. 썸네일 주소에는 `?v=` 가 없다). 탭으로 띄운 서버는 경로가
+  `/p/<이름>/api/…` 라 그 전에도 no-cache 가 붙어 있었다. 파일이 없을 때의 응답 코드를 바꾸거나 캐시 헤더를 직접 다는 길을
+  만들면 `tests/test_server.py` 의 두 테스트를 볼 것.

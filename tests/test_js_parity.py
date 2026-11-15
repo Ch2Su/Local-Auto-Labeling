@@ -207,8 +207,8 @@ def js(node, tmp_path_factory) -> dict:
 # ----------------------------------------------------------------- 견주기
 
 def test_web_scripts_parse(node):
-    """화면 스크립트 셋이 문법 오류 없이 읽히는가 — 하나라도 깨지면 검수 화면이 통째로 안 뜬다."""
-    for name in ("app.js", "gallery.js", "capture.js"):
+    """화면 스크립트들이 문법 오류 없이 읽히는가 — 하나라도 깨지면 검수 화면이 통째로 안 뜬다."""
+    for name in ("app.js", "gallery.js", "capture.js", "health.js"):
         done = subprocess.run([node, "--check", str(WEB / name)], capture_output=True, text=True, encoding="utf-8")
         assert done.returncode == 0, f"{name}:\n{done.stderr}"
 

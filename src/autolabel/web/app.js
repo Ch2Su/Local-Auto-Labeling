@@ -3705,14 +3705,17 @@ async function setView(v) {
   if (v === VIEW) return;
   if (VIEW === "gallery") galleryHide();
   if (VIEW === "capture") captureHide();
+  if (VIEW === "health") healthHide();
   VIEW = v;
   document.body.classList.toggle("view-gallery", v === "gallery");
   document.body.classList.toggle("view-capture", v === "capture");    // 영상 캡처 (2026-11-10, capture.js)
+  document.body.classList.toggle("view-health", v === "health");      // 데이터 점검 (2026-11-15, health.js)
   document.querySelectorAll("#view-switch .seg-btn").forEach((b) => b.classList.toggle("on", b.dataset.view === v));
   try { localStorage.setItem(VIEW_KEY, v); } catch { /* 저장 못 해도 그만 */ }
   closeMenus();
   if (v === "gallery") await galleryShow();
   else if (v === "capture") await captureShow();
+  else if (v === "health") await healthShow();
   else {
     resizeCanvas();
     markCurrent();
@@ -3794,6 +3797,8 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && document.querySelector(".menu-list:not(.hidden)")) { closeMenus(); return; }
   // 영상 캡처(capture.js)에서는 키를 모두 그쪽으로 — V 도(보기를 바꾸지 않는다). 숨은 라벨링에 Space 승인이 먹으면 안 된다
   if (VIEW === "capture") { captureKey(e); return; }
+  // 데이터 점검(health.js)은 키를 쓰지 않는다 — 숨은 라벨링에 Space(승인)·S·Q 가 먹지 않게 여기서 끝낸다(V 도)
+  if (VIEW === "health") return;
   // V: 라벨링 ↔ 이미지 보기. 이미지 보기에서는 키를 그쪽(gallery.js)에 넘긴다 — Space 가 뒤에 숨은
   // 라벨링 이미지를 승인하면 안 된다 (2026-11-04)
   if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "v" || e.key === "V" || e.key === "ㅍ")) {
@@ -3946,7 +3951,7 @@ async function loadProjects() {
     // 지난번에 이미지 보기·영상 캡처에서 닫았으면 그대로 연다(#ids= 로 연 때는 라벨링 그대로)
     let last = null;
     try { last = localStorage.getItem(VIEW_KEY); } catch { /* 없으면 라벨링 */ }
-    if (last === "gallery" || last === "capture") await setView(last);
+    if (last === "gallery" || last === "capture" || last === "health") await setView(last);
   } catch (err) {
     toast(`초기화 실패: ${err.message}`, true);
   }

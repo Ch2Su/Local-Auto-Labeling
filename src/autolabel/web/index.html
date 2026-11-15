@@ -20,6 +20,7 @@
     <button class="seg-btn on" data-view="label" title="라벨링 — 한 장씩 박스를 고치고 승인합니다 (V)">라벨링</button>
     <button class="seg-btn" data-view="gallery" title="이미지 보기 — 여러 장을 한눈에 보고 골라서 태그·도메인을 한꺼번에 바꿉니다 (V)">이미지 보기</button>
     <button class="seg-btn" data-view="capture" title="영상 캡처 — 영상 파일을 불러와 몇 초마다 한 장 뽑고, 넣을 것만 골라 데이터(미라벨)로 넣습니다">영상 캡처</button>
+    <button class="seg-btn" data-view="health" title="데이터 점검 — 클래스 균형·박스 크기·이미지당 객체 수·카메라별 수·박스 위치를 한 화면에서 봅니다. 읽기만 합니다">데이터 점검</button>
   </div>
 
   <div class="counts" id="counts"></div>
@@ -465,6 +466,79 @@
     </div>
   </section>
 
+  <!-- ── 데이터 점검 (2026-11-15 사용자 요청, health.js · 서버 health.py) ── 지금 데이터가 어떻게 생겼는지 한 화면으로:
+       클래스 균형(카메라 수·분할별 몫), 학습 입력에서의 박스 크기, 이미지당 객체 수, 박스 위치 히트맵, 카메라별 표.
+       DB 를 읽기만 한다. 막대·줄·칸을 누르면 그 이미지들을 이미지 보기로 연다 -->
+  <section class="health" id="health">
+    <div class="hc-bar">
+      <b>데이터 점검</b>
+      <label class="hc-ctl" title="무엇을 셀지 — 승인만(학습에 들어가는 이미지) 또는 휴지통만 뺀 전부(검수 대기의 자동 라벨 박스도 들어갑니다)">범위
+        <select id="hc-scope">
+          <option value="approved">승인만</option>
+          <option value="all">휴지통만 빼고 전부</option>
+        </select></label>
+      <label class="hc-ctl" title="가릴 영역이 넓이의 반 이상을 덮은 박스는 학습 라벨에서 빠집니다(DB 에는 그대로). 빼고 세면 학습이 보는 것과 같고, 넣고 세면 DB 의 박스 전부입니다">가려진 박스
+        <select id="hc-masked">
+          <option value="drop">빼고 셈 (학습과 같게)</option>
+          <option value="keep">넣고 셈 (DB 전부)</option>
+        </select></label>
+      <label class="hc-ctl" title="박스 크기를 잴 학습 입력 크기 — 그림의 긴 변을 여기에 맞췄을 때 박스의 짧은 변이 몇 px 인지로 셉니다. 해상도를 올리면 작은 박스가 얼마나 줄어드는지 볼 때 바꿉니다">입력 크기
+        <select id="hc-imgsz"></select></label>
+      <button id="hc-reload" class="btn btn-sm" title="DB 를 다시 읽어 셉니다">↻ 새로 고침</button>
+      <span id="hc-stamp" class="dim"></span>
+    </div>
+    <div class="hc-body" id="hc-body">
+      <div class="hc-tiles" id="hc-tiles"></div>
+      <ul class="hc-notes" id="hc-notes"></ul>
+
+      <div class="hc-card">
+        <div class="hc-h">클래스 균형 <span class="dim">— 줄을 누르면 그 클래스가 있는 이미지를 이미지 보기로</span></div>
+        <div id="hc-classes"></div>
+      </div>
+
+      <div class="hc-two">
+        <div class="hc-card">
+          <div class="hc-h">박스 크기 <span class="dim" id="hc-size-sub"></span></div>
+          <div id="hc-sizes"></div>
+        </div>
+        <div class="hc-card">
+          <div class="hc-h">이미지당 객체 수 <span class="dim">— 막대를 누르면 그 이미지들을</span></div>
+          <div id="hc-counts"></div>
+        </div>
+      </div>
+
+      <div class="hc-card">
+        <div class="hc-h">박스 위치 <span class="dim">— 박스 중심이 놓인 자리. 칸을 누르면 그 자리에 박스가 있는 이미지를</span></div>
+        <div class="hc-heat-ctl">
+          <select id="hc-heat-cls" title="클래스로 거릅니다"></select>
+          <select id="hc-heat-cam" title="카메라로 거릅니다 — 고르면 그 카메라의 가장 새 그림을 바탕에 흐리게 깝니다"></select>
+          <span id="hc-heat-info" class="dim"></span>
+        </div>
+        <div class="hc-heat" id="hc-heat">
+          <img id="hc-heat-bg" alt="" draggable="false">
+          <canvas id="hc-heat-canvas" width="960" height="540"></canvas>
+          <div id="hc-heat-tip" class="hc-tip hidden"></div>
+        </div>
+      </div>
+
+      <div class="hc-card">
+        <div class="hc-h">카메라 <span class="dim">— 줄을 누르면 그 카메라의 이미지를 이미지 보기로</span></div>
+        <div id="hc-cameras"></div>
+      </div>
+
+      <div class="hc-two">
+        <div class="hc-card">
+          <div class="hc-h">태그 <span class="dim">— 줄을 누르면 그 태그가 붙은 이미지를</span></div>
+          <div id="hc-tags"></div>
+        </div>
+        <div class="hc-card">
+          <div class="hc-h">분할 · 도메인 · 이미지 크기</div>
+          <div id="hc-misc"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
 </main>
 
 <div id="toast" class="toast hidden"></div>
@@ -483,5 +557,6 @@
 <script src="app.js"></script>
 <script src="gallery.js"></script>
 <script src="capture.js"></script>
+<script src="health.js"></script>
 </body>
 </html>

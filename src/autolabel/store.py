@@ -1477,6 +1477,32 @@ class Store:
             old.unlink()
         return dst
 
+    def health_snapshot(self, *, approved_only: bool = True) -> dict:
+        """데이터 점검(health.py, 2026-11-15)이 읽는 것을 **한 시점에서** 한 번에: 이미지 줄·박스·가릴 영역·태그 수.
+
+        읽기만 한다. approved_only 면 승인 이미지만, 아니면 휴지통만 뺀다. 여러 SELECT 가 같은 상태를 보게 BEGIN 으로
+        읽기 트랜잭션을 연다(WAL — 도는 사이 검수 화면이 저장해도 박스와 이미지 줄이 어긋나지 않는다).
+        """
+        where = "i.status = 'approved'" if approved_only else "i.status != 'trashed'"
+        with self.connect() as con:
+            con.execute("BEGIN")
+            images = [dict(r) for r in con.execute(
+                "SELECT i.id, i.width, i.height, i.status, i.split, i.camera, i.domain, i.captured_at, i.grp"
+                f" FROM images i WHERE {where} ORDER BY i.id")]
+            boxes = [tuple(r) for r in con.execute(
+                "SELECT b.image_id, b.cls, b.cx, b.cy, b.w, b.h FROM boxes b JOIN images i ON i.id = b.image_id"
+                f" WHERE {where} ORDER BY b.image_id, b.id")]
+            masks = [tuple(r) for r in con.execute(
+                "SELECT m.image_id, m.x1, m.y1, m.x2, m.y2 FROM masks m JOIN images i ON i.id = m.image_id"
+                f" WHERE {where} ORDER BY m.image_id, m.id")]
+            tags = [{"id": int(r[0]), "name": r[1], "n": int(r[2])} for r in con.execute(
+                "SELECT t.id, t.name, (SELECT COUNT(*) FROM image_tags it JOIN images i ON i.id = it.image_id"
+                f"  WHERE it.tag_id = t.id AND {where}) FROM tags t ORDER BY t.name COLLATE NOCASE, t.id")]
+            untagged = int(con.execute(
+                f"SELECT COUNT(*) FROM images i WHERE {where}"
+                " AND NOT EXISTS (SELECT 1 FROM image_tags t WHERE t.image_id = i.id)").fetchone()[0])
+        return {"images": images, "boxes": boxes, "masks": masks, "tags": tags, "untagged": untagged}
+
     def class_box_counts(self) -> dict[int, dict[str, int]]:
         """클래스별 박스 수를 이미지 상태별로 센다.
 

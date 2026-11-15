@@ -180,7 +180,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 - 테스트의 `cfg`(`tests/conftest.py`)는 `data.*` 경로를 전부 임시 폴더의 절대경로로 적는다. 새 경로 설정을 쓰는 코드를 시험하면
   거기에도 넣을 것 — 빼면 `config.resolve` 가 저장소의 `data/` 를 가리킨다.
 - `tests/test_js_parity.py` 가 '고치면 둘 다' 인 식(`maskCover`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`capName`·
-  `MASK_MAX`·`MASK_DROP`·`MASK_SAME`)을 node 로 돌려 Python 과 견주고, 화면 스크립트 셋의 문법도 본다. JS 선언을 글자로
+  `MASK_MAX`·`MASK_DROP`·`MASK_SAME`)을 node 로 돌려 Python 과 견주고, 화면 스크립트(app·gallery·capture·health)의 문법도 본다. JS 선언을 글자로
   떼므로(맨 왼쪽 `function 이름(` … 맨 왼쪽 `}`, 한 줄 `const`) 그 모양을 바꾸면 테스트의 규칙도 맞춘다. 짝이 새로 생기면 거기에 더할 것.
 - `tests/test_js_nav.py`(11-12)는 같은 규칙으로 app.js 의 이미지 넘기기(`step`·`imageLoading`·`openImage`·`loadImage`·
   `loadImageNow`)를 떼어 `tests/nav_harness.js` 에서 **그대로** 돌린다 — 키 반복·서버 응답·사진 도착만 가짜 시계로 일으키고,
@@ -476,6 +476,10 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   파일(폴더·이름 앞머리)·DB 경로·카메라를 함께 바꾸고 묶음(`grp`)을 비운다. 분할이 정해진 이미지는 같은 분할의 카메라로만 가고
   (아니면 409), 작업 큐에서 돈다. 옮긴 기록은 `backups/camera_moves.jsonl`. **DB 의 `camera` 만 SQL 로 바꾸지 말 것** — 파일은 옛
   카메라 폴더에 남아 정리(tidy)·분할 묶음이 어긋난다.
+- **데이터 점검 보기(11-15 사용자 요청, `health.py`·`web/health.js`)** — 클래스 균형(카메라 수·분할별 몫)·학습 입력에서의 박스
+  크기·이미지당 객체 수·박스 위치 히트맵·카메라 표를 한 화면에. DB 를 읽기만 한다. **가릴 영역이 반 이상 덮은 박스는 기본으로
+  세지 않는다**(학습 라벨에서 빠지는 박스 — 11-15 의 DB 는 승인 박스 1,277개 중 619개). 데이터의 박스 수·크기를 말할 때는
+  이 화면(또는 `health.report`)의 수치를 쓰고, SQL 로 바로 셌으면 가려진 박스를 뺐는지 밝힐 것.
 - 코드를 고친 뒤에는 검수 서버를 다시 켜야 반영된다. TestClient 는 `base_url="http://127.0.0.1:7860"`.
 
 ---
@@ -486,7 +490,7 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
 **yolo26m**(8클래스 첫 학습), s 는 **`predict.imgsz` 640 이 정점**(960·1280 은 낮다), close_mosaic 은 세 번 연속 이득이 없었다
 (s 마지막 30 두 번, m 마지막 10 은 −0.010).
 
-3. **미검토 제안**(아래 수치는 11-10 에 비운 옛 데이터로 잰 것 — 새 데이터에서는 다시 잴 것). 640 입력에서 박스의 23.3% 가 32px 미만이다. 학습 자체를 960 으로 올리는 것은 s 로는 해 보지 않았다 —
+3. **미검토 제안**(아래 수치는 11-10 에 비운 옛 데이터로 잰 것 — 새 데이터에서는 다시 잴 것). 640 입력에서 박스의 23.3% 가 32px 미만이다(새 풀 프레임 데이터는 11-15 에 승인 141장·학습에 남는 박스 658개 기준 짧은 변 32px 미만이 62%, 1280 입력이면 36% — 검수 화면 '데이터 점검'. 옛 수치와 재는 식이 같은지는 확인하지 않았다). 학습 자체를 960 으로 올리는 것은 s 로는 해 보지 않았다 —
    해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). SAHI 식 타일 추론은 `tools/test_tiles.py` 로 재 봤다(11-03, visible-3·CCTV test) — mAP50-95 는 +0.035\~0.038 이지만 같은 conf 에서 FP 가 늘고(대부분 라벨 누락이 아니라 진짜 오검출), FP 를 맞추면 이득이 16px 미만 객체(+4.5pt)로 좁혀진다 — 타일↔통째 사이에만 NMS IoU 0.3 을 걸면 F1 이 통째와 같고(0.890) 재현율 +1.8pt·mAP +0.035(CCTV)다(표·한계는 docs/experiments.md '타일 추론' — 그 CCTV 는 11-04 전 규칙으로 가른 것이라, 다시 잴 때는 손 분류 도메인으로 바뀐다). **11-10 에 그 조합을 자동 라벨링의 선택지로 넣었다**(사용자 제안 — 메뉴 '자동 라벨링 (타일)'·`label --tiles`, `src/autolabel/tiling.py` 를 test_tiles 와 함께 쓴다. 기본 자동 라벨링·P 는 통째 그대로). 새 데이터에 test 가 생기면 통째와 다시 견줄 것.
 4. **8클래스 학습 — 11-08 에 한 번 했고(yolo26m, `models/best_y26m_8cls.pt`) 같은 날 운영 가중치로 올렸다(사용자 결정).** 그 전
    운영 visible-3 은 pickup 을 모르고 car 에 옛 van 이 섞였다. test 749장에서 새 m 은 visible-3 보다 모든 클래스가 높고(pickup 뺀
