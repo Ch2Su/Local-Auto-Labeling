@@ -14,6 +14,12 @@
 - **저장은 한 번에 하나만 돈다**(`S.saving`·`S.rev`). 저장이 실패하면 이미지를 넘기거나 승인하지 않는다(`saveBeforeLeaving`).
   응답을 기다리는 곳(SAM·예측·이미지 로드·변경 내역)은 **요청한 이미지 id 를 붙잡아 두고 바뀌었으면 결과를 버린다** — 새
   비동기 호출을 넣을 때도 그렇게 할 것.
+  - **목록을 바꾸는 길도 저장이 먼저다 (2026-11-16)** — `reloadList`(필터·정렬·묶음 크기 칸)·`openIds`·데이터 점검의
+    `hcOpenFiltered`. 전에는 목록부터 받고 첫 장을 열 때에야 저장을 봐서, 저장이 거절되면(test 이미지의 가릴 영역 409·잘못된 박스
+    422) 목록은 새 조건인데 가운데에는 그 목록에 없는 옛 이미지가 남았다. 못 하면 목록을 그대로 두고 칸을 **목록을 받았을 때의
+    조건**(`S.listAt` — `loadImageList` 가 받을 때마다 `listControls()` 로 적는다)으로 되돌린다(`setListControls`). 목록을 다시
+    받는 새 길은 `reloadList` 를 거치고, 필터 칸을 새로 만들면 `filterState`·`setFilters` 에 넣을 것(안 넣으면 되돌릴 때 빠진다).
+    `tests/test_js_filters.py` 가 이 함수들을 그대로 돌린다.
 - 여러 장을 연달아 고친 뒤에는 **박스가 줄어든 저장을 확인할 것**(상단 '변경 기록' 이나 `GET /api/history?shrunk=1`).
 - **박스를 바꾸는 길은 전부 `store._replace_boxes` 를 지난다**(변경 이력 `box_history` 에 그 이미지의 박스 목록 전후를 JSON 으로
   남긴다). 새 경로도 그걸 거치게 하고, `_write_lock` 은 **부르는 쪽이** 쥔다(안에서 다시 잡으면 멈춘다).
@@ -35,8 +41,10 @@
   DB `masks` 표(정규화 xyxy, EXIF 회전을 적용한 화면 기준)에만 있고 **원본 그림은 그대로**다. 학습 세트(`trainer.build_dataset`)와
   이미지를 함께 내보내기(`export_yolo`)만 그 자리를 회색 114 로 칠한 JPEG 을 쓰고, 영역들의 합집합이 박스 넓이의 반 이상을 덮는
   박스는 그 라벨 파일에서만 뺀다(DB 박스는 그대로). **test 는 칠하지 않는다** — 서버가 test 이미지(분할 test·test 고정 카메라)에
-  영역을 받지 않고(409, 지우기만 받는다) 학습 세트도 test 분할은 원본 그대로다. 원본을 직접 읽는 도구(test_baseline·label_qa·
-  test_tiles 등)는 영역을 모른다.
+  영역을 받지 않고(409, 지우기만 받는다) 학습 세트도 test 분할은 원본 그대로다. 원본을 직접 읽는 도구(test_baseline·
+  test_tiles 등)는 영역을 모른다. **`tools/label_qa.py` 는 11-16 부터 영역을 본다** — 반 이상 덮인 라벨과 예측을 견주지
+  않는다(학습 세트와 같은 `masks.drops`·`applies_to`, 전부 보려면 `--keep-masked`). 그날 실제 DB(사본)로 재니 후보가 162건 →
+  81건이 됐고, 모델이 모르는 클래스의 라벨도 견주지 않게 하니(아래 '예측 비교') 53건이 됐다.
   - 저장(PUT boxes)의 `masks` 는 **그 화면에서 영역을 손댄 뒤로만** 싣는다(`S.masksTouched`) — 안 실으면(옛 화면 포함) 서버가
     그대로 둔다. 영역이 바뀐 저장은 박스가 그대로여도 이력에 남고(`box_history.masks_before·masks_after`, 박스만 바뀐 줄은 NULL),
     되돌리기는 그 줄에 영역이 있을 때만 영역도 되돌린다. 되돌리기(Ctrl+Z) 한 칸은 박스와 영역을 함께 쌓는다.
@@ -58,17 +66,23 @@
     같은 자리 판정은 `masks.same_rect` — 네 좌표의 차가 모두 `SAME`(7.5e-8) 이하(2026-11-12 에 소수 7자리 반올림 키
     `mask_key` 에서 바꿨다: 픽셀에 딱 맞춘 2560·1280 폭 좌표가 반올림 경계에 걸려 화면을 한 번 오가면 다른 자리가 됐다 — 이유·
     수치는 masks.py 의 `SAME`). 더하기는 같은 자리를 건너뛰고(`masks.merge`), 빼기는 같은 자리만 뺀다(`masks.subtract`), 영역이
-    '바뀌었나' 는 `same_rects`. 화면의 `sameRect`·`MASK_SAME` 이 같은 식이다 — 고치면 둘 다. 더하기는 test·화면 비율이 1% 넘게 다른 그림(DB 크기로
-    먼저 보고 어긋날 때만 `display_size` 로 연다)·한도(500개) 넘김을 건너뛴다. 화면은 적용 직전에 목록을 다시 받는다(`freshMaskTemplate`).
+    '바뀌었나' 는 `same_rects`. 화면의 `sameRect`·`MASK_SAME` 이 같은 식이다 — 고치면 둘 다. 더하기는 test·화면 비율이 1% 넘게 다른 그림·한도(500개) 넘김을
+    건너뛴다. **비율은 장마다 파일을 열어 EXIF 회전을 적용한 화면 크기로 본다**(`_display_ratio`, 11-16 — 전에는 DB 의 원시 비율이
+    맞으면 파일을 안 열어서, 16:9 로 찍어 90도 돌려 보는 사진에 영역이 엉뚱한 자리로 들어갔다. 파일을 못 열면 DB 크기로 보고
+    그것도 어긋나면 unreadable. 사본 서버 실측: 141장 더하기 0.86초). 화면은 적용 직전에 목록을 다시 받는다(`freshMaskTemplate`).
   - `_replace_boxes` 는 **박스가 그대로면(같은 `_box_key` 목록) boxes 행을 지우고 다시 넣지 않는다**(2026-11-10) — 영역만 바꾸는
     저장·템플릿 적용에서 박스 행 id 가 그대로 남는다. 이력은 전과 같이 남긴다.
 - DB 자동 백업(`store.backup_daily`)은 `<DB 폴더>/backups/` 에 하루 한 번, 최근 `backup.keep`(14)개 — 그 이름 꼴의 파일만 지운다.
   **시험 서버는 `backup.keep: 0` 으로 끌 것.**
 - 같은 자리 일괄 수정(`store.same_place` → `set_class_bulk`)은 적용 때 다시 찾아 미리 본 수와 다르면 409, 묶음째 되돌리기는 그
-  뒤 손대지 않은 이미지만 되돌린다. 묶음(grp)이 정해지기 전의 새 이미지는 쓸 수 없다.
+  뒤 손대지 않은 이미지만 되돌린다. 묶음(grp)이 정해지기 전의 새 이미지는 쓸 수 없다. '변경 기록' 의 묶음 목록
+  (`store.batches(limit)`)은 **일괄 수정(source bulk)을 `limit` 건** 싣고 그보다 새로운 다른 줄(되돌리기 revert)은 전부 싣는다
+  (11-16 — 전에는 둘을 함께 30줄로 잘라, 되돌린 묶음이 많을수록 일괄 수정이 덜 보였다). 화면은 revert 줄로 `되돌림` 을 표시한다.
 - **예측 비교(P)** 는 운영 가중치로 한 장 추론만 하고 DB 에 쓰지 않는다(비교는 브라우저 `computeFindings`, 규칙은
-  `tools/label_qa.py` 와 같고 예측 하한만 다르다 — label_qa 0.10, P 는 `predict.conf` 0.25). 모델이 모르는 클래스(11-08 전 운영 visible-3 은
-  pickup)는 비교하지 않는다. 올릴 때 빈 이미지로 예열하는데, **자동 라벨링(`AutoLabeler`)은 예열하지 않는다** — 첫 추론이 CUDA
+  `tools/label_qa.py` 의 `analyze_image` 와 같고 예측 하한만 다르다 — label_qa 0.10, P 는 `predict.conf` 0.25. **고치면 둘 다**).
+  모델이 모르는 클래스(지금 운영 8클래스 모델의 responder·cone)의 라벨은 비교하지 않는다 — 어느 클래스 예측과도 짝이 되고
+  `class`·`unseen` 으로 내지 않는다. label_qa 는 11-16 까지 이 규칙이 빠져 있었다(모델이 아는 클래스를 `meta.json` 의
+  `model_classes` 로 남기고 `--reuse` 가 읽는다). 가릴 영역이 반 넘게 덮은 자리도 둘 다 견주지 않는다. 올릴 때 빈 이미지로 예열하는데, **자동 라벨링(`AutoLabeler`)은 예열하지 않는다** — 첫 추론이 CUDA
   초기화로 길어지면 NMS 시간 제한에 걸려 검출이 'NMS time limit exceeded' 경고만 남기고 잘릴 수 있다(한 번 봤고 조건은 모른다).
 - **타일 추론(2026-11-10, `tiling.py`)** 은 자동 라벨링의 선택지다(`AutoLabeler.run(tiles=True)` ← `PredictIn.tiles` ← 메뉴
   '자동 라벨링 (타일)', CLI `label --tiles`, 설정 `predict.tiles`). **`tools/test_tiles.py` 와 같은 함수를 쓴다** — 고치면 측정도
@@ -86,7 +100,12 @@
   - **작업 큐(`jobs`)를 쓰지 않는다** — 학습 중에도 캡처하려고. 뽑기는 프로젝트에 한 번에 하나(`_extract_lock`, 나머지는 queued),
     넣기는 하나씩(`_commit_lock`). **넣기의 `ingest` 는 `server.ingest_lock` 을 쥔다**(`job_scan` 도 같은 잠금) — 스캔을 부르는
     새 길을 만들면 같은 잠금을 쥘 것. 정리·휴지통 비우기가 돌면 넣지 않는다(`_capture_blocker`, 409). 넣는 동안 세션은
-    `committing` 이라 다시 뽑기·닫기가 프레임을 지우지 못한다.
+    `committing` 이라 다시 뽑기·닫기가 프레임을 지우지 못한다. **`committing` 은 `session.json` 에도 남긴다(11-16)** — 옮기는
+    도중 서버가 죽으면 다시 켤 때 `_load` 가 그 상태를 보고 '넣는 도중 서버가 꺼졌습니다' 를 붙인다(전에는 메모리에서만 바꿔 그
+    안내가 한 번도 안 나왔다). 같은 영상에서 다시 넣으면 남은 프레임만 옮기고(옮긴 것은 같은 이름이라 `exists`) 자동 카메라도
+    지문으로 다시 찾는다 — 사본에서 넣기를 3장 옮긴 뒤 `os._exit` 로 죽여 보고 화면에서 확인했다(다시 넣기: 옮김 5·있음 3·
+    스캔 8장). `tests/test_capture_commit.py`. 화면 쪽 `capReset` 은 타이머뿐 아니라 들어 둔 시작 시각(`C.startPending`)도
+    버린다 — 안 버리면 넣거나 닫은 뒤 다른 보기로 갈 때 없어진 세션에 PUT 을 보냈다(`tests/test_js_capture.py`).
   - 뽑는 방식·이름은 `tools/extract_frames.py` 와 **바이트까지 같다**(11-10 에 10장 대조) — `frame_name`·`parse_start`·`small_gray`·
     `changed_pct` 를 capture.py 한 곳에 두고 extract_frames·import_roadplus 가 가져간다. 이름의 시각을 scan 이 `captured_at` 으로
     읽으니(provenance `_COMPACT`) 꼴을 바꾸면 둘 다 본다. 넣을 때 같은 이름이 있으면 덮지 않는다(`_rename` — Windows rename +
@@ -216,6 +235,13 @@
     남기는데 입력 크기 칸은 첫 응답 뒤에야 채워지므로 그 전에는 지난 값(`H.savedSize`)을 그대로 남긴다. 히트맵은 표시할 칸이
     바뀔 때만 다시 그린다(빈 칸 위에서 마우스를 움직여도 그대로). 수치의 뜻을 바꾸면 health.py 머리말·README·화면
     문구(index.html 의 `title`)를 함께 고칠 것.
+- **학습 요약의 '분할마다 박스가 없는 클래스' (11-16, `trainer.BuildReport.class_gaps` — Gemini 의 '사전 학습 게이트' 제안에서)** —
+  `build_dataset` 이 라벨 파일에 실제로 쓴 박스를 클래스·분할별로 세어(`per_split`) 요약 끝에 붙인다: train 에 없는 클래스
+  `[경고]`(배우지 못한다), val·test 에 없는 클래스와 박스가 아예 없는 클래스 `[알림]`. Windows·WSL 학습과 이어하기의 데이터셋
+  다시 만들기가 모두 `summary()` 를 찍으니 따로 부를 것이 없다. **막지는 않는다** — 드문 클래스가 한 분할에만 있는 것은 데이터가
+  적을 때 늘 있는 일이다. 최소 박스 수 같은 문턱도 두지 않았다(데이터 점검의 `_notes` 와 같이 숫자로 확인되는 것만). val 이
+  비어 train 한 장을 빌린 때(`val_borrowed`)는 val 줄을 내지 않는다. 수치는 `health.report` 의 분할별 수와 같아야 한다
+  (`tests/test_health_dataset.py`).
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
   가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
   모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).

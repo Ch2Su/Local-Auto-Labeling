@@ -43,6 +43,37 @@ class BuildReport:
     masked: int = 0             # 가릴 영역을 칠해 쓴 이미지 (masks.py)
     mask_dropped: int = 0       # 그 영역에 반 넘게 가려져 학습 라벨에서 뺀 박스
     masked_test: int = 0        # 영역이 있지만 test 라 칠하지 않은 이미지 (평가는 실제 화면 그대로)
+    classes: list[str] = field(default_factory=list)                    # DB 의 클래스 목록(박스가 없는 클래스도 알리려고)
+    per_split: dict[str, dict[str, int]] = field(default_factory=dict)  # 클래스 → {train, val, test} 라벨 파일에 쓴 박스 수
+    val_borrowed: bool = False  # val 이 비어 train 한 장을 빌려 썼다(아래 build_dataset) — val 에 없는 클래스는 따지지 않는다
+
+    def class_gaps(self) -> list[str]:
+        """학습 전에 눈여겨볼 것 (2026-11-16) — **분할마다 박스가 하나도 없는 클래스**. 숫자로 확인되는 것만 적는다.
+
+        분할이 카메라째라 드문 클래스는 한 분할에만 들어가기 쉽다(카메라 한 대에만 있는 클래스는 반드시 그렇다). 박스가 train 에
+        없으면 그 클래스는 배우지 못하고, val 에 없으면 best.pt 고르기(val mAP)에 반영되지 않고, test 에 없으면 test 점수가 없다.
+        전에는 요약이 클래스별 합계만 보여 줘서 학습이 끝난 뒤 점수표를 보고야 알았다. 검수 화면 '데이터 점검' 의 '눈여겨볼 것'
+        과 같은 내용이다 — 다만 분할은 학습을 시작할 때 정해지니, 처음 학습하는 데이터는 여기서 처음 보인다.
+        """
+        cnt = {name: self.per_split.get(name, {}) for name in [*self.classes, *(n for n in self.per_split if n not in self.classes)]}
+        total = {name: sum(c.values()) for name, c in cnt.items()}
+        out = []
+        none = [n for n in cnt if not total[n]]
+        if none:
+            out.append(f"[알림] 박스가 없는 클래스: {', '.join(none)} — 모델이 이 클래스를 내지 못합니다")
+        untrained = [n for n in cnt if total[n] and not cnt[n].get("train")]
+        if untrained:
+            where = ", ".join(f"{n}({' · '.join(f'{s} {cnt[n][s]}' for s in ('val', 'test') if cnt[n].get(s))})" for n in untrained)
+            out.append(f"[경고] train 에 박스가 없는 클래스: {where} — 이 클래스는 배우지 못합니다")
+        if not self.val_borrowed:
+            blind = [n for n in cnt if total[n] and not cnt[n].get("val")]
+            if blind:
+                out.append(f"[알림] val 에 박스가 없는 클래스: {', '.join(blind)} — best.pt 고르기(val mAP)에 반영되지 않습니다")
+        if self.test:
+            unscored = [n for n in cnt if total[n] and not cnt[n].get("test")]
+            if unscored:
+                out.append(f"[알림] test 에 박스가 없는 클래스: {', '.join(unscored)} — test 점수가 나오지 않습니다")
+        return out
 
     def summary(self) -> str:
         lines = [
@@ -64,6 +95,7 @@ class BuildReport:
             lines.append(f"  test 이미지 {self.masked_test}장의 가릴 영역은 칠하지 않았습니다 (평가는 실제 화면 그대로)")
         if self.split is not None:
             lines.append(self.split.summary())
+        lines.extend(self.class_gaps())
         return "\n".join(lines)
 
 
@@ -96,7 +128,7 @@ def build_dataset(cfg: Config, store: Store) -> BuildReport:
         raise RuntimeError("클래스 목록이 비어 있습니다. 먼저 'scan'을 실행하세요.")
 
     hardlink = bool(cfg.get("train.hardlink_images", False))
-    report = BuildReport()
+    report = BuildReport(classes=list(classes))
 
     records = store.approved_with_boxes()
     if not records:
@@ -148,6 +180,8 @@ def build_dataset(cfg: Config, store: Store) -> BuildReport:
         for b in boxes:
             name = classes[b.cls] if 0 <= b.cls < len(classes) else f"cls_{b.cls}"
             report.per_class[name] = report.per_class.get(name, 0) + 1
+            by = report.per_split.setdefault(name, {"train": 0, "val": 0, "test": 0})
+            by[split if split in by else "train"] += 1
 
     if report.train == 0:
         raise RuntimeError(
@@ -156,6 +190,7 @@ def build_dataset(cfg: Config, store: Store) -> BuildReport:
     if report.val == 0:
         # 데이터가 아주 적을 때는 학습셋 일부를 검증에도 쓴다.
         # (과적합을 감지하지는 못하지만 학습 자체는 돌아간다.)
+        report.val_borrowed = True
         (root / "labels" / "val").mkdir(parents=True, exist_ok=True)
         for p in sorted((root / "images" / "train").iterdir()):
             _link_or_copy(p, root / "images" / "val" / p.name, hardlink=hardlink)

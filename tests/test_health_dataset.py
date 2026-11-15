@@ -97,3 +97,43 @@ def test_keeping_masked_boxes_counts_the_database(cfg, store, masked):
     got = label_counts(out / "labels")
     assert sum(got.values()) == r["boxes"] == 14
     assert {row["idx"]: row["boxes"] for row in r["classes"] if row["boxes"]} == dict(got)
+
+
+# ------------------------------------------- 학습을 시작할 때의 알림 (trainer.BuildReport.class_gaps, 2026-11-16)
+
+def test_the_training_log_names_the_classes_a_split_has_no_boxes_for(cfg, store, masked, add_image):
+    """분할이 카메라째라 드문 클래스는 한 분할에만 들어가기 쉽다 — 학습 로그(요약)가 그것을 시작할 때 말한다.
+
+    전에는 요약이 클래스별 합계만 보여 줘서, 박스가 test 에만 있는 클래스(배우지 못한다)를 학습이 끝난 뒤에야 알았다.
+    수는 라벨 파일에 **실제로 쓴** 박스다(가릴 영역이 뺀 박스는 세지 않는다) — 데이터 점검의 분할별 수와 같아야 한다.
+    """
+    cone = CLASSES.index("cone")
+    only_test = add_image("cone.jpg", camera="cam-2", boxes=[box(cone, 0.9, 0.2, 0.05, 0.05)], dhash=far_hashes(5)[4], split="test")
+    path = Path(store.get_image(only_test)["path"])
+    Image.new("RGB", (1280, 720), (90, 120, 150)).save(path, quality=90)
+
+    built = build_dataset(cfg, store)
+    r = report(store)
+    for row in r["classes"]:
+        got = built.per_split.get(row["name"], {"train": 0, "val": 0, "test": 0})
+        assert got == {sp: row["split"][sp] for sp in SPLITS}, row["name"]
+
+    gaps = built.class_gaps()
+    none = next(g for g in gaps if g.startswith("[알림] 박스가 없는 클래스"))
+    assert "bicycle" in none and "scooter" in none and "cone" not in none and "car" not in none
+    assert next(g for g in gaps if g.startswith("[경고] train 에")).startswith(
+        "[경고] train 에 박스가 없는 클래스: cone(test 1) — 이 클래스는 배우지 못합니다")
+    # val 장의 차는 영역에 통째로 덮여 라벨에서 빠졌다 — val 에는 차가 없다. 라바콘도 없다
+    assert next(g for g in gaps if g.startswith("[알림] val 에")).startswith("[알림] val 에 박스가 없는 클래스: car, cone ")
+    assert not any(g.startswith("[알림] test 에") for g in gaps)             # test 에는 박스가 있는 클래스가 다 있다
+    assert all(g in built.summary() for g in gaps)                           # 학습 로그에 찍히는 요약에 들어 있다
+
+
+def test_no_val_warning_when_validation_borrows_a_training_image(cfg, store, add_image):
+    """val 이 아예 없어 train 한 장을 빌려 쓸 때는 'val 에 없는 클래스' 를 따지지 않는다(전부 없다고 나올 뿐이다)."""
+    i = add_image("one.jpg", camera="cam-0", boxes=[box(CAR)], dhash=far_hashes(1)[0], split="train")
+    path = Path(store.get_image(i)["path"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (1280, 720), (90, 120, 150)).save(path, quality=90)
+    built = build_dataset(cfg, store)
+    assert built.val_borrowed and not any("val 에" in g or "test 에" in g or "train 에" in g for g in built.class_gaps())

@@ -28,6 +28,12 @@ DB 는 읽기 전용으로 열고(`mode=ro`) 아무것도 고치지 않는다. �
 DB 는 승인 박스 1,277개 중 619개가 가려진 박스였다). test 분할 이미지는 영역을 적용하지 않으니 그대로 견준다(`masks.applies_to`).
 전부 견주려면 `--keep-masked`.
 
+**모델이 모르는 클래스의 라벨은 견주지 않는다 (2026-11-16).** 검수 화면의 예측 비교(P, app.js `computeFindings`)와 같은 규칙이다 —
+그 라벨은 어느 클래스의 예측과도 짝이 되고(그 자리의 예측을 `missing` 으로 띄우지 않게), `class`·`unseen` 후보로 내지 않는다.
+전에는 이 도구만 그 규칙이 없어서, 운영 모델(8클래스)이 모르는 responder·cone 을 그린 뒤로 responder 라벨마다
+'responder → car/truck' 이, cone 라벨마다 `unseen` 이 나왔다(그날 실제 DB 로 재 보니 후보 81건 가운데 28건). 모델이 아는
+클래스는 예측할 때 `meta.json` 의 `model_classes` 에 남기고 `--reuse` 는 그것을 읽는다(그 전에 만든 예측 폴더는 전부 아는 것으로 본다).
+
 **train 분할의 후보는 적게 나온다.** 모델이 그 라벨을 외웠기 때문이다. 거기서도
 어긋나면 오히려 강한 신호다. val·test·미배정은 학습에 안 쓴 이미지라 편향이 없다.
 어느 모델로 돌렸는지(학습 분할)에 따라 이 해석이 달라지니 `--weights` 를 바꿀 때 주의.
@@ -148,7 +154,8 @@ def predict_all(cfg: Config, weights: str, images: list[dict], classes: list[str
             if done % (args.batch * 50) < args.batch or done == len(todo):
                 print(f"  {done}/{len(todo)}", flush=True)
     (out / "meta.json").write_text(json.dumps(
-        {"weights": weights, "imgsz": imgsz, "store_conf": STORE_CONF, "date": str(date.today())},
+        {"weights": weights, "imgsz": imgsz, "store_conf": STORE_CONF, "date": str(date.today()),
+         "model_classes": sorted(set(cmap.values()))},      # 모델이 낼 수 있는 클래스(DB 번호) — 모르는 클래스의 라벨은 안 견준다
         ensure_ascii=False, indent=1), encoding="utf-8")
 
 
@@ -165,23 +172,28 @@ def iou_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return inter / np.maximum(area_a[:, None] + area_b[None, :] - inter, 1e-9)
 
 
-def analyze_image(gt_rows, rec, high, min_side):
-    """한 이미지의 후보 목록. 좌표는 원본 픽셀 xyxy."""
+def analyze_image(gt_rows, rec, high, min_side, known=None):
+    """한 이미지의 후보 목록. 좌표는 원본 픽셀 xyxy.
+
+    known 은 모델이 아는 클래스(DB 번호)의 집합 — None 이면 전부 안다. 모르는 클래스의 라벨은 어느 클래스 예측과도 짝이 되고
+    `class`·`unseen` 후보로 내지 않는다(app.js `computeFindings` 와 같은 규칙 — 고치면 둘 다).
+    """
     W, H = rec["w"], rec["h"]
     g = np.array([[(cx - w / 2) * W, (cy - h / 2) * H, (cx + w / 2) * W, (cy + h / 2) * H]
                   for _, cx, cy, w, h in gt_rows]).reshape(-1, 4)
     gc = np.array([r[0] for r in gt_rows], dtype=int)
+    g_known = np.array([known is None or int(c) in known for c in gc], dtype=bool)
     preds = sorted(rec["preds"], key=lambda p: -p[1])
     p = np.array([[x1 * W, y1 * H, x2 * W, y2 * H] for _, _, x1, y1, x2, y2 in preds]).reshape(-1, 4)
     pc = np.array([q[0] for q in preds], dtype=int)
     pf = np.array([q[1] for q in preds])
     ious = iou_matrix(p, g)
 
-    # 1) 같은 클래스끼리 신뢰도 순으로 탐욕 매칭
+    # 1) 같은 클래스끼리 신뢰도 순으로 탐욕 매칭. 모델이 모르는 클래스의 라벨은 어느 클래스 예측과도 짝이 된다
     g_matched = np.zeros(len(g), bool)
     p_matched = np.zeros(len(p), bool)
     for i in range(len(p)):
-        cand = np.where((gc == pc[i]) & ~g_matched & (ious[i] >= MATCH_IOU))[0] if len(g) else []
+        cand = np.where(((gc == pc[i]) | ~g_known) & ~g_matched & (ious[i] >= MATCH_IOU))[0] if len(g) else []
         if len(cand):
             j = cand[np.argmax(ious[i, cand])]
             g_matched[j] = p_matched[i] = True
@@ -201,7 +213,7 @@ def analyze_image(gt_rows, rec, high, min_side):
             jo = js = None
             io = is_ = 0.0
         if io >= MATCH_IOU:
-            if not g_matched[jo] and jo not in used_g:
+            if not g_matched[jo] and jo not in used_g and g_known[jo]:
                 used_g.add(jo)
                 out.append(("class", int(gc[jo]), int(pc[i]), float(pf[i]), float(io), g[jo], p[i]))
             continue            # 이미 제 클래스로 잡힌 라벨 위의 다른 클래스 가설 — 후보 아님
@@ -214,7 +226,7 @@ def analyze_image(gt_rows, rec, high, min_side):
 
     # 3) 모델이 아무것도 안 보는 라벨
     for j in np.where(~g_matched)[0]:
-        if j in used_g:
+        if j in used_g or not g_known[j]:
             continue
         side = min(g[j, 2] - g[j, 0], g[j, 3] - g[j, 1])
         if side < min_side:
@@ -335,6 +347,12 @@ def main():
         gt[image_id] = kept
 
     recs = [] if args.dup_only else [json.loads(line) for line in open(out / "preds.jsonl", encoding="utf-8")]
+    # 모델이 아는 클래스 — 예측할 때 meta.json 에 남긴 것(머리말). 없으면(옛 예측 폴더) 전부 아는 것으로 본다
+    known = None
+    if not args.dup_only and (out / "meta.json").exists():
+        listed = json.loads((out / "meta.json").read_text(encoding="utf-8")).get("model_classes")
+        known = None if listed is None else {int(c) for c in listed}
+    unknown_labels = 0
     rows = duplicate_rows(images, gt, classes)      # 라벨끼리 겹침 — 예측과 상관없이 승인 이미지 전부
     for rec in recs:
         im = images_by_id.get(rec["id"])
@@ -344,7 +362,9 @@ def main():
             kept = unmasked_preds(rec["preds"], rects[rec["id"]])
             skipped_preds += len(rec["preds"]) - len(kept)
             rec = {**rec, "preds": kept}
-        for kind, gcls, pcls, conf, iou, gbox, pbox in analyze_image(gt[rec["id"]], rec, args.high, args.min_side):
+        if known is not None:
+            unknown_labels += sum(1 for r in gt[rec["id"]] if r[0] not in known)
+        for kind, gcls, pcls, conf, iou, gbox, pbox in analyze_image(gt[rec["id"]], rec, args.high, args.min_side, known):
             ref = pbox if pbox is not None else gbox
             rows.append({
                 "kind": kind, "image_id": im["id"], "split": im["split"] or "미배정", "name": im["name"],
@@ -382,6 +402,9 @@ def main():
         print(f"가릴 영역이 있는 {len(rects)}장에서 덮인 라벨 {skipped_labels}개"
               + ("" if args.dup_only else f"·예측 {skipped_preds}개(conf ≥ {STORE_CONF})")
               + "는 견주지 않았습니다 — 학습 라벨에서 빠지는 자리입니다 (전부 보려면 --keep-masked)")
+    if known is not None and unknown_labels:
+        names = ", ".join(c for i, c in enumerate(classes) if i not in known)
+        print(f"모델이 모르는 클래스({names})의 라벨 {unknown_labels}개는 견주지 않았습니다 — 그 자리의 예측도 후보로 내지 않습니다")
     splits = ["train", "val", "test", "미배정"]
     print(f"\n{'':10}" + "".join(f"{s:>12}" for s in splits))
     print(f"{'이미지':10}" + "".join(f"{split_n[s]:>12}" for s in splits))

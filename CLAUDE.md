@@ -152,7 +152,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 | | |
 |---|---|
 | `tools/test_baseline.py` | 지금 DB 라벨로 test 를 잰다(DB 읽기 전용). `--domains` 로 전체·CCTV·드론·비CCTV·드론 제외를 한 번에 재 `runs/test_baseline/history.jsonl` 에 클래스별로 쌓고, `--history` 로 표를 본다. CCTV·드론·비CCTV 는 11-04 부터 `images.domain`(손 분류, `tools/test_tiles.py` 도 11-05 부터 같다). 모델 클래스 순서가 DB 와 다르면 멈춘다 |
-| `tools/label_qa.py` | 승인 라벨과 예측이 어긋나는 곳, 라벨끼리 겹친 곳(IoU ≥ 0.85 — `--dup-only` 면 모델 없이)을 후보 CSV·대조 시트로(DB 읽기 전용) |
+| `tools/label_qa.py` | 승인 라벨과 예측이 어긋나는 곳, 라벨끼리 겹친 곳(IoU ≥ 0.85 — `--dup-only` 면 모델 없이)을 후보 CSV·대조 시트로(DB 읽기 전용). 11-16 부터 가릴 영역이 반 이상 덮은 라벨·예측(`--keep-masked` 면 견줌)과 모델이 모르는 클래스의 라벨(지금 운영 모델의 responder·cone)은 견주지 않는다 — 그날 실제 DB 로 후보 162 → 53건 |
 | `tools/label_qa_claude.py` | missing 후보를 Claude API 로 거르는 파일럿 — API 키 필요, 아직 한 번도 호출 안 함 |
 | `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
 | `tools/import_o365.py` | Objects365 사진을 검수 대기로 넣는다(위 'Objects365') |
@@ -175,7 +175,10 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(10초 안팎. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-16 에 354개·40초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+- **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
+  `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
+  건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
 - **버그를 고치면 그 버그를 다시 내는 입력을 테스트로 남긴다** — 일회용 스크립트로 확인하고 버리지 말 것.
 - 테스트의 `cfg`(`tests/conftest.py`)는 `data.*` 경로를 전부 임시 폴더의 절대경로로 적는다. 새 경로 설정을 쓰는 코드를 시험하면
   거기에도 넣을 것 — 빼면 `config.resolve` 가 저장소의 `data/` 를 가리킨다.
@@ -193,6 +196,11 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 - `tests/test_js_views.py`(11-15)는 app.js 의 보기 표 `VIEWS`(맨 왼쪽 `const VIEWS = {` … `};`)와 `viewOf`·`setView`·
   `viewKeydown` 을 돌린다 — 표에 `key` 없는 보기를 하나 더 넣어 Space·S·V 가 숨은 라벨링으로 새지 않는지, 표의 이름이
   index.html 의 단추·style.css 와 같은지 본다(src/autolabel/CLAUDE.md '보기는 `VIEWS` 표 한 곳').
+- 11-16 에 더한 것(Gemini 리뷰 묶음 5): `tests/test_js_filters.py`(app.js `reloadList`·`clearFilters` 와 `listControls`·
+  `setListControls` — 목록을 다시 받기 전에 저장하고, 못 하면 필터 칸을 되돌리는가), `tests/test_js_capture.py`(capture.js
+  `capReset`·`capFlushStart`·`captureHide`), `tests/test_capture_commit.py`(넣는 도중 죽은 서버 — 손으로 만든 세션 폴더로),
+  `tests/test_label_qa.py`(가릴 영역·모델이 모르는 클래스 — 써 둔 `preds.jsonl` 을 `--reuse` 로). JS 쪽은 함수를 글자로
+  떼니 이름을 바꾸면 그 파일의 `PARTS` 도 맞춘다.
 - `tests/test_health_dataset.py`(11-15)는 **진짜 학습 세트(`trainer.build_dataset`)와 내보내기(`export_yolo`)를 임시 폴더에
   만들어** 라벨 줄 수를 분할·클래스별로 `health.report` 와 견준다 — 가릴 영역이 빼는 박스의 판정(`masks.drops`·`applies_to`)을
   셋 중 하나가 따로 적기 시작하면 여기서 어긋난다. 그림 파일을 실제로 쓰는 몇 안 되는 테스트다(작은 JPEG 넉 장).
@@ -523,6 +531,12 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - 새로 모은 사진은 C: 백업에 없다 — 어느 정도 쌓이면 새 날짜 폴더로 뜰 것(docs/backup.md, 먼저 물을 것).
    - 분할은 같은 장면 묶음과 카메라째로 나뉜다(위 '묶음 단위 계층화') — 카메라가 적으면 test 가 카메라 한두 대가 되니, 평가
      장면이 한쪽에 몰리지 않게 카메라를 고를 것.
+   - **11-16 에 DB 사본으로 첫 분할을 미리 돌려 봤다(진짜 DB 는 아직 미배정 — 사본 둘에서 배정이 같아 경로와는 무관하다):**
+     승인 141장·카메라 16대가 train 100 / val 20 / test 21 로 갈리는데 **val 이 카메라 한 대**이고, 라벨에 남는 박스로 val 에
+     person·responder·cone·bicycle·motorcycle·scooter 가 하나도 없고 test 에도 person·cone·bicycle·motorcycle·scooter 가 없다
+     (person 137개가 전부 train). 이대로 학습하면 그 클래스들은 best.pt 고르기·test 점수에 안 잡힌다 — **첫 학습 전에 사용자와
+     정할 것**: 평가에 쓸 카메라를 `cameras.yaml` 의 `split:` 으로 고정할지(한 번 정한 배정은 안 움직인다), 카메라를 더 모은
+     뒤 나눌지. 학습 로그의 요약 끝(`trainer.BuildReport.class_gaps`)과 데이터 점검의 '눈여겨볼 것' 이 이것을 알린다.
 6. **라벨링 모델을 DetectView 배포 모델과 떼어 무겁게 (11-10 사용자 결정 — 새 데이터의 검수가 쌓이면 준비).** 자동 라벨링·
    P·label_qa 가 쓰는 `best.pt` 는 DetectView(m 640×384 — 그쪽이 `~/rfdetr_work` 에서 따로 학습)에 맞출 필요가 없다. 근거는
    09-18 A40 비교(docs/experiments.md — s640 대조 0.6515 → l960 0.7264·x960 0.7243, 크기와 해상도를 함께 바꿔 어느 쪽 덕인지는 모름).

@@ -112,3 +112,52 @@ def test_a_database_from_before_masks_still_loads(tmp_path):
     classes, images, gt, masks = label_qa.load_db(db)
     assert (classes, len(images), len(gt[1]), dict(masks)) == (["car"], 1, 1, {})
     assert label_qa.applied_rects(images, masks) == {}
+
+
+# ---------------------------------------------------- 모델이 모르는 클래스 (2026-11-16)
+
+RESPONDER, CONE = CLASSES.index("responder"), CLASSES.index("cone")
+
+
+def found(gt_rows, preds, known=None) -> list[tuple]:
+    rec = {"w": 1280, "h": 720, "preds": preds}
+    return sorted((kind, CLASSES[g] if g >= 0 else "", CLASSES[p] if p >= 0 else "")
+                  for kind, g, p, *_ in label_qa.analyze_image(gt_rows, rec, 0.5, 24, known))
+
+
+def test_labels_of_classes_the_model_does_not_know_are_not_compared():
+    """8클래스 운영 모델은 responder·cone 을 모른다 — 그 라벨을 '클래스가 틀렸다'·'모델이 못 본다' 로 띄우지 않는다.
+
+    고치기 전에는 responder 라벨마다 'responder → car' 가, cone 라벨마다 unseen 이 나왔다(2026-11-16 의 실제 DB: 후보 81건
+    가운데 28건). 검수 화면의 예측 비교(app.js computeFindings)는 처음부터 이 규칙이었다 — 둘이 같은 규칙이어야 한다.
+    """
+    labels = [(RESPONDER, 0.3, 0.5, 0.2, 0.2),      # 견인차 — 모델은 여기를 car 로 본다
+              (CONE, 0.8, 0.8, 0.1, 0.1),           # 라바콘 — 모델은 아무것도 못 본다
+              (CAR, 0.6, 0.2, 0.2, 0.2)]            # 모델이 truck 이라고 확신하는 차 — 이것은 진짜 후보
+    preds = [[CAR, 0.9, 0.2, 0.4, 0.4, 0.6], [TRUCK, 0.8, 0.5, 0.1, 0.7, 0.3]]
+    eight = set(range(len(CLASSES))) - {RESPONDER, CONE}
+
+    assert found(labels, preds) == [("class", "car", "truck"), ("class", "responder", "car"), ("unseen", "cone", "")]
+    assert found(labels, preds, eight) == [("class", "car", "truck")]
+
+    # 모르는 클래스의 라벨 자리에서 모델이 찾은 것은 '빠진 박스' 도 아니다 — 그 라벨과 짝이 된다
+    assert found([(RESPONDER, 0.3, 0.5, 0.2, 0.2)], [[TRUCK, 0.9, 0.2, 0.4, 0.4, 0.6]], eight) == []
+    # 라벨이 없는 자리의 확신 예측은 그대로 missing 이고, 아는 클래스의 못 본 라벨도 그대로 unseen 이다
+    assert found([(RESPONDER, 0.3, 0.5, 0.2, 0.2), (CAR, 0.8, 0.8, 0.1, 0.1)], [[CAR, 0.9, 0.5, 0.1, 0.7, 0.3]], eight) == [
+        ("missing", "", "car"), ("unseen", "car", "")]
+
+
+def test_reuse_reads_the_model_classes_left_at_prediction_time(cfg, tmp_path, monkeypatch, data, capsys):
+    """예측할 때 `meta.json` 에 남긴 `model_classes` 를 `--reuse` 가 읽는다. 없는 옛 예측 폴더는 전부 아는 것으로 본다."""
+    out = tmp_path / "qa"
+    out.mkdir()
+    (out / "meta.json").write_text(json.dumps({"weights": "x.pt", "model_classes": [PERSON, TRUCK]}), encoding="utf-8")
+    rows = run(cfg, tmp_path, monkeypatch, data)
+    # 모델이 car 를 모른다 — 덮이지 않은 두 장(test·plain)의 차 라벨은 unseen 이 아니다. 사람(missing)은 그대로
+    assert kinds(rows, data) == {"train": [], "none": [], "test": ["missing"], "plain": ["missing"]}
+    assert "모델이 모르는 클래스" in capsys.readouterr().out
+
+    (out / "meta.json").unlink()
+    rows = run(cfg, tmp_path, monkeypatch, data)
+    assert kinds(rows, data)["plain"] == ["missing", "unseen"]
+    assert "모델이 모르는 클래스" not in capsys.readouterr().out
