@@ -621,6 +621,18 @@ function capRenderExtract() {
   el.classList.toggle("warn", c.state === "error" || !!c.note);
 }
 
+const CAP_PLACE_MAX = 40;     // 고르는 칸에 적는 장소의 글자 수 — 넘으면 줄인다(전체는 title)
+
+/** 카메라를 고르는 칸(영상의 카메라·고칠 것·지우기 목록)에 적을 이름 — `키 · 장소 (꼬리)` (11-17 사용자 요청: 키가 번호뿐이라
+ *  키만으로는 어느 카메라인지 알 수 없었다. 라벨링의 카메라 필터·이미지 보기의 '옮기기' 와 같은 꼴). 장소는 이 PC 의
+ *  cameras.yaml 에만 있는 글이라 화면에만 쓴다. 긴 장소(자동 카메라의 '모름 — 영상 <이름>')는 줄인다 — 고르는 칸의 펼친 목록은
+ *  가장 긴 줄만큼 넓어진다. */
+function capCamLabel(cam, tail) {
+  const place = String(cam.place || "").trim();
+  const short = place.length > CAP_PLACE_MAX ? `${place.slice(0, CAP_PLACE_MAX - 1)}…` : place;
+  return cam.key + (short ? ` · ${short}` : "") + (tail ? ` (${tail})` : "");
+}
+
 function capRenderCameras() {
   const sel = $("#cap-camera");
   const cur = C.cur ? C.cur.camera || "" : "";
@@ -630,7 +642,7 @@ function capRenderCameras() {
     // 한국(+09:00)이 아닌 카메라는 시간대를 함께 보인다 — 다른 시간대 영상의 시작 시각을 KST 로 착각하지 않게
     const tz = cam.tz && cam.tz !== "+09:00" ? `UTC${cam.tz}` : null;
     const tail = [cam.kind, cam.split ? `${cam.split} 고정` : null, tz].filter(Boolean).join(" · ");
-    opts.push(`<option value="${esc(cam.key)}" title="${esc(cam.place || "")}">${esc(cam.key)} (${esc(tail)})</option>`);
+    opts.push(`<option value="${esc(cam.key)}" title="${esc(cam.place || "")}">${esc(capCamLabel(cam, tail))}</option>`);
   }
   // 등록 파일에서 빠진 카메라를 골라 둔 영상 — 목록에 남겨 두고(넣을 때 서버가 막는다) 표시만 한다
   if (cur && !C.cameras.some((c) => c.key === cur)) opts.push(`<option value="${esc(cur)}">${esc(cur)} (등록 안 됨)</option>`);
@@ -951,7 +963,7 @@ function capCamEditOpen(key) {
   form.classList.remove("hidden");
   $("#cc-save").textContent = "고치기";
   const sel = $("#cc-target");
-  sel.innerHTML = C.cameras.map((c) => `<option value="${esc(c.key)}">${esc(c.key)}</option>`).join("");
+  sel.innerHTML = C.cameras.map((c) => `<option value="${esc(c.key)}" title="${esc(c.place || "")}">${esc(capCamLabel(c))}</option>`).join("");
   const has = (k) => k && C.cameras.some((c) => c.key === k);
   const pick = has(key) ? key : has(C.cur && C.cur.camera) ? C.cur.camera : C.cameras[0].key;
   sel.value = pick;
@@ -1174,7 +1186,8 @@ function capCamDelRender() {
     const title = (c.place || "") + (busy ? ` — 지울 수 없음: ${why}${files.length ? ` (${files.join(", ")})` : ""}` : "");
     return `<li class="${busy ? "busy" : ""}" title="${esc(title)}"><label>`
       + `<input type="checkbox" value="${esc(c.key)}"${busy ? " disabled" : checked.has(c.key) ? " checked" : ""}>`
-      + `<span class="k">${esc(c.key)}</span><span class="m">${esc(tail)}</span></label>`
+      + `<span class="k">${esc(c.key)}</span>${c.place ? `<span class="p">${esc(c.place)}</span>` : ""}`
+      + `<span class="m">${esc(tail)}</span></label>`
       + (busy ? `<span class="u">${esc(why)}</span>` : "") + "</li>";
   }).join("");
   capCamDelCount();
