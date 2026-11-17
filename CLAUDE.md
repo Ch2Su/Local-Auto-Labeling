@@ -149,28 +149,12 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 명령은 `labeler.py --help`(scan·train·label·resume·review·tidy·check·split·dupcheck·prune·purge·export·status). 보조 도구는
 `tools/` 에 있다(어느 폴더에서 돌려도 저장소의 `config.yaml`·`src/` 를 찾는다).
 
-| | |
-|---|---|
-| `tools/test_baseline.py` | 지금 DB 라벨로 test 를 잰다(DB 읽기 전용). `--domains` 로 전체·CCTV·드론·비CCTV·드론 제외를 한 번에 재 `runs/test_baseline/history.jsonl` 에 클래스별로 쌓고, `--history` 로 표를 본다. CCTV·드론·비CCTV 는 11-04 부터 `images.domain`(손 분류, `tools/test_tiles.py` 도 11-05 부터 같다). 모델 클래스 순서가 DB 와 다르면 멈춘다 |
-| `tools/label_qa.py` | 승인 라벨과 예측이 어긋나는 곳, 라벨끼리 겹친 곳(IoU ≥ 0.85 — `--dup-only` 면 모델 없이)을 후보 CSV·대조 시트로(DB 읽기 전용). 11-16 부터 가릴 영역이 반 이상 덮은 라벨·예측(`--keep-masked` 면 견줌)과 모델이 모르는 클래스의 라벨(지금 운영 모델의 responder·cone)은 견주지 않는다 — 그날 실제 DB 로 후보 162 → 53건 |
-| `tools/label_qa_claude.py` | missing 후보를 Claude API 로 거르는 파일럿 — API 키 필요, 아직 한 번도 호출 안 함 |
-| `tools/merge_class.py` | 맨 끝 클래스를 다른 클래스로 합친다(이력을 남긴다. 기본은 보기만, `--apply` 때 DB 를 먼저 뜬다. config.yaml 에서 먼저 빼야 돈다) |
-| `tools/import_o365.py` | Objects365 사진을 검수 대기로 넣는다(위 'Objects365') |
-| `tools/import_virat.py` | VIRAT 영상에서 장면마다 프레임을 뽑아 검수 대기로 넣는다 — 운영 모델 예측 + 모델이 그 자리에서 못 찾은 VIRAT 박스, 장면 = 카메라 `virat-XXYY`(docs/provenance.md 'VIRAT 가져오기'). 기본은 보기만·`--apply`, `--per-scene` 을 올려 다시 돌리면 모자란 만큼만 기존 프레임과 떨어진 곳에서 더 넣는다. 이미 넣은 검수 대기를 지금 모델로 다시 라벨링하는 것은 `--relabel`(사람이 고친 이미지는 건너뛴다, VIRAT 박스 없이는 `--model-only` — 0503 은 그렇게 했다). `cameras.yaml` 의 VIRAT 카메라에 `crop:` 이 있으면 그 영역만 쓴다(0503·0500·0101) — 이미 넣은 이미지는 `--recrop`(같은 행의 파일·크기를 바꾼다, `store.replace_file` — **돌린 뒤 검수 화면을 새로 고칠 것**: 열려 있던 옛 화면이 옛 기준 박스를 잘린 이미지에 저장할 수 있다). 이미 자른 장면을 더 좁힐 때는 `--keep-boxes`(다시 라벨링하지 않고 박스만 옮긴다 — 폭이 바뀌면 모델 예측이 달라진다). 가릴 영역이 있는 이미지는 `--recrop` 이 건너뛴다. **`labeler.py label --all` 금지**(VIRAT 박스까지 예측으로 덮는다) |
-| `tools/import_roadplus.py` | ROAD PLUS(고속도로 교통정보) CCTV 를 OBS 로 녹화한 파일에서 **전체 화면으로 재생된 구간만** 골라(사이트 화면·빈 화면은 뺀다) 영상 영역을 잘라 높이 720 으로, `--every` 초마다 `unlabeled/<카메라>/` 에 extract_frames 와 같은 이름으로 쓴다(2026-11-09). 시각은 파일 수정 시각 − 길이. 다시 튼 구간은 건너뛴다. 카메라는 `cameras.yaml` 에 먼저(kind screen). 그다음 scan → label → OWLv2 미리 라벨. 원본을 지우기 전엔 `--save-clips data\visible\videos`(구간마다 720p 영상 — ffmpeg 필요, 이미 뽑은 녹화면 `--no-frames`) |
-| `tools/ovd_propose.py` | OWLv2(이름만 주면 찾는 검출기)로 출동 차량·라바콘 후보를 JSONL 로(2026-11-09). **다른 가상 환경**(`E:\OpenVocab\.venv` — transformers)으로 돌고 DB 를 열지 않는다. 입력은 아래 `list` 가 쓴 TSV |
-| `tools/import_proposals.py` | 그 후보로 responder·cone 박스를 만들어 검수 대기로(11-09). `list`(이미지 목록) → `apply`(기본은 보기만, `--apply` 때 DB 를 뜨고 `source='bulk'` 묶음 'OWLv2 후보 …' 로 써서 검수 UI '변경 내역' 에서 되돌릴 수 있다 — **승인 이미지는 검수 대기로 간다**) → `restore`(되돌린 뒤 옛 승인 이미지를 승인으로). responder 후보가 기존 차량 박스와 IoU 0.5 이상이면 그 박스 클래스만 바꾼다. 결과·목록은 `runs/ovd/`(git 밖 — 이미지 경로 목록이라) |
-| `tools/crop_images.py` | DB 이미지를 사각형 영역으로 잘라 바꾼다 — 박스는 그 영역 좌표로 옮기고(원래 넓이의 30% 미만만 남는 박스는 버림) **상태(승인·검수 대기·휴지통)는 그대로**(2026-11-09, hw-04 줌 화면 36장 — docs/provenance.md). 카메라와 id 로 고르고, 크기가 다른 이미지가 섞이면 멈춘다(같은 카메라라도 줌이 다르면 id 로 가른다). 기본은 보기만, `--apply` 때 DB 를 뜨고 옛 파일은 `<DB 폴더>/backups/crop_<시각>/` 로 옮긴다(목록도 거기 — git 밖). 이력 source 는 'crop'(검수 화면 '자르기') — 그 전 이력으로 되돌리기는 서버가 막는다(409). 가릴 영역도 같은 좌표로 옮긴다. **돌린 뒤 검수 화면을 새로 고칠 것**(`--recrop` 과 같은 이유) |
-| `tools/mask_images.py` | DB 이미지에 **가릴 영역**(검수 화면 `M` 과 같다 — 아래 'UI 조작')을 명령으로 넣는다 — 같은 자리를 여러 장에(`--ids 8017-8029 --rect x1,y1,x2,y2`, 한 장씩은 `--mask id:x1,y1,x2,y2`, 지금 화면 픽셀). 원본·박스·상태는 그대로. 기본은 보기만(학습에서 빠질·일부 가려질 박스), `--preview <jpg>` 칠하기 전·후 대조 그림, `--apply` 때 DB 를 뜬다, `--replace` 는 더하지 않고 바꾼다. **test 이미지는 멈춘다**. 이력 source 'mask'(검수 화면 '가릴 영역'). 11-09 오후의 첫 판은 그림 파일에 직접 칠했고(이름 끝 `_m`) 그 11장은 같은 날 되돌렸다(docs/provenance.md) |
-| `tools/finetune.py` | 해상도를 올리고 mosaic 을 끈 짧은 미세조정 → `models/best_ft960.pt`(운영 가중치는 `--promote` 때만 바꾼다). `runs/STOP` 으로 정상 중단(그때는 `--promote` 안 함), 기본 batch 는 모델 크기·imgsz 별 8GB 실측 한도 |
-| `tools/probe_scale.py` | 모델 크기(n/s/m)를 같은 조건으로 비교 |
-| `tools/extract_frames.py` | 영상에서 프레임을 뽑아 `unlabeled/<카메라>/<날짜>/<카메라>_<시각>_<밀리초>.jpg` 로(카메라는 `cameras.yaml` 에 먼저 등록, 시작 시각은 `--start` 나 영상 이름) — docs/provenance.md. 눈으로 골라 넣는 것은 검수 UI 의 **'영상 캡처' 탭**(11-10, 아래 'UI 조작') — 같은 방식·같은 이름이고, 이름·변화량 함수는 `src/autolabel/capture.py` 한 곳에 있다(`import_roadplus.py` 도 거기서 가져간다) |
-| `tools/auto_capture.py` | 영상 캡처의 '고르기' 를 운영 가중치로 대신한다(2026-11-12 사용자 요청 — 녹화부터 자동화의 첫 단계). **검수 서버의 캡처 API 를 그대로 부른다**(올리기·뽑기·`PUT state`·넣기 — 이름·카메라 추정·자동 카메라·스캔 잠금을 capture.py 한 곳에 두려고, 그래서 서버가 켜져 있어야 한다). 기본은 탭에 표시만(세션의 넣기/빼기), `--apply` 면 넣고 자동 라벨링 작업, `--watch` 는 녹화 폴더(크기·수정 시각이 두 번 같고 `--settle` 초 지난 파일만), `--dry-run --sheet` 는 값 맞추기용. 고르기는 `src/autolabel/autopick.py`(같은 객체 = IoU + 12×12 외형 차이, 클래스는 안 봄 — 희소 클래스·애매한 검출 가중, 빈 화면·탐색 몫). **기본값은 공개 영상 두 편·yolo26n(COCO)·CPU 로만 정한 첫 값**이다 — `data/visible/autocapture/frames/*.jsonl` 로 다시 맞출 것. 학습·자동 라벨링이 도는 중이면 CPU 로 검출한다(`/api/state`). 같은 카메라의 영상 여러 개는 `--camera` 로 묶을 것(아니면 영상마다 vid-NN) |
-| `tools/legacy_groups.py` | legacy 이미지의 장면 종류·카메라 후보·크롭 추정 초안(DB 읽기 전용) — 사전학습 임베딩을 평균 연결로 묶어 `data/visible/legacy_groups/` 에 CSV·대조 시트. 카메라 후보는 거칠다(웹 사진과 CCTV 크롭이 한 후보에 섞이기도 한다) |
-| `tools/domain_review.py` | 도메인(CCTV·비CCTV·드론)·태그 점검(DB 읽기 전용) — 같은 태그·장면 묶음과 다른 도메인, 비슷한 이미지(임베딩 이웃)와 다른 도메인, EXIF 제조사, 태그 포함 관계·오타 후보, 같은 카메라 누수를 `data/visible/domain_review/` 에 id 목록·대조 시트로. **의심일 뿐이다** — 11-04 에 의심 이미지를 다 눈으로 보니 고칠 것은 6장이었다. 본 것은 `--mark-seen` 으로 그 폴더의 `seen.csv` 에 적고(11-04 점검분 465건), 다음부터 같은 이미지가 같은 도메인으로 같은 검사에 걸리면 목록·시트에서 뺀다(`--all` 이면 다) — 표시는 사람이 다 본 뒤에만 할 것. '일부가 빠진 태그' 표(3장 이상 장면 묶음의 절반 이상에 붙은 태그가 나머지에 빠진 곳)는 따로 — 한 태그의 줄을 다 본 뒤 `--mark-tag <태그>` 로 (이미지, `tagmiss:<태그 id>`) 를 적는다(`--mark-seen` 은 이 표를 적지 않는다) |
-| `tools/prune_seed_json.py` | 시드 COCO json 에서 파일이 없는 이미지 항목과 그 annotations 를 뺀다(scan 의 'JSON 에 있으나 파일이 없는 이미지' 를 없앤다, DB 는 안 건드림). 기본은 보기만·`--apply`. 원본 json 은 `seed_coco` 밖 `seed_json_backup/<시각>/` 에 뜨고, 다시 읽어 남은 이미지·박스가 같은지 본 뒤 다르면 되돌린다. 한 json 의 절반 넘게 없거나 id 가 겹치거나 원래 모양으로 다시 저장할 수 없으면 아무것도 쓰지 않는다(절반은 `--force`) |
-| `tools/build_subset_dataset.py` | 조건(도메인·태그·뺄 클래스)에 맞는 승인 이미지만 골라 **실험용** 학습 세트를 만든다(2026-11-12) — 원본 DB(보관한 옛 DB 든 지금 DB 든)를 읽기 전용으로 사본 떠 `<out>/dataset/` 을 쓰고 프로젝트 DB·데이터는 안 건드린다. 분할은 원본 그대로(미배정이 있으면 멈춤), `--force-split test` 는 평가 전용 세트(`--paint-masks` 면 가릴 영역을 칠한다 — 평소 test 점수와 견주지 말 것), 옮겨 둔 옛 데이터는 `--path-map 옛=새`, `--tar` 는 Runpod 묶음. 기본은 보기만·`--apply`. pod·WSL 에서 그 세트를 재는 것은 `wsl/eval_test.py`(프로젝트 코드를 import 하지 않는다 — conf 0.25 에서 놓친·헛 박스 수도 남긴다). 11-12 에 만든 세트·기준선은 docs/experiments.md '새 풀 프레임 데이터', pod 절차는 docs/runpod.md |
-| `tools/scheduled_stop.py` | 정해진 시각에 웹 UI 학습을 정상 중단(탭 서버에서는 `/api/projects` 로 학습 중인 프로젝트를 찾는다) |
+도구마다 하는 일·옵션·조심할 것은 [tools/CLAUDE.md](tools/CLAUDE.md) 의 표에 있다(2026-11-17 에 이 파일에서 옮겼다 — `tools/` 의
+파일을 다룰 때는 저절로 읽힌다). **도구를 돌리기만 할 때도 먼저 그 표에서 그 도구의 줄을 읽을 것.** 있는 도구:
+`test_baseline`·`label_qa`·`label_qa_claude`·`merge_class`·`import_o365`·`import_virat`·`import_roadplus`·`ovd_propose`·`import_proposals`·`crop_images`·`mask_images`·`finetune`·`probe_scale`·`extract_frames`·`auto_capture`·`legacy_groups`·`domain_review`·`prune_seed_json`·`build_subset_dataset`·`scheduled_stop`. 늘 지킬 것:
+- **VIRAT·Objects365 를 넣은 뒤 `labeler.py label --all` 금지**(넣어 둔 박스를 예측으로 덮는다).
+- 그림 파일을 바꾸는 도구(`crop_images`·`import_virat --recrop`)를 돌린 뒤에는 검수 화면을 새로 고칠 것.
+- `import_proposals --apply` 는 승인 이미지를 검수 대기로 돌린다. `mask_images` 는 test 이미지에서 멈춘다.
 
 ## 회귀 테스트
 
@@ -182,38 +166,10 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 - **버그를 고치면 그 버그를 다시 내는 입력을 테스트로 남긴다** — 일회용 스크립트로 확인하고 버리지 말 것.
 - 테스트의 `cfg`(`tests/conftest.py`)는 `data.*` 경로를 전부 임시 폴더의 절대경로로 적는다. 새 경로 설정을 쓰는 코드를 시험하면
   거기에도 넣을 것 — 빼면 `config.resolve` 가 저장소의 `data/` 를 가리킨다.
-- `tests/test_js_parity.py` 가 '고치면 둘 다' 인 식(`maskCover`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`capName`·
-  `MASK_MAX`·`MASK_DROP`·`MASK_SAME`)을 node 로 돌려 Python 과 견주고, 화면 스크립트(app·gallery·capture·health)의 문법도 본다. JS 선언을 글자로
-  떼므로(맨 왼쪽 `function 이름(` … 맨 왼쪽 `}`, 한 줄 `const`) 그 모양을 바꾸면 테스트의 규칙도 맞춘다. 짝이 새로 생기면 거기에 더할 것.
-- `tests/test_js_nav.py`(11-12)는 같은 규칙으로 app.js 의 이미지 넘기기(`step`·`imageLoading`·`openImage`·`loadImage`·
-  `loadImageNow`)를 떼어 `tests/nav_harness.js` 에서 **그대로** 돌린다 — 키 반복·서버 응답·사진 도착만 가짜 시계로 일으키고,
-  이 함수들이 부르는 그 밖의 화면 함수는 아무것도 안 하는 대역이 받는다. ↑·↓ 를 누르고 있으면 계속 넘어가는지(src/autolabel/CLAUDE.md)
-  를 지킨다. 이 다섯 함수의 이름을 바꾸면 테스트의 `PARTS` 도 맞춘다.
-- `tests/test_js_health.py`(11-15)는 같은 방식으로 health.js 의 화면 열기·이미지 보기로 넘기기(`hcLoad`·`hcLoadHeat`·
-  `hcOpenCell`·`hcOpenIds`·`hcOpenFiltered` 와 그것들이 쓰는 함수 — 테스트의 `PARTS`)와 app.js 의 `noFilters`·`filterState`·
-  `setFilters`(`APP_PARTS`)를 `tests/health_harness.js` 에서 돌린다 — 기다리는 일(서버 응답·목록 받기)에 단계마다 답하며 그
-  사이에 '다른 보기로 감'·'조절 칸을 바꿈' 을 끼워 넣는다. 이름을 바꾸면 그 목록도 맞춘다.
-- `tests/test_js_views.py`(11-15)는 app.js 의 보기 표 `VIEWS`(맨 왼쪽 `const VIEWS = {` … `};`)와 `viewOf`·`setView`·
-  `viewKeydown` 을 돌린다 — 표에 `key` 없는 보기를 하나 더 넣어 Space·S·V 가 숨은 라벨링으로 새지 않는지, 표의 이름이
-  index.html 의 단추·style.css 와 같은지 본다(src/autolabel/CLAUDE.md '보기는 `VIEWS` 표 한 곳').
-- 11-16 에 더한 것(Gemini 리뷰 묶음 5): `tests/test_js_filters.py`(app.js `reloadList`·`clearFilters` 와 `listControls`·
-  `setListControls` — 목록을 다시 받기 전에 저장하고, 못 하면 필터 칸을 되돌리는가), `tests/test_js_capture.py`(capture.js
-  `capReset`·`capFlushStart`·`captureHide`, 11-17 부터 카메라 고르는 칸의 `키 · 장소` — app.js `camLabel` 과 `capRenderCameras`·`capCamEditOpen`·`capCamDelRender`), `tests/test_capture_commit.py`(넣는 도중 죽은 서버 — 손으로 만든 세션 폴더로),
-  `tests/test_label_qa.py`(가릴 영역·모델이 모르는 클래스 — 써 둔 `preds.jsonl` 을 `--reuse` 로). JS 쪽은 함수를 글자로
-  떼니 이름을 바꾸면 그 파일의 `PARTS` 도 맞춘다.
-- `tests/test_health_dataset.py`(11-15)는 **진짜 학습 세트(`trainer.build_dataset`)와 내보내기(`export_yolo`)를 임시 폴더에
-  만들어** 라벨 줄 수를 분할·클래스별로 `health.report` 와 견준다 — 가릴 영역이 빼는 박스의 판정(`masks.drops`·`applies_to`)을
-  셋 중 하나가 따로 적기 시작하면 여기서 어긋난다. 그림 파일을 실제로 쓰는 몇 안 되는 테스트다(작은 JPEG 넉 장).
-- **좌표가 '같은 자리' 인지는 반올림한 값을 견주지 말고 `masks.same_rect`(화면 `sameRect`)로 본다** — 네 좌표의 차가 모두
-  `SAME`(7.5e-8) 이하. 11-12 에 테스트로 찾아 고쳤다: 소수 7자리 반올림 키는 픽셀에 딱 맞춘 좌표(2560·1280 폭)가 반올림 경계에
-  자주 걸려, 화면이 영역을 {cx, cy, w, h} 로 들었다 되돌리는 끝자리 잡음만으로 다른 자리가 됐다(같은 템플릿을 두 번 더하면 겹쳐
-  들어가고 빼기가 남겼다 — 손으로 그린 영역은 0건). 이유·수치는 `masks.py` 의 `SAME`. 좌표를 견주는 새 코드에서도 반올림 키를 만들지 말 것.
-- `tests/test_eval_test.py`(11-15)는 `wsl/eval_test.py` 의 `at_conf`(놓침·헛 박스)가 conf 0.25·IoU 0.45 로 세어지는지 본다 —
-  Ultralytics 8.4.212 의 검증기는 혼동 행렬을 val 의 conf 0.001·IoU 0.5 로 세서, 같은 119장에서 헛 박스가 에러 없이 20 → 988 이
-  됐다(mAP 는 8.4.142 와 같았다 — docs/experiments.md '새 풀 프레임 데이터'). **Ultralytics 를 올리면 이 테스트부터 볼 것.** val 에
-  `conf=0.25` 를 넘겨 고치지 말 것(mAP 까지 0.25 위에서만 센다) — 혼동 행렬이 받는 값만 바꾼다(`pin_confusion_thresholds`).
-- `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작,
-  학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.
+- 테스트 파일마다 무엇을 지키는지와 화면(JS) 함수를 글자로 떼는 규칙은 [tests/CLAUDE.md](tests/CLAUDE.md) 로 옮겼다(2026-11-17 —
+  `tests/` 의 파일을 다룰 때 읽힌다). 화면 함수의 이름·선언 모양을 바꿔 JS 테스트가 깨지면 그 테스트 파일의 `PARTS` 를 맞춘다.
+  늘 지킬 것 둘: **좌표가 '같은 자리' 인지는 반올림한 값을 견주지 말고 `masks.same_rect`(화면 `sameRect`)로 본다** ·
+  **Ultralytics 를 올리면 `tests/test_eval_test.py` 부터 볼 것**(val 에 `conf=0.25` 를 넘겨 고치지 말 것).
 
 ## 라벨 기준
 
@@ -485,103 +441,25 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   `box_history` 는 `#id` 로 가리킨다 — 도구에서 before·after 를 SQL 로 바로 읽지 말고 `store.box_history`·`history_entry` 로.
 - **가릴 영역**은 DB `masks` 표에만 있고 학습 세트·이미지 내보내기만 칠한다. test 는 칠하지 않는다. 덮는 몫은 `masks.covered` 와
   `app.js` 의 `maskCover` 가 같은 식이다 — 고치면 둘 다.
-- **영상 캡처 탭(11-10 사용자 요청, `capture.py`·`web/capture.js`)** — 영상을 서버에 사본으로 올려 몇 초마다 한 장 뽑고, 화면에서
-  고른 것만 `unlabeled/<카메라>/` 로 **옮겨** 스캔한다(원본 영상은 읽지도 않는다 — 사본만). 촬영 시각을 모르면 비워 두고 넣을 수
-  있다(이름 `<카메라>_v<영상 지문>_t00h01m05s500.jpg`, `captured_at` NULL). **카메라를 고르지 않으면 이 영상용 카메라 `vid-NN` 을
-  자동 등록해 넣는다**(11-11 사용자 요청 — 장소 '모름', note 의 영상 지문으로 같은 영상은 같은 카메라에. 분할이 카메라째라 출처 없이는
-  넣지 않는다). **작업 큐 밖**이라 학습 중에도 돌고,
-  넣기의 스캔은 '폴더 스캔' 과 같은 잠금(`server.ingest_lock`)을 쥔다. 같은 탭의 `＋ 새로` 가 **`cameras.yaml` 에 카메라를
-  더한다**(`provenance.add_camera` — 끝에 글자로 덧붙이고 쓰기 전 파일은 `backups/cameras_<시각>.yaml`). `지우기…` 는 그 카메라의
-  줄만 뺀다(`remove_cameras`) — **DB(휴지통 포함)나 카메라 폴더에 이미지가 남은 카메라는 서버가 막는다**. `고치기…` 는 바뀐 칸의
-  줄만 고친다(`edit_camera`) — 분할된 이미지가 있으면 고정 분할은 막고, 시간대를 바꾸면 그 카메라 이미지의 촬영 시각을 다시 센다.
-  **이미지가 있는 카메라의 키를 바꾸면 폴더·파일 이름 앞머리·DB 경로까지 함께 바꾼다**(11-11 사용자 요청, `camera_rename.py` —
-  작업 큐에서 돌고, 실패하면 되돌리며, 바꾸기 전 DB 는 `backups/labeling_camrename_<시각>.db`). 지명이 드러난 키를 번호로 바꿀 때
-  쓴다. 규칙은 src/autolabel/CLAUDE.md.
-- **몇 장만 다른 카메라로 옮기기(11-15 사용자 요청, `camera_move.py`)** 는 이미지 보기 오른쪽 `카메라` 칸의 `옮기기` — 그 이미지의
-  파일(폴더·이름 앞머리)·DB 경로·카메라를 함께 바꾸고 묶음(`grp`)을 비운다. 분할이 정해진 이미지는 같은 분할의 카메라로만 가고
-  (아니면 409), 작업 큐에서 돈다. 옮긴 기록은 `backups/camera_moves.jsonl`. **DB 의 `camera` 만 SQL 로 바꾸지 말 것** — 파일은 옛
-  카메라 폴더에 남아 정리(tidy)·분할 묶음이 어긋난다.
-- **데이터 점검 보기(11-15 사용자 요청, `health.py`·`web/health.js`)** — 클래스 균형(카메라 수·분할별 몫)·학습 입력에서의 박스
-  크기·이미지당 객체 수·박스 위치 히트맵·카메라 표를 한 화면에. DB 를 읽기만 한다. **가릴 영역이 반 이상 덮은 박스는 기본으로
-  세지 않는다**(학습 라벨에서 빠지는 박스 — 11-15 의 DB 는 승인 박스 1,277개 중 619개. test 분할 이미지의 박스는 빼지 않는다 — 학습 세트가 test 는 칠하지 않는다). 데이터의 박스 수·크기를 말할 때는
-  이 화면(또는 `health.report`)의 수치를 쓰고, SQL 로 바로 셌으면 가려진 박스를 뺐는지 밝힐 것.
+- **영상 캡처 탭·카메라 등록/고치기/지우기/키 바꾸기(`capture.py`·`provenance.py`·`camera_rename.py`)·몇 장만 다른 카메라로
+  옮기기(`camera_move.py`)·데이터 점검 보기(`health.py`)** 의 규칙은 src/autolabel/CLAUDE.md 에 있다(2026-11-17 에 여기의 요약을
+  뺐다 — 같은 글이 거기에 더 자세히 있다). 늘 지킬 것만: 출처(카메라) 없이는 이미지를 넣지 않는다(분할이 카메라째다 — 모르면
+  자동 카메라 `vid-NN`) · **DB 의 `camera` 만 SQL 로 바꾸지 말 것**(파일은 옛 카메라 폴더에 남아 정리(tidy)·분할 묶음이
+  어긋난다 — 이미지 보기의 `옮기기`) · **데이터의 박스 수·크기를 말할 때는 데이터 점검(`health.report`)의 수치를 쓰고, SQL 로
+  바로 셌으면 가려진 박스를 뺐는지 밝힐 것.**
 - 코드를 고친 뒤에는 검수 서버를 다시 켜야 반영된다. TestClient 는 `base_url="http://127.0.0.1:7860"`.
 
 ---
 
 ## 다음에 할 일
 
-지난 학습의 결론은 docs/experiments.md 에 있다 — yolo26n → **yolo26s**(같은 조건 60 epoch 0.6495 → 0.7288) → 11-08
-**yolo26m**(8클래스 첫 학습), s 는 **`predict.imgsz` 640 이 정점**(960·1280 은 낮다), close_mosaic 은 세 번 연속 이득이 없었다
-(s 마지막 30 두 번, m 마지막 10 은 −0.010).
-
-3. **미검토 제안**(아래 수치는 11-10 에 비운 옛 데이터로 잰 것 — 새 데이터에서는 다시 잴 것). 640 입력에서 박스의 23.3% 가 32px 미만이다(새 풀 프레임 데이터는 11-15 에 승인 141장·학습에 남는 박스 658개 기준 짧은 변 32px 미만이 62%, 1280 입력이면 36% — 검수 화면 '데이터 점검'. 옛 수치와 재는 식이 같은지는 확인하지 않았다). 학습 자체를 960 으로 올리는 것은 s 로는 해 보지 않았다 —
-   해 본다면 batch 16 이하로, epoch 시간은 약 2.3배를 예상할 것(추정). SAHI 식 타일 추론은 `tools/test_tiles.py` 로 재 봤다(11-03, visible-3·CCTV test) — mAP50-95 는 +0.035\~0.038 이지만 같은 conf 에서 FP 가 늘고(대부분 라벨 누락이 아니라 진짜 오검출), FP 를 맞추면 이득이 16px 미만 객체(+4.5pt)로 좁혀진다 — 타일↔통째 사이에만 NMS IoU 0.3 을 걸면 F1 이 통째와 같고(0.890) 재현율 +1.8pt·mAP +0.035(CCTV)다(표·한계는 docs/experiments.md '타일 추론' — 그 CCTV 는 11-04 전 규칙으로 가른 것이라, 다시 잴 때는 손 분류 도메인으로 바뀐다). **11-10 에 그 조합을 자동 라벨링의 선택지로 넣었다**(사용자 제안 — 메뉴 '자동 라벨링 (타일)'·`label --tiles`, `src/autolabel/tiling.py` 를 test_tiles 와 함께 쓴다. 기본 자동 라벨링·P 는 통째 그대로). 새 데이터에 test 가 생기면 통째와 다시 견줄 것.
-4. **8클래스 학습 — 11-08 에 한 번 했고(yolo26m, `models/best_y26m_8cls.pt`) 같은 날 운영 가중치로 올렸다(사용자 결정).** 그 전
-   운영 visible-3 은 pickup 을 모르고 car 에 옛 van 이 섞였다. test 749장에서 새 m 은 visible-3 보다 모든 클래스가 높고(pickup 뺀
-   7: 0.6585 → 0.7398), 같은 설정의 DetectView y26m 과는 pickup 과 상관없는 클래스에서 거의 같다(+0.013). 표는
-   docs/experiments.md '8클래스 첫 학습'. 예측 비교(P)·자동 라벨링도 이제 pickup 을 보고, 웹 UI 학습도 같은 설정(m·batch 10·100 epoch·close_mosaic 10)으로 돈다. 그 데이터는
-   11-10 에 비웠다 — 남아 있던 일(label_qa 로 작은 차 판정 거르기·VIRAT 검수·분할 재배정)은 옛 데이터와 함께 끝났다
-   (`git show 25a3de6:CLAUDE.md`).
-5. **새 데이터 모으기 (11-10 사용자 결정 — 위 '현재 데이터 상태').** 풀 해상도 CCTV 캡처를 자르지 않고 넣고, 화면 글자·로고·
-   라벨하기 애매한 곳은 가릴 영역으로 덮는다. 순서: 카메라를 `cameras.yaml` 에 등록(kind cctv — 영상 캡처 탭의 `＋ 새로` 나
-   손으로. 출처를 모르는 영상은 영상 캡처 탭에서 카메라를 비워 두면 `vid-NN` 으로 자동 등록되고, 나중에 `고치기…` 로 키·장소를
-   바꾼다) → `unlabeled/<카메라>/` 에 넣기
-   (영상은 검수 UI **'영상 캡처' 탭**(11-10 — 뽑아서 눈으로 골라 넣고 스캔까지 한다) 또는 `tools/extract_frames.py`, ROAD PLUS
-   녹화는 `tools/import_roadplus.py` — SD 원본이라 높이 720 으로 줄여도 잃는 것이 없다) → `labeler.py scan` → `label`(운영 m) → responder·cone 후보(`tools/ovd_propose.py` → `tools/import_proposals.py`) →
-   검수 → 분할(카메라째 — 평가에 쓸 카메라는 `cameras.yaml` 의 `split:` 으로 먼저 정할 것) → 학습 → 새 test 로 기준선.
-   - 같은 자리를 여러 장에 덮을 때는 **가릴 영역 템플릿**(11-10 — 한 장에 그린 영역을 `카메라A_1` 같은 이름으로 남겨 라벨링
-     화면에서 한 장씩, 이미지 보기에서 고른 여러 장에 적용, README '가릴 영역 템플릿')이나 `tools/mask_images.py --ids … --rect …`.
-   - `cameras.yaml` 의 VIRAT 카메라 3대(0503·0500·0101)에는 아직 `crop:` 이 있다 — VIRAT 을 풀 해상도로 다시 넣는다면
-     (`tools/import_virat.py`, 영상은 `E:\datasets`) 그 칸을 빼고 가릴 영역으로 덮는다. MOT17 은 보류(가려진 부분까지 몸 전체로
-     그린 라벨이다 — 공개 데이터셋 조사는 docs/provenance.md '공개 데이터셋').
-   - 새로 모은 사진은 C: 백업에 없다 — 어느 정도 쌓이면 새 날짜 폴더로 뜰 것(docs/backup.md, 먼저 물을 것).
-   - 분할은 같은 장면 묶음과 카메라째로 나뉜다(위 '묶음 단위 계층화') — 카메라가 적으면 test 가 카메라 한두 대가 되니, 평가
-     장면이 한쪽에 몰리지 않게 카메라를 고를 것.
-   - **11-16 에 DB 사본으로 첫 분할을 미리 돌려 봤다(진짜 DB 는 아직 미배정 — 사본 둘에서 배정이 같아 경로와는 무관하다):**
-     승인 141장·카메라 16대가 train 100 / val 20 / test 21 로 갈리는데 **val 이 카메라 한 대**이고, 라벨에 남는 박스로 val 에
-     person·responder·cone·bicycle·motorcycle·scooter 가 하나도 없고 test 에도 person·cone·bicycle·motorcycle·scooter 가 없다
-     (person 137개가 전부 train). 이대로 학습하면 그 클래스들은 best.pt 고르기·test 점수에 안 잡힌다 — **첫 학습 전에 사용자와
-     정할 것**: 평가에 쓸 카메라를 `cameras.yaml` 의 `split:` 으로 고정할지(한 번 정한 배정은 안 움직인다), 카메라를 더 모은
-     뒤 나눌지. 학습 로그의 요약 끝(`trainer.BuildReport.class_gaps`)과 데이터 점검의 '눈여겨볼 것' 이 이것을 알린다.
-6. **라벨링 모델을 DetectView 배포 모델과 떼어 무겁게 (11-10 사용자 결정 — 새 데이터의 검수가 쌓이면 준비).** 자동 라벨링·
-   P·label_qa 가 쓰는 `best.pt` 는 DetectView(m 640×384 — 그쪽이 `~/rfdetr_work` 에서 따로 학습)에 맞출 필요가 없다. 근거는
-   09-18 A40 비교(docs/experiments.md — s640 대조 0.6515 → l960 0.7264·x960 0.7243, 크기와 해상도를 함께 바꿔 어느 쪽 덕인지는 모름).
-   - 시점: 새 데이터의 검수가 쌓여 responder·cone 박스까지 들어간 뒤 10클래스로 — 그 전에 돌리면 두 클래스를 모르는 모델이 나온다.
-   - 같은 데이터로 m640(로컬, 옛 데이터 4,500장 기준 약 2.7시간)·l960·x960(Runpod RTX 6000 Ada — 09-20 가격으로 약 2시간·2달러, 약 4시간·3–4달러, 추정)을
-     끝까지 학습해, test 클래스별 점수와 conf 0.25 에서의 놓친 박스·헛 박스 수로 고른다. 로컬 8GB 에서 l·x 는 640 까지라(l b8·x b5)
-     l960·x960 은 못 돈다 — m960 b4 는 들어가니, 해상도 효과와 모델 크기 효과를 가르려면 로컬 m960 을 대조로 더할 수 있다.
-   - `weights/` 에 `yolo26x.pt` 가 없다 — 먼저 받아 `weights/` 에 두고 pod 에도 같이 올린다. 960 모델을 `tools/test_baseline.py` 로
-     잴 때는 `--imgsz 960` 을 준다(기본은 `predict.imgsz` 가 아니라 `model.imgsz` 640 이다).
-   - pod 를 띄우기 전에 그때 가격·시간을 말하고 허락받는다(Runpod MCP 는 다시 붙여야 한다). 데이터셋 tar 스크립트는 새로 짠다(위 'Runpod').
-   - 고른 모델은 `models/best_<이름>.pt` 로 두고 `best.pt` 로 올린다. 960 이면 `predict.imgsz` 도 960 으로 바꾸고, 학습 중 P(CPU)는
-     m 보다 몇 배 느려진다. 웹 UI 학습 버튼(config `model.base`)은 m640 그대로 둬 로컬 반복용으로 쓴다. 그 뒤로 `best.pt` 는
-     DetectView 에 그대로 넘길 모델이 아니다 — 넘길 때는 m 을 따로 학습한다.
-   - **11-12 에 옛 CCTV 데이터로 x·1280 을 미리 재 볼 준비를 했다 — pod 는 안 띄웠다(사용자: '새 데이터를 좀 모으면서 판단').**
-     세트(`E:\datasets\lal_oldcctv8`·`lal_newtest8`)·스크립트(`runs/runpod/pod_xres.sh`)·기준선은 docs/runpod.md 와
-     docs/experiments.md '새 풀 프레임 데이터'. 그날 Runpod 는 이 세션에 연결돼 있었고(켜진 pod 0개) RTX 6000 Ada 는 secure 시간당
-     0.99달러·재고 적음이었다 — 추정은 x1280 + m640 약 6시간·6달러, m·x × 640·1280 전부 약 10시간·10달러(시간은 ±30%).
-     **사용자가 다시 꺼내기 전에는 띄우자고 권하지 말 것.** 꺼내면 조합, 도로 장면만 쓸지(지금 세트는 CCTV 도메인 전체), 그때
-     가격을 다시 묻는다. 새 데이터가 늘면 `lal_newtest8` 은 다시 만들 것(지금은 119장이라 박스 몇 개 차이는 잡음이다).
-7. **녹화부터 자동화 (11-12 사용자 요청 — 카메라는 아직 없다, IP캠·웹캠 미정).** 1단계로 `tools/auto_capture.py`(영상 캡처의
-   고르기 자동화)를 만들었다 — 만든 세션(클라우드)은 리눅스·CPU·yolo26n(COCO)·공개 영상 두 편(768×432)으로 시험했고, **같은 날 이
-   PC 에서 DB·이미지 사본으로 띄운 시험 서버에 돌려 봤다**(운영 가중치·GPU, 보관 폴더의 hw-02·04·05 클립 — docs/experiments.md
-   '자동 고르기 첫 실행'): `--dry-run --sheet`, 기본(탭에 고른 칸만 `넣기` 로), `--apply`(이름에서 읽은 카메라·시각, 자동 카메라
-   `vid-NN`, 자동 라벨링 작업), `--watch`, 한글 경로, 서버 작업 중 CPU → 끝나면 GPU 전환이 다 됐다. **진짜 서버·진짜 DB 로는 아직
-   안 돌렸다(사용자가 한다).** 남은 것:
-   - **기본값은 고속도로 화면에서 한 구간에 몰린다** — 4분 30초 영상에서 본 고르기 8장 가운데 6장이 차가 가장 많은 21초 안에
-     들어가고 그 뒤 145초에서는 한 장도 안 골랐다. 지나가는 차는 후보마다 자리가 달라 늘 '새 객체' 라서 차가 많은 순간이 값을
-     독차지한다(처음 기본값 `--gap` 3초로는 못 막았다). `--gap 20` 이면 영상 전체에 퍼져서 **같은 날 기본값을 20초로 바꿨다**
-     (사용자 결정 — `Params.gap` 과 도구의 `--gap` 두 곳, `tests/test_autopick.py` 가 두 곳이 같은지 본다). 영상 한 편으로 정한
-     값이다 — 우리 CCTV 로 다시 볼 것.
-   - 값 맞추기 — `autocapture/frames/*.jsonl` 의 검출별 마지막 값(앞 후보와의 외형 차이)으로 `--match-sig`, `flat`·`sharp` 로
-     `blank_flat`·`--blur-ratio`, 고른 결과를 눈으로 보고 `--per-min`·`--gap`·`--explore`. 그날 hw-04 화면에서는 외형 차이의
-     중앙값이 12.9 라 기본 `--match-sig` 12 가 분포 한가운데였다(같은 객체와 다른 객체를 가르는 값으로 약하다).
-   - 안 본 것 — 1080p·1440p 풀 해상도 영상의 검출 속도(720p 는 GPU 초당 약 50장·CPU 2\~3장), 밤·안개 화면이 '어두움'·'흐림' 으로
-     잘못 버려지는지, 학습이 도는 동안의 VRAM.
-   - 카메라를 들이면 `tools/record.py` — ffmpeg 조각 녹화(IP캠 RTSP 는 `-c copy`, 웹캠은 dshow + NVENC), 이름은
-     `<카메라 키>_%Y%m%d_%H%M%S.mkv`(이름에서 카메라·시각을 읽는다. mp4 는 끝에 moov 를 쓰니 녹화가 끊기면 못 연다)로 폴더에 쌓고,
-     `auto_capture.py --watch --apply` 가 받는다.
+목록·수치·경위는 [docs/next.md](docs/next.md) 로 옮겼다(2026-11-17 — 이 파일을 줄이느라. 번호는 그대로다). **다음 일을 고르거나
+학습·데이터 수집·분할·Runpod·자동 캡처를 손대기 전에 읽을 것.** 늘 지킬 것만:
+- **첫 학습 전에 분할을 사용자와 정할 것** — 11-16 에 DB 사본으로 미리 돌리니 val 이 카메라 한 대였고 val·test 에 박스가
+  하나도 없는 클래스가 여럿이었다(5번).
+- **Runpod 로 x·1280 을 재 보는 일은 사용자가 다시 꺼내기 전에는 띄우자고 권하지 말 것**(6번).
+- 새로 모은 사진은 C: 백업에 없다 — 새 날짜 폴더로 뜨기 전에 물을 것(5번).
+- `tools/auto_capture.py` 는 진짜 서버·진짜 DB 로는 아직 안 돌렸다 — 사용자가 한다(7번).
 
 ## 사용자에 대해
 
