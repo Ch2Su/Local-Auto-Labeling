@@ -201,7 +201,12 @@ def attach(model, stop_file: Path, state: dict, stop_at: int | None = None) -> N
         if state["snapped"] or not state["stopped"]:
             return
         if trainer.epoch + 1 >= trainer.epochs:
-            return  # 끝까지 간 학습은 이어 붙일 것이 없다
+            # 끝까지 간 학습은 이어 붙일 것이 없다. 마지막 epoch 에서 멈춘 것은 끝난 학습으로 친다 (2026-11-17) —
+            # STOPPED=1 로 두면 스냅샷도 없고 웹 UI 가 운영 가중치로도 안 올려, 승격도 이어하기도 안 되는 학습이 됐다.
+            # src/autolabel/trainer.py 의 attach_callbacks 와 같은 규칙이다(고치면 둘 다).
+            state["stopped"] = False
+            print("[중단] 마지막 epoch 이라 끝까지 간 학습으로 칩니다.", flush=True)
+            return
         last = Path(trainer.last)
         if last.exists():
             dst = last.with_name("resume.pt")

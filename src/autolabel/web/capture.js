@@ -621,16 +621,24 @@ function capRenderExtract() {
   el.classList.toggle("warn", c.state === "error" || !!c.note);
 }
 
-const CAP_PLACE_MAX = 40;     // 고르는 칸에 적는 장소의 글자 수 — 넘으면 줄인다(전체는 title)
+/** 넣을 때 알아야 할 카메라 표시 — 고정 분할과 한국(+09:00)이 아닌 시간대(다른 시간대 영상의 시작 시각을 KST 로 착각하지 않게). */
+function capCamFlags(cam) {
+  const tz = cam.tz && cam.tz !== "+09:00" ? `UTC${cam.tz}` : null;
+  return [cam.split ? `${cam.split} 고정` : null, tz].filter(Boolean);
+}
 
-/** 카메라를 고르는 칸(영상의 카메라·고칠 것·지우기 목록)에 적을 이름 — `키 · 장소 (꼬리)` (11-17 사용자 요청: 키가 번호뿐이라
- *  키만으로는 어느 카메라인지 알 수 없었다. 라벨링의 카메라 필터·이미지 보기의 '옮기기' 와 같은 꼴). 장소는 이 PC 의
- *  cameras.yaml 에만 있는 글이라 화면에만 쓴다. 긴 장소(자동 카메라의 '모름 — 영상 <이름>')는 줄인다 — 고르는 칸의 펼친 목록은
- *  가장 긴 줄만큼 넓어진다. */
-function capCamLabel(cam, tail) {
-  const place = String(cam.place || "").trim();
-  const short = place.length > CAP_PLACE_MAX ? `${place.slice(0, CAP_PLACE_MAX - 1)}…` : place;
-  return cam.key + (short ? ` · ${short}` : "") + (tail ? ` (${tail})` : "");
+/** 고른 카메라의 고정 분할·시간대를 시작 시각 안내에 적는 줄 (11-17 리뷰) — 닫힌 칸은 좁아(왼쪽 칸 300px) `키 · 장소` 뒤의
+ *  꼬리가 잘려 안 보인다. 알릴 것이 없으면 빈 글. */
+function capCamNote(key) {
+  const cam = key ? C.cameras.find((x) => x.key === key) : null;
+  const flags = cam ? capCamFlags(cam) : [];
+  return flags.length ? `카메라 <b>${esc(cam.key)}</b> — ${esc(flags.join(" · "))}<br>` : "";
+}
+
+/** 닫힌 카메라 칸의 title — 고른 카메라의 줄이지 않은 장소(option 의 title 은 닫힌 칸에서는 뜨지 않는다). */
+function capCamTitle(key) {
+  const cam = key ? C.cameras.find((x) => x.key === key) : null;
+  return cam ? String(cam.place || "") : "";
 }
 
 function capRenderCameras() {
@@ -639,10 +647,10 @@ function capRenderCameras() {
   // 비워 두면 이 영상용 카메라를 자동으로 등록해 넣는다(11-11 사용자 요청 — capture._auto_camera)
   const opts = ['<option value="">자동 — 이 영상용 카메라</option>'];
   for (const cam of C.cameras) {
-    // 한국(+09:00)이 아닌 카메라는 시간대를 함께 보인다 — 다른 시간대 영상의 시작 시각을 KST 로 착각하지 않게
-    const tz = cam.tz && cam.tz !== "+09:00" ? `UTC${cam.tz}` : null;
-    const tail = [cam.kind, cam.split ? `${cam.split} 고정` : null, tz].filter(Boolean).join(" · ");
-    opts.push(`<option value="${esc(cam.key)}" title="${esc(cam.place || "")}">${esc(capCamLabel(cam, tail))}</option>`);
+    // 이름은 app.js 의 camLabel(`키 · 장소 (꼬리)`) — 꼬리의 고정 분할·시간대는 닫힌 칸에서 잘릴 수 있어 고르면
+    // 시작 시각 안내에도 적는다(capCamNote)
+    const tail = [cam.kind, ...capCamFlags(cam)].filter(Boolean).join(" · ");
+    opts.push(`<option value="${esc(cam.key)}" title="${esc(cam.place || "")}">${esc(camLabel(cam, tail))}</option>`);
   }
   // 등록 파일에서 빠진 카메라를 골라 둔 영상 — 목록에 남겨 두고(넣을 때 서버가 막는다) 표시만 한다
   if (cur && !C.cameras.some((c) => c.key === cur)) opts.push(`<option value="${esc(cur)}">${esc(cur)} (등록 안 됨)</option>`);
@@ -658,6 +666,7 @@ function capRenderCommit() {
   startEl.disabled = !c;
   const hint = $("#cap-start-hint"), dest = $("#cap-dest");
   const cam = sel.value;
+  sel.title = capCamTitle(cam);
   const st = capParseStart(startEl.value);
   const kept = capKept();
   startEl.classList.toggle("bad", !!c && !!startEl.value.trim() && !st);
@@ -672,6 +681,7 @@ function capRenderCommit() {
         + "알게 되면 '고치기…' 로 장소·종류·키를 바꿀 수 있습니다).<br>";
   }
   if (c) {
+    h += capCamNote(cam);
     const typed = startEl.value.trim();
     if (!typed) {
       // 비워 두고 넣을 수 있다(11-10 사용자 요청) — 이름은 영상 지문 + 영상 안 시각, DB 촬영 시각은 '모름'
@@ -963,7 +973,7 @@ function capCamEditOpen(key) {
   form.classList.remove("hidden");
   $("#cc-save").textContent = "고치기";
   const sel = $("#cc-target");
-  sel.innerHTML = C.cameras.map((c) => `<option value="${esc(c.key)}" title="${esc(c.place || "")}">${esc(capCamLabel(c))}</option>`).join("");
+  sel.innerHTML = C.cameras.map((c) => `<option value="${esc(c.key)}" title="${esc(c.place || "")}">${esc(camLabel(c))}</option>`).join("");
   const has = (k) => k && C.cameras.some((c) => c.key === k);
   const pick = has(key) ? key : has(C.cur && C.cur.camera) ? C.cur.camera : C.cameras[0].key;
   sel.value = pick;

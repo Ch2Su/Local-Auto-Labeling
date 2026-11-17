@@ -501,7 +501,12 @@ def attach_callbacks(model, should_stop: Callable[[], bool] | None) -> dict:
         if state["snapped"] or not state["stopped"]:
             return
         if trainer.epoch + 1 >= trainer.epochs:
-            return  # 끝까지 간 학습은 이어 붙일 것이 없다
+            # 끝까지 간 학습은 이어 붙일 것이 없다. **마지막 epoch 에서 멈춘 것은 끝난 학습으로 친다 (2026-11-17)** —
+            # '멈춘 학습' 으로 두면 스냅샷도 없고 운영 가중치로도 안 올라가(`promote_if_finished`) 승격도 이어하기도
+            # 안 되는 학습이 됐다. train_wsl.py 의 `attach` 와 같은 규칙이다(고치면 둘 다).
+            state["stopped"] = False
+            print("[중단] 마지막 epoch 이라 끝까지 간 학습으로 칩니다.", flush=True)
+            return
         last = Path(trainer.last)
         if not last.exists():
             return
@@ -518,14 +523,12 @@ def attach_callbacks(model, should_stop: Callable[[], bool] | None) -> dict:
 def promote_weights(best: Path, cfg: Config) -> Path | None:
     """학습 결과 best.pt 를 운영 가중치(models/best.pt)로 올린다. 백업 경로를 돌려준다.
 
-    덮어쓰기 전에 기존 운영 가중치를 `best.prev.pt` 로 한 벌 남긴다. **사람이 멈춘 학습에는
-    부르지 않는다**(2026-11-16 — `_finish`·`wsl_train.train`). 그 전에는 끊을 때마다 이 경로를 타서
-    운영 가중치가 조용히 바뀌었다 — epoch 3 짜리(mAP 0.44)가 0.72 짜리를 덮어쓴 적이 있다.
+    덮어쓰기 전에 기존 운영 가중치를 `best.prev.pt` 로 한 벌 남긴다. **올릴지 말지는 여기서 정하지
+    않는다** — 학습 버튼은 `promote_if_finished` 를 거친다(사람이 멈춘 학습은 올리지 않는다, 2026-11-16).
+    그 전에는 끊을 때마다 이 경로를 타서 운영 가중치가 조용히 바뀌었다 — epoch 3 짜리(mAP 0.44)가
+    0.72 짜리를 덮어쓴 적이 있다.
     이름을 `.pt` 로 끝내는 이유는 Ultralytics 가 확장자를 검사해서
     (`best.pt.bak_...` 같은 이름은 검증에 못 넣는다) 바로 비교할 수 있게 하려는 것.
-
-    Windows 학습(`_finish`)과 WSL 학습(`wsl_train`) 이 같이 쓴다. 규칙이 두 군데서
-    달라지지 않도록 여기 하나로 둔다.
     """
     out = cfg.weights
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -539,10 +542,32 @@ def promote_weights(best: Path, cfg: Config) -> Path | None:
     return prev
 
 
-def stopped_note(best: Path | str, cfg: Config) -> str:
+def stopped_note(best: Path | str, cfg: Config, promoted: bool = False) -> str:
     """멈춘 학습의 로그 끝에 찍는 안내 — 운영 가중치를 바꾸지 않았다는 것과, 그 결과를 쓰려면 무엇을 복사할지."""
+    if promoted:
+        return (f"\n중단한 학습이지만 운영 가중치({cfg.weights})가 아직 없어 이 학습의 결과를 올렸습니다.\n"
+                f"원본: {best}\n")
     return (f"\n중단한 학습이라 운영 가중치({cfg.weights})는 바꾸지 않았습니다.\n"
             f"이 학습의 결과를 쓰려면 직접 복사하세요: {best}\n")
+
+
+def promote_if_finished(best: Path, cfg: Config, stopped: bool) -> dict:
+    """학습이 끝났을 때 운영 가중치를 바꿀지 정하는 **한 곳** — Windows(`_finish`)와 WSL(`wsl_train.train`)이 함께 쓴다.
+
+    **사람이 멈춘 학습은 올리지 않는다 (2026-11-16 사용자 결정).** 전에는 멈출 때마다 그 시점의 best.pt 가 운영 가중치를
+    덮었다 — epoch 3 짜리(mAP 0.44)가 0.72 짜리를 덮은 적이 있고, 두 번 끊으면 best.prev.pt 까지 밀려났다. 올리는 때는
+    끝까지 간 학습(조기 종료 포함 — `stopped` 는 사람이 멈춘 때만 참이고, 마지막 epoch 에서 멈춘 것은 `attach_callbacks`
+    가 끝난 학습으로 친다)과, **운영 가중치가 아직 없을 때**다(2026-11-17 — 멈춘 학습이어도 지킬 것이 없고, 안 올리면
+    자동 라벨링·예측 비교가 `Config.active_weights` 의 사전학습(COCO) 가중치로 돈다).
+
+    결과 dict 에 넣을 `previous_weights`·`promoted`·`run_best` 를 돌려주고, 멈춘 학습이면 안내를 찍는다.
+    """
+    promote = not stopped or not cfg.weights.exists()
+    prev = promote_weights(best, cfg) if promote else None
+    promoted = promote and best.exists()
+    if stopped:
+        print(stopped_note(best, cfg, promoted), end="", flush=True)
+    return {"previous_weights": str(prev) if prev else None, "promoted": promoted, "run_best": str(best)}
 
 
 def clear_stale_snapshot(run_dir: Path, stopped: bool) -> bool:
@@ -562,18 +587,14 @@ def clear_stale_snapshot(run_dir: Path, stopped: bool) -> bool:
 
 
 def _finish(cfg: Config, results, state: dict, extra: dict) -> dict:
-    """끝까지 간 학습의 최고 가중치를 models/ 로 올리고(promote_weights) 결과 dict 를 만든다.
+    """끝까지 간 학습의 최고 가중치를 models/ 로 올리고 결과 dict 를 만든다.
 
-    **사람이 멈춘 학습은 올리지 않는다 (2026-11-16 사용자 결정).** 전에는 멈출 때마다 그 시점의 best.pt 가 운영 가중치를
-    덮었다 — epoch 3 짜리(mAP 0.44)가 0.72 짜리를 덮은 적이 있고, 두 번 끊으면 best.prev.pt 까지 밀려났다. 멈춘 학습의
-    결과를 쓰고 싶으면 `run_best` 를 손으로 복사한다. 조기 종료(patience)는 끝난 학습이라 올린다(`state["stopped"]` 는
-    사람이 멈춘 때만 참이다).
+    올릴지는 `promote_if_finished` 가 정한다(사람이 멈춘 학습은 올리지 않는다 — 결과를 쓰고 싶으면 `run_best` 를
+    손으로 복사한다).
     """
     out = cfg.weights
     best = Path(results.save_dir) / "weights" / "best.pt"
-    prev = None if state["stopped"] else promote_weights(best, cfg)
-    if state["stopped"]:
-        print(stopped_note(best, cfg), end="", flush=True)
+    promotion = promote_if_finished(best, cfg, state["stopped"])
     clear_stale_snapshot(Path(results.save_dir), state["stopped"])
 
     metrics = {}
@@ -588,9 +609,7 @@ def _finish(cfg: Config, results, state: dict, extra: dict) -> dict:
     return {
         "run_dir": str(results.save_dir),
         "weights": str(out),
-        "previous_weights": str(prev) if prev else None,
-        "promoted": not state["stopped"] and best.exists(),
-        "run_best": str(best),
+        **promotion,
         "stopped_early": state["stopped"],
         "resume_snapshot": state["snapshot"],
         "metrics": metrics,

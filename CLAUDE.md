@@ -175,7 +175,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-17 에 361개·40초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-17 에 371개·40초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
@@ -198,7 +198,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
   index.html 의 단추·style.css 와 같은지 본다(src/autolabel/CLAUDE.md '보기는 `VIEWS` 표 한 곳').
 - 11-16 에 더한 것(Gemini 리뷰 묶음 5): `tests/test_js_filters.py`(app.js `reloadList`·`clearFilters` 와 `listControls`·
   `setListControls` — 목록을 다시 받기 전에 저장하고, 못 하면 필터 칸을 되돌리는가), `tests/test_js_capture.py`(capture.js
-  `capReset`·`capFlushStart`·`captureHide`, 11-17 부터 카메라 고르는 칸의 `키 · 장소` — `capCamLabel`·`capRenderCameras`), `tests/test_capture_commit.py`(넣는 도중 죽은 서버 — 손으로 만든 세션 폴더로),
+  `capReset`·`capFlushStart`·`captureHide`, 11-17 부터 카메라 고르는 칸의 `키 · 장소` — app.js `camLabel` 과 `capRenderCameras`·`capCamEditOpen`·`capCamDelRender`), `tests/test_capture_commit.py`(넣는 도중 죽은 서버 — 손으로 만든 세션 폴더로),
   `tests/test_label_qa.py`(가릴 영역·모델이 모르는 클래스 — 써 둔 `preds.jsonl` 을 `--reuse` 로). JS 쪽은 함수를 글자로
   떼니 이름을 바꾸면 그 파일의 `PARTS` 도 맞춘다.
 - `tests/test_health_dataset.py`(11-15)는 **진짜 학습 세트(`trainer.build_dataset`)와 내보내기(`export_yolo`)를 임시 폴더에
@@ -422,10 +422,14 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
    - 스냅샷은 **사람이 멈춘 때만** 남기고, 끝난 학습(조기 종료·완주, strip 된 `last.pt`)은 이어하기 대상에서 뺀다. 이어하기는
      **이 설정의 데이터셋으로 돈 학습만** 고른다(`trainer.uses_dataset`).
    - **사람이 멈춘 학습은 운영 가중치를 바꾸지 않는다 (11-16 사용자 결정 — 그 전에는 멈출 때마다 바뀌었다).**
-     `trainer._finish()`·`wsl_train.train()` 이 끝까지 간 학습(조기 종료 포함)만 `promote_weights` 로 올리고 이전 것을
-     `best.prev.pt` 로 남긴다. 멈춘 학습은 로그 끝에 그 학습의 best.pt 경로를 찍는다(결과의 `run_best`·`promoted`) — 쓰려면
-     손으로 복사한다. WSL 의 `--stop-at N` 도 멈춘 학습으로 친다. 규칙은 두 곳에 따로 있으니 고치면 둘 다
-     (`tests/test_promote.py`). `tools/finetune.py --promote` 는 원래부터 멈춘 학습을 올리지 않았다.
+     규칙은 `trainer.promote_if_finished` **한 곳**이다(11-17 — `_finish()`·`wsl_train.train()` 이 함께 부른다): 끝까지 간
+     학습(조기 종료 포함)만 올리고 이전 것을 `best.prev.pt` 로 남긴다. 멈춘 학습은 로그 끝에 그 학습의 best.pt 경로를
+     찍는다(결과의 `run_best`·`promoted` — CLI 요약의 가중치 줄과 화면 토스트가 읽는다) — 쓰려면 손으로 복사한다.
+     **예외 둘 (11-17 리뷰):** 운영 가중치가 아직 없으면 멈춘 학습도 올린다(지킬 것이 없고, 안 올리면 자동 라벨링이
+     사전학습 COCO 가중치로 돈다). **마지막 epoch 에서 멈춘 것은 끝난 학습으로 친다**(`_snapshot` 이 `stopped` 를 내린다 —
+     이어 붙일 것이 없어 스냅샷이 안 남는데 멈춘 학습으로 두면 승격도 이어하기도 안 됐다. `trainer.py`·`train_wsl.py`
+     둘 다, WSL 의 `--stop-at N` 도 N 이 총 epoch 이상이면 그렇다). `tests/test_promote.py`. `tools/finetune.py --promote`
+     는 원래부터 멈춘 학습을 올리지 않았다(그쪽은 따로 적혀 있다).
    - 끝난 학습의 `epochN.pt` 는 지워도 되지만(`best.pt`·`last.pt`·그래프·`results.csv` 만 남긴다) **지우기 전에 물을 것.** WSL
      안에서 지워도 `E:\WSL\Ubuntu\ext4.vhdx` 는 저절로 줄지 않는다.
 9. **Windows 는 VRAM 이 모자라도 OOM 을 내지 않고 공유 메모리로 넘겨 조용히 느려진다**(배치당 1.3초 → 45초, 사람이 PC 를 쓸

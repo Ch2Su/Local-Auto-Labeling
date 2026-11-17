@@ -55,6 +55,14 @@ def cmd_scan(args) -> int:
     return 0
 
 
+def _weights_line(info: dict) -> str:
+    """학습 요약의 가중치 줄 — 운영 가중치로 올렸으면 그 경로, 안 올렸으면(멈춘 학습 — trainer.promote_if_finished) 이
+    학습의 best.pt 다. 올리지 않았는데 운영 가중치 경로를 찍으면 그 파일이 이번 학습의 결과로 읽힌다."""
+    if info.get("promoted", True):
+        return f"  가중치    : {info['weights']}"
+    return f"  가중치    : {info['run_best']}  (이 학습의 best.pt — 운영 가중치 {info['weights']} 는 그대로)"
+
+
 def cmd_train(args) -> int:
     cfg, store = _setup(args)
     stop = StopSignal().install()
@@ -63,9 +71,10 @@ def cmd_train(args) -> int:
         info = run_train(cfg, store, epochs=args.epochs, should_stop=stop)
     finally:
         stop.clear()
-    print("\n학습 중단됨 (이어하기: labeler.py resume)" if stop.reason else "\n학습 완료")
+    # 정지 파일을 봤어도 마지막 epoch 이었으면 끝난 학습이다 — stop.reason 이 아니라 학습이 돌려준 것을 본다
+    print("\n학습 중단됨 (이어하기: labeler.py resume)" if info["stopped_early"] else "\n학습 완료")
     print(f"  결과 폴더 : {info['run_dir']}")
-    print(f"  가중치    : {info['weights']}")
+    print(_weights_line(info))
     for k, v in info["metrics"].items():
         print(f"  {k}: {v:.4f}")
     return 0
@@ -88,10 +97,10 @@ def cmd_resume(args) -> int:
         info = run_resume(cfg, store, batch=args.batch, should_stop=stop)
     finally:
         stop.clear()
-    print("\n학습 중단됨 (다시 이어하기: labeler.py resume)" if stop.reason
+    print("\n학습 중단됨 (다시 이어하기: labeler.py resume)" if info["stopped_early"]
           else "\n학습 완료 (이어서 진행)")
     print(f"  결과 폴더 : {info['run_dir']}")
-    print(f"  가중치    : {info['weights']}")
+    print(_weights_line(info))
     print(f"  재개 지점 : {info['resumed_at_epoch']}/{info['total_epochs']} epoch")
     for k, v in info["metrics"].items():
         print(f"  {k}: {v:.4f}")

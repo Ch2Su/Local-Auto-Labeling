@@ -80,6 +80,16 @@ def js_const(src: str, name: str) -> str:
     return line
 
 
+def js_const_lines(src: str, name: str) -> str:
+    """여러 줄에 걸친 `const 이름 = …;` — 맨 왼쪽 `const 이름 = ` 줄부터 `;` 로 끝나는 첫 줄까지(app.js 의 `esc`)."""
+    lines = src.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith(f"const {name} = ")), None)
+    assert start is not None, f"JS 에서 'const {name} = ' 를 찾지 못했습니다 (맨 왼쪽에서 시작해야 한다)"
+    end = next((i for i in range(start, len(lines)) if lines[i].rstrip().endswith(";")), None)
+    assert end is not None, f"JS 의 'const {name}' 이 ';' 로 끝나는 줄을 찾지 못했습니다"
+    return "\n".join(lines[start:end + 1])
+
+
 # ----------------------------------------------------------------- 입력
 
 def cover_cases() -> list[tuple[dict, list[list[float]]]]:
@@ -349,3 +359,8 @@ def test_extraction_rules():
         js_function(src, "h")
     with pytest.raises(AssertionError, match="const B"):
         js_const(src, "B")
+    many = "const one = (s) => s;\nconst two = (s) => f(s,\n  (c) => c);\nconst three = 3;\n"
+    assert js_const_lines(many, "one") == "const one = (s) => s;"            # 한 줄이어도 그 줄만
+    assert js_const_lines(many, "two") == "const two = (s) => f(s,\n  (c) => c);"
+    with pytest.raises(AssertionError, match="const four"):
+        js_const_lines(many, "four")

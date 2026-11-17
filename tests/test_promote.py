@@ -89,3 +89,97 @@ def test_wsl_training_follows_the_same_rule(cfg, run, monkeypatch, capsys):
     assert cfg.weights.read_bytes() == b"this run"
     assert (out["promoted"], out["stopped_early"]) == (True, False)
     assert cfg.weights.with_name("best.prev.pt").read_bytes() == b"operating"
+
+
+# ---------------------------------------------------------------- 2026-11-17 리뷰: 마지막 epoch 중단·운영 가중치 없음
+
+class FakeModel:
+    """`add_callback` 만 받는 대역 — 붙은 콜백을 Ultralytics 가 부르는 순서로 일으킨다."""
+
+    def __init__(self) -> None:
+        self.cbs: dict[str, list] = {}
+
+    def add_callback(self, event: str, fn) -> None:
+        self.cbs.setdefault(event, []).append(fn)
+
+    def fire(self, event: str, trainer) -> None:
+        for fn in self.cbs.get(event, []):
+            fn(trainer)
+
+
+def train_wsl():
+    import importlib.util
+
+    from helpers import ROOT
+    spec = importlib.util.spec_from_file_location("train_wsl", ROOT / "wsl" / "train_wsl.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def stop_during(kind: str, run: Path, epoch: int, epochs: int) -> dict:
+    """epoch(0부터) 의 배치 도중에 중단을 요청하고 그 epoch 의 검증·저장 뒤(on_fit_epoch_end)까지 간 상태."""
+    model = FakeModel()
+    (run / "weights" / "last.pt").write_bytes(b"last")
+    (run / "weights" / "resume.pt").unlink()
+    if kind == "windows":
+        state = trainer.attach_callbacks(model, lambda: True)
+    else:
+        stop_file = run.parent / "STOP"
+        stop_file.write_text("stop", encoding="utf-8")
+        state = {"stopped": False, "snapped": False, "snapshot": None}
+        train_wsl().attach(model, stop_file, state)
+    fake = SimpleNamespace(stop=False, epoch=epoch, epochs=epochs, last=str(run / "weights" / "last.pt"))
+    model.fire("on_train_batch_end", fake)
+    assert fake.stop and state["stopped"]                                # 요청은 받았다
+    model.fire("on_fit_epoch_end", fake)
+    model.fire("on_fit_epoch_end", fake)                                 # final_eval 이 한 번 더 부른다
+    return state
+
+
+@pytest.mark.parametrize("kind", ["windows", "wsl"])
+def test_a_stop_in_the_last_epoch_is_a_finished_training(cfg, run, kind):
+    """마지막 epoch 에서 멈추면 이어 붙일 것이 없어 스냅샷을 안 남긴다 — '멈춘 학습' 으로 두면 승격도 이어하기도 안 됐다."""
+    state = stop_during(kind, run, epoch=99, epochs=100)
+    assert state["stopped"] is False and state["snapshot"] is None
+    assert not (run / "weights" / "resume.pt").exists()
+    (run / "weights" / "resume.pt").write_bytes(b"from an earlier stop")
+    out = finish(cfg, run, stopped=state["stopped"])
+    assert cfg.weights.read_bytes() == b"this run" and (out["promoted"], out["stopped_early"]) == (True, False)
+    assert not (run / "weights" / "resume.pt").exists()                  # 예전 중단의 스냅샷으로 되감지 않는다
+
+
+@pytest.mark.parametrize("kind", ["windows", "wsl"])
+def test_a_stop_before_the_last_epoch_is_still_a_stopped_training(cfg, run, kind):
+    state = stop_during(kind, run, epoch=49, epochs=100)
+    assert state["stopped"] is True and (run / "weights" / "resume.pt").read_bytes() == b"last"
+    out = finish(cfg, run, stopped=state["stopped"])
+    assert cfg.weights.read_bytes() == b"operating" and out["promoted"] is False
+
+
+def test_a_stopped_first_training_becomes_the_operating_weights(cfg, run, monkeypatch, capsys):
+    """운영 가중치가 아직 없으면 지킬 것이 없다 — 안 올리면 자동 라벨링이 사전학습(COCO) 가중치로 돈다."""
+    cfg.weights.unlink()
+    out = finish(cfg, run, stopped=True)
+    assert cfg.weights.read_bytes() == b"this run" and not cfg.weights.with_name("best.prev.pt").exists()
+    assert (out["promoted"], out["previous_weights"], out["stopped_early"]) == (True, None, True)
+    assert (run / "weights" / "resume.pt").exists()                      # 멈춘 학습인 것은 그대로 — 이어할 수 있다
+    said = capsys.readouterr().out
+    assert "아직 없어" in said and "올렸습니다" in said and "바꾸지 않았습니다" not in said
+
+    cfg.weights.unlink()
+    out = wsl(cfg, run, monkeypatch, stopped=True)                       # WSL 도 같은 한 곳(promote_if_finished)을 지난다
+    assert cfg.weights.read_bytes() == b"this run" and out["promoted"] is True
+    out = wsl(cfg, run, monkeypatch, stopped=True)                       # 이제 운영 가중치가 있으니 다시 멈추면 그대로
+    assert out["promoted"] is False
+
+
+def test_the_cli_summary_does_not_show_the_operating_weights_as_a_stopped_runs_result(cfg, run):
+    from autolabel.cli import _weights_line
+
+    stopped = _weights_line(finish(cfg, run, stopped=True))
+    assert str(run / "weights" / "best.pt") in stopped and "그대로" in stopped
+    assert stopped.index(str(run / "weights" / "best.pt")) < stopped.index(str(cfg.weights))
+    done = _weights_line(finish(cfg, run, stopped=False))
+    assert done.strip() == f"가중치    : {cfg.weights}"
+    assert _weights_line({"weights": "w.pt"}).strip() == "가중치    : w.pt"      # 옛 꼴의 결과(키 없음)는 전처럼

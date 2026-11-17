@@ -483,8 +483,8 @@ function renderGalleryCam() {
     };
     if (!reg.length) add("", "등록된 카메라 없음 — 영상 캡처 탭에서 등록합니다");
     for (const c of reg) {
-      add(c.key, `${c.key}${c.place ? ` · ${c.place}` : ""} (${c.n})`,
-          [c.kind, c.split && `split 고정 ${c.split}`].filter(Boolean).join(" · "));
+      add(c.key, camLabel(c, c.n),
+          [c.place, c.kind, c.split && `split 고정 ${c.split}`].filter(Boolean).join(" · "));
     }
     if (reg.some((c) => c.key === want)) sel.value = want;
   }

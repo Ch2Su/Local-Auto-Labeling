@@ -1984,6 +1984,20 @@ async function deleteMaskTemplate(t) {
   await loadMaskTemplates();
 }
 
+const CAM_PLACE_MAX = 40;     // 카메라를 고르는 칸에 적는 장소의 글자 수 — 넘으면 가운데를 줄인다(전체는 title)
+
+/** 카메라를 고르는 칸에 적을 이름 — `키 · 장소 (꼬리)`. 라벨링의 카메라 필터·이미지 보기의 '옮기기'(꼬리 = 이미지 수)와 영상
+ *  캡처의 카메라 칸들(꼬리 = 종류·고정 분할·시간대)이 함께 쓴다 (11-17 — 키가 번호뿐이라 키만으로는 어느 카메라인지 알 수
+ *  없다. 전에는 세 곳이 따로 이었다). 장소는 이 PC 의 cameras.yaml 에만 있는 글이라 화면에만 쓴다. 긴 장소는 **가운데**를
+ *  줄인다 — 고르는 칸의 펼친 목록은 가장 긴 줄만큼 넓어지고, 자동 카메라의 '모름 — 영상 <이름>' 은 구별되는 곳이 이름
+ *  끝이라 앞만 남기면 같은 앞머리의 영상들이 똑같이 보인다. */
+function camLabel(cam, tail) {
+  const place = String(cam.place || "").trim();
+  const head = Math.floor((CAM_PLACE_MAX - 1) / 2);
+  const short = place.length > CAM_PLACE_MAX ? `${place.slice(0, head)}…${place.slice(head + 1 - CAM_PLACE_MAX)}` : place;
+  return cam.key + (short ? ` · ${short}` : "") + (tail != null && tail !== "" ? ` (${tail})` : "");
+}
+
 /* ── 카메라(출처) 필터 ── docs/provenance.md
  * 카메라가 붙은 이미지가 하나도 없으면(legacy 뿐이면) 숨긴다. 고른 카메라가 사라지면 '전체' 로. */
 async function loadCameras() {
@@ -1999,8 +2013,8 @@ async function loadCameras() {
   };
   add("", "카메라: 전체");
   for (const c of data.cameras) {
-    add(c.key, `${c.key}${c.place ? " · " + c.place : " · (등록 파일에 없음)"} (${c.n})`,
-        [c.kind, c.mount, c.split && `split 고정 ${c.split}`].filter(Boolean).join(" · "));
+    add(c.key, camLabel({ key: c.key, place: c.place || "(등록 파일에 없음)" }, c.n),
+        [c.place, c.kind, c.mount, c.split && `split 고정 ${c.split}`].filter(Boolean).join(" · "));
   }
   if (data.cameras.length) add(data.none_key, `출처 없음 (${data.no_camera})`);
   $("#camera-filter").classList.toggle("hidden", !data.cameras.length);
@@ -3416,7 +3430,8 @@ function watchJob(id) {
       const early = job.result && job.result.stopped_early;
       toast(
         job.status === "done"
-          ? `${$("#job-kind").textContent} ${early ? "중단됨 — 운영 가중치는 그대로입니다" : "완료"}`
+          ? `${$("#job-kind").textContent} ${!early ? "완료"
+            : job.result.promoted ? "중단됨 — 운영 가중치가 없어 이 결과를 올렸습니다" : "중단됨 — 운영 가중치는 그대로입니다"}`
           : `실패: ${job.error}`,
         job.status === "error"
       );
