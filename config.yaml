@@ -194,6 +194,8 @@ predict:
     edge_px: 3         # 조각 안쪽 경계에서 이 px 안에 닿은 박스를 '잘린 것' 으로 보고 버린다
     min_side: 800      # 긴 변이 이 값 이하인 이미지는 조각을 쓰지 않는다(통째만)
     cross_iou: 0.3     # 조각↔통째 사이 NMS IoU (같은 쪽끼리는 위 iou 그대로)
+    class_iou: 0.6     # 차량 클래스(car·truck·bus·pickup·responder)끼리는 클래스가 달라도 이 IoU 이상 겹치면 신뢰도 높은
+                       # 쪽만 남긴다(2026-11-17 — 통째는 car, 조각은 truck 이라고 낸 같은 차가 둘 다 남았다). 0 이면 끔
   confident_at: 0.90   # 이 이상이면 UI에서 '확실'로 표시
 
 sam:

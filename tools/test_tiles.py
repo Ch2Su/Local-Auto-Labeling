@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))               # test_ba
 
 from autolabel.config import Config, resolve
 from autolabel.tiling import MIN_SIDE as BIG_SIDE          # `big` 옵션: 긴 변이 이 값 이하인 이미지는 타일을 쓰지 않는다
-from autolabel.tiling import RAW_CONF, RAW_IOU, RAW_MAXDET, merge, merge_cross, run_component
+from autolabel.tiling import RAW_CONF, RAW_IOU, RAW_MAXDET, merge, merge_cross, run_component, vehicle_ids
 from test_baseline import DOMAINS as BASELINE_DOMAINS
 from test_baseline import (DOMAIN_RULE, build_split, check_class_order, class_names, fill_domains, registry,
                            sha256, write_yaml)
@@ -74,6 +74,9 @@ def parse_args():
                    help="타일·통째 검출을 합치는 NMS 의 IoU (모든 변형에 적용). 기본: mAP 0.7 / 운영 0.6. 낮추면 겹친 중복이 줄어든다")
     p.add_argument("--cross-iou", type=float, default=None,
                    help="타일↔통째 사이에만 적용하는 NMS IoU (같은 성분끼리는 mAP 0.7 / 운영 0.6 그대로). 중복만 지운다")
+    p.add_argument("--class-iou", type=float, default=None,
+                   help="차량 클래스끼리는 클래스가 달라도 이 IoU 이상 겹치면 하나만 남긴다(운영 0.6, tiling.VEHICLES) — "
+                        "--cross-iou 와 함께, 운영 지표(conf 쪽)에만 건다. mAP 쪽은 그대로")
     p.add_argument("--limit", type=int, default=0, help="앞 N장만 (맛보기)")
     p.add_argument("--out", default=None, help="만들 폴더 (기본: runs/test_tiles/<날짜>_<가중치>_<split>)")
     p.add_argument("--keep", action="store_true", help="복사한 이미지 폴더를 지우지 않는다")
@@ -237,6 +240,7 @@ def main():
     model = YOLO(weights)
     check_class_order(model.names, names, weights)  # 번호로 견주므로 DB 와 순서가 다르면 멈춘다
     known = len(model.names)
+    vehicles = vehicle_ids(model.names)        # --class-iou: 클래스가 달라도 같은 물체로 볼 묶음(tiling.VEHICLES)
     print(f"가중치 {weights} (sha256 {sha256(Path(weights))[:12]}…) / imgsz {imgsz} / 모델 클래스 {known}개"
           f" / end2end {getattr(model.model, 'end2end', '?')} / 겹침 {args.overlap} / 잘림 판정 {args.edge_px}px", flush=True)
 
@@ -266,7 +270,8 @@ def main():
             map_iou, op_iou = args.merge_iou or MAP_IOU, args.merge_iou or 0.6
             if args.cross_iou:
                 d_map = merge_cross(d, map_iou, args.cross_iou, MAP_MAXDET, 0.0)
-                d_op = merge_cross(d, op_iou, args.cross_iou, 100, args.op_conf)
+                d_op = merge_cross(d, op_iou, args.cross_iou, 100, args.op_conf,
+                                   group=vehicles if args.class_iou else None, iou_class=args.class_iou or 0.0)
             else:
                 d_map, d_op = merge(d, map_iou, MAP_MAXDET, 0.0), merge(d, op_iou, 100, args.op_conf)
             recs[v["name"]].append((eval_image(d_map, d_op, gt, w, h, imgsz, known), doms))

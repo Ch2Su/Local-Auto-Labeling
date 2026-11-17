@@ -146,7 +146,9 @@ class AutoLabeler:
 
             t = tile_cfg
             print(f"타일 추론: 통째 + {t['grid']}×{t['grid']} 타일(겹침 {t['overlap']}, 타일↔통째 NMS {t['cross_iou']})"
-                  f" — 긴 변이 {t['min_side']}px 넘는 이미지에만 타일을 더한다", flush=True)
+                  f" — 긴 변이 {t['min_side']}px 넘는 이미지에만 타일을 더한다"
+                  + (f" · 차량끼리는 클래스가 달라도 IoU {t['class_iou']} 이상이면 하나만" if t["class_iou"] > 0 else ""),
+                  flush=True)
             # 빈 이미지로 예열한다 — 성분마다 낮은 기준(RAW_*)으로 원검출을 받아 첫 추론이 CUDA 초기화로 길어지면
             # NMS 시간 제한에 걸려 검출이 잘릴 수 있다(LiveDetector·test_tiles 와 같은 이유)
             model.predict(np.zeros((64, 64, 3), np.uint8), imgsz=imgsz, device=self.cfg.device, verbose=False)

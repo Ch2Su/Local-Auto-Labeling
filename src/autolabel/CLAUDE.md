@@ -90,6 +90,10 @@
   잘린 조각 박스를 버리고 `merge_cross` 로 합친 **뒤에** predict.conf·max_det 로 거른다 — 그래서 조각을 안 쓰는 작은 이미지도
   보통 모드와 아주 조금 다를 수 있다. 그림은 `ultralytics.utils.patches.imread`(Ultralytics 가 경로로 읽을 때와 같은 함수)로 읽고,
   타일 모드만 빈 이미지로 예열한다. 타일로 라벨링한 이미지는 `model_version` 끝에 `+tiles<grid>`. 예측 비교(P)는 통째 그대로다.
+  **차량 클래스끼리는 클래스가 달라도 `class_iou`(0.6) 이상 겹치면 신뢰도 높은 쪽만 남긴다 (11-17 사용자 요청,
+  `merge_cross(group=, iou_class=)`·`tiling.VEHICLES`)** — 클래스별 NMS 라 통째 car·타일 truck 인 같은 차가 둘 다 남았다(실측은
+  docs/experiments.md '타일 추론'). 사람·자전거·오토바이·킥보드·라바콘은 묶지 않는다(탄 사람과 탈것은 실제로 겹친다) — 차량
+  클래스를 더하면 `VEHICLES` 에 넣을 것. `class_iou: 0` 이면 끈다. 보통(통째) 자동 라벨링에는 걸지 않았다. `tests/test_tiling.py`.
 - **영상 캡처 탭 (2026-11-10, 사용자 요청 — `capture.py`·`web/capture.js`, 사용법은 README '영상 캡처')** — 라벨링·이미지 보기와
   같은 페이지의 세 번째 보기(`setView('capture')`·`body.view-capture`). 영상을 올려(`POST /api/capture/upload` — multipart 가
   아니라 **본문 그대로** `request.stream()` 을 8MB 씩 쓴다, `size` 와 다르면·끊기면(ClientDisconnect) 지운다) 서버가 OpenCV 로

@@ -1005,7 +1005,7 @@ CCTV = 그 밖의 seed). 뜻이 바뀌었으므로 `cctv`·`drone`·`noncctv`·`
 | `predict.imgsz` | 자동 라벨링 해상도. 가중치와 짝이 맞아야 합니다 (s 는 640, n 은 960 이 최선이었음 — m 은 640 으로만 학습·평가) |
 | `train.overrides` | Ultralytics `train()` 인자를 그대로 전달 (손실 가중치·증강 등). |
 | `predict.conf` | 이 신뢰도 미만 예측은 버립니다. 낮추면 검출은 늘고 오검출도 늘어납니다. |
-| `predict.tiles` | 타일 추론(`자동 라벨링 (타일)`·`label --tiles` 에서만) — 조각 수 `grid` 2, 겹침 0.2, 이 긴 변(`min_side` 800px)을 넘는 이미지만, 조각↔통째 중복 지우기 `cross_iou` 0.3. 11-03 측정에서 고른 값입니다 |
+| `predict.tiles` | 타일 추론(`자동 라벨링 (타일)`·`label --tiles` 에서만) — 조각 수 `grid` 2, 겹침 0.2, 이 긴 변(`min_side` 800px)을 넘는 이미지만, 조각↔통째 중복 지우기 `cross_iou` 0.3. 11-03 측정에서 고른 값입니다. `class_iou` 0.6(2026-11-17) — 차량 클래스(car·truck·bus·pickup·responder)끼리는 클래스가 달라도 이만큼 겹치면 신뢰도 높은 쪽만 남깁니다(같은 차에 car 와 truck 박스가 겹쳐 나오던 것, 0 이면 끔) |
 | `review.low_band` / `high_band` | 검수 우선순위 계산 구간. |
 
 ### 주의: `dfl` 을 0 으로 두지 마세요
