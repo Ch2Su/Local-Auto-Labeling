@@ -15,7 +15,8 @@ import time
 import traceback
 from pathlib import Path
 
-import cmp_common as cc
+sys.path.insert(0, str(Path(__file__).resolve().parent))    # python -I 로 돌려도 옆의 cmp_common 을 찾게
+import cmp_common as cc  # noqa: E402
 
 
 def curve(csv_path: Path) -> dict:
@@ -33,28 +34,46 @@ def curve(csv_path: Path) -> dict:
             "epoch_sec_max": round(steps[-1], 2) if steps else None}
 
 
-def run_one(arm: str, fold: int, epochs: int, imgsz: int, batch: int) -> None:
+def run_one(arm: str, fold: int, epochs: int, imgsz: int, batch: int, seed: int = 0) -> None:
     from ultralytics import YOLO
 
-    sources = {"A": str(cc.REPO / "weights" / "yolo26m.pt"), "B": str(cc.ROOT / "backbone_only.pt"), "C": "yolo26m.yaml"}
+    # P2S = P2 곁가지 구조에 사전학습 가중치를 역할대로 얹은 것(make_p2side_init.py), P2N = Ultralytics 의 yolo26m-p2.yaml 에
+    # 기본 로더(이름으로만 맞춤)로 얹은 것
+    sources = {"A": str(cc.REPO / "weights" / "yolo26m.pt"), "B": str(cc.ROOT / "backbone_only.pt"), "C": "yolo26m.yaml",
+               "P2S": str(cc.ROOT / "p2" / "p2side_init.pt"), "P2N": "yolo26m-p2.yaml",
+               # O = Objects365 v1 사전학습 가중치 그대로(이름이 같은 6클래스만 분류 줄이 옮겨진다),
+               # OM = 같은 가중치의 클래스 이름을 우리 이름에 맞춘 사본(make_o365_mapped.py — pickup·cone·responder 까지 9클래스)
+               "O": str(cc.ROOT / "dl_o365" / "yolo26m-objv1-150.pt"), "OM": str(cc.ROOT / "o365_mapped.pt"),
+               # F = 운영 가중치(COCO 에서 출발해 옛 데이터 학습 3,725장·8클래스로 학습한 yolo26m)를 파운데이션으로
+               "F": str(cc.REPO / "models" / "best_y26m_8cls.pt"),
+               # FZ11·FZ23 = F 와 같은 출발점인데 앞쪽을 얼린다(아래 freeze) — 옛 데이터로 배운 특징을 건드리지 않게
+               "FZ11": str(cc.REPO / "models" / "best_y26m_8cls.pt"), "FZ23": str(cc.REPO / "models" / "best_y26m_8cls.pt")}
+    # Ultralytics 의 freeze=N 은 층 0..N-1 의 파라미터를 고정하고 그 층들의 BatchNorm 통계도 멈춘다(trainer._model_train).
+    # 11 = backbone(층 0-10)만 얼림, 23 = backbone·neck(층 0-22)을 얼려 Detect(층 23)만 학습
+    freeze = {"FZ11": 11, "FZ23": 23}
     runs = cc.ROOT / "runs"
     tag = f"e{epochs}"
-    name = f"{arm}_f{fold}_{tag}"
+    name = f"{arm}_f{fold}_{tag}" + (f"_s{seed}" if seed else "")
     out = runs / name
     if (out / "done.json").exists():
         print(f"[건너뜀] {name} — 이미 끝났다", flush=True)
         return
     data = str(cc.ROOT / "folds" / f"f{fold}.yaml")
     val_files = cc.fold_files(fold, "val")
-    kw = dict(data=data, epochs=epochs, batch=batch, imgsz=imgsz, device=0, patience=120, workers=4, seed=0,
+    kw = dict(data=data, epochs=epochs, batch=batch, imgsz=imgsz, device=0, patience=120, workers=4, seed=seed,
               project=str(runs), name=name, exist_ok=True, plots=False, pretrained=(arm != "C"), amp=True, cos_lr=True,
               cache=False, box=7.5, cls=1.5, dfl=1.5, close_mosaic=10, hsv_h=0.015, hsv_s=0.7, hsv_v=0.4, fliplr=0.5,
               flipud=0.0, save_period=-1)
+    if arm in freeze:
+        kw["freeze"] = freeze[arm]
     print(f"=== START {name}", flush=True)
     t0 = time.time()
-    YOLO(sources[arm]).train(**kw)
-    rec = {"name": name, "arm": arm, "fold": fold, "tag": tag, "epochs": epochs, "imgsz": imgsz, "batch": batch,
-           "train_seconds": round(time.time() - t0, 1), "val_images": len(val_files), **curve(out / "results.csv")}
+    model = YOLO(sources[arm])
+    if arm == "P2N":
+        model.load(str(cc.REPO / "weights" / "yolo26m.pt"))
+    model.train(**kw)
+    rec = {"name": name, "arm": arm, "fold": fold, "tag": tag, "epochs": epochs, "imgsz": imgsz, "batch": batch, "seed": seed,
+           "freeze": freeze.get(arm, 0), "train_seconds": round(time.time() - t0, 1), "val_images": len(val_files), **curve(out / "results.csv")}
     for which in ("last", "best"):
         m = YOLO(str(out / "weights" / f"{which}.pt"))
         r = m.val(data=data, split="val", imgsz=imgsz, batch=8, device=0, iou=0.6, plots=False, verbose=False,
@@ -79,10 +98,11 @@ def main() -> int:
     os.chdir(cc.ROOT / "work")          # AMP 확인이 찾는 yolo26n.pt 가 여기 있다(내려받지 않게)
     failed = 0
     for job in args.jobs.split(","):
-        arm, fold, epochs = job.split(".")
+        arm, fold, epochs, *rest = job.split(".")
+        seed = int(rest[0]) if rest else 0      # 넷째 칸은 seed (없으면 0)
         for attempt in (1, 2):          # 두 줄기가 같은 라벨 캐시를 동시에 건드려 죽는 드문 경우를 한 번 다시 해 본다
             try:
-                run_one(arm, int(fold), int(epochs), args.imgsz, args.batch)
+                run_one(arm, int(fold), int(epochs), args.imgsz, args.batch, seed)
                 break
             except Exception:
                 print(f"[실패 {attempt}/2] {job}\n{traceback.format_exc()}", flush=True)

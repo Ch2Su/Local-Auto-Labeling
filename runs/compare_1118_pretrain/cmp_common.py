@@ -12,6 +12,11 @@ SELF_OK = {n: {n} for n in NAMES}
 # COCO 로만 학습한 모델의 클래스 -> 우리 클래스(맞다고 칠 것). responder·cone·scooter 는 COCO 에 없다.
 COCO_OK = {"person": {"person"}, "bicycle": {"bicycle"}, "car": {"car"}, "motorcycle": {"motorcycle"},
            "bus": {"bus"}, "truck": {"truck", "pickup"}}
+# Objects365 v1 로만 학습한 모델의 클래스 -> 우리 클래스. pickup truck 이 따로 있어 truck 은 truck 만 맞다고 친다.
+# scooter(전동 킥보드)에 해당하는 O365 클래스는 없다(hoverboard·motorcycle 은 아니다).
+O365_OK = {"person": {"person"}, "bicycle": {"bicycle"}, "motorcycle": {"motorcycle"}, "bus": {"bus"}, "truck": {"truck"},
+           "pickup truck": {"pickup"}, "car": {"car"}, "suv": {"car"}, "van": {"car"}, "sports car": {"car"},
+           "race car": {"car"}, "fire truck": {"responder"}, "ambulance": {"responder"}, "traffic cone": {"cone"}}
 MATCH_IOU = 0.5
 CONF = 0.25
 
@@ -37,12 +42,20 @@ def load_gt(img: Path, w: int, h: int):
     return out
 
 
+SIZE_BINS = ("<8", "8-16", "16-32", "32+")       # 입력 크기로 줄였을 때 정답 박스의 짧은 변(px)
+
+
+def size_bin(px: float) -> str:
+    return SIZE_BINS[0] if px < 8 else SIZE_BINS[1] if px < 16 else SIZE_BINS[2] if px < 32 else SIZE_BINS[3]
+
+
 def count(model, files, ok, imgsz, batch=8):
     """conf 순 탐욕 1:1 짝짓기(IoU 0.5). found = 자리만 맞음, klass = 클래스도 맞음, false = 정답 없는 예측.
 
     ok = {모델 클래스 이름: 그 예측이 맞다고 칠 우리 클래스들}. ok 에 없는 클래스의 예측은 세지 않는다(other).
     """
     total, found, klass, false = Counter(), Counter(), Counter(), Counter()
+    size_total, size_found = Counter(), Counter()
     other = 0
     files = [Path(f) for f in files]
     for i in range(0, len(files), batch):
@@ -51,8 +64,11 @@ def count(model, files, ok, imgsz, batch=8):
         for f, r in zip(chunk, res):
             h, w = r.orig_shape
             gts = load_gt(f, w, h)
-            for g in gts:
+            scale = imgsz / max(w, h)
+            bins = [size_bin(min(g[3] - g[1], g[4] - g[2]) * scale) for g in gts]
+            for g, sb in zip(gts, bins):
                 total[g[0]] += 1
+                size_total[sb] += 1
             gt_xy = np.array([g[1:] for g in gts], dtype=float).reshape(-1, 4)
             used = np.zeros(len(gts), dtype=bool)
             b = r.boxes
@@ -69,11 +85,13 @@ def count(model, files, ok, imgsz, batch=8):
                     if v[k] >= MATCH_IOU:
                         used[k] = True
                         found[gts[k][0]] += 1
+                        size_found[bins[k]] += 1
                         if gts[k][0] in ok[name]:
                             klass[gts[k][0]] += 1
                         continue
                 false[name] += 1
-    return {"total": dict(total), "found": dict(found), "klass": dict(klass), "false": dict(false), "other": other}
+    return {"total": dict(total), "found": dict(found), "klass": dict(klass), "false": dict(false), "other": other,
+            "size_total": dict(size_total), "size_found": dict(size_found)}
 
 
 def brief(c: dict) -> str:
