@@ -85,9 +85,10 @@ def main() -> int:
         for fold in (0, 1, 2):
             if name in fixed:
                 path, ok = fixed[name]
-            else:                                   # 학습한 갈래: runs/<이름>_f<fold>_e100[_s<seed>]/weights/last.pt
-                arm, _, seed = name.partition("@")
-                path = cc.ROOT / "runs" / (f"{arm}_f{fold}_e100" + (f"_s{seed}" if seed else "")) / "weights" / "last.pt"
+            else:                                   # 학습한 갈래: runs/<갈래>_f<fold>_e<epoch>[_s<seed>]/weights/last.pt
+                arm, _, seed = name.partition("@")  # 이름은 '갈래[:epoch][@seed]' — epoch 을 안 적으면 100 (예: FZ23:25, P2S@1)
+                arm, _, ep = arm.partition(":")
+                path = cc.ROOT / "runs" / (f"{arm}_f{fold}_e{ep or 100}" + (f"_s{seed}" if seed else "")) / "weights" / "last.pt"
                 ok = cc.SELF_OK
             model = YOLO(str(path))
             preds += predict_all(model, cc.fold_files(fold, "val"), args.imgsz, device, args.batch)

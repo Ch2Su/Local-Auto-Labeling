@@ -38,15 +38,19 @@ def curve(name):
 
 
 def main() -> int:
-    res = [r for r in load("results.jsonl") if r["epochs"] == 100]
-    print("## 3묶음 합계 (마지막 가중치 last.pt, 640, conf 0.25)")
+    epochs = int(sys.argv[1]) if len(sys.argv) > 1 else 100        # python -I summarize.py 25 -> 25 epoch 일정으로 돌린 실행만
+    marks = (1, 10, 25, 50, 100) if epochs == 100 else tuple(sorted({1, max(1, epochs // 5), max(1, epochs * 2 // 5),
+                                                                     max(1, epochs * 3 // 5), epochs}))
+    res = [r for r in load("results.jsonl") if r["epochs"] == epochs]
+    print(f"## 3묶음 합계 ({epochs} epoch 일정, 마지막 가중치 last.pt, 640, conf 0.25)")
     print("| 갈래 | seed | mAP50-95 묶음별 | 평균 | 찾음 | 클래스까지 | 헛 박스 | best.pt 평균 mAP | 실행당 초(중앙값) |")
     print("|---|---|---|---|---|---|---|---|---|")
     per_class, curves = {}, {}
     for arm, seed in ARMS:
         rs = sorted([r for r in res if r["arm"] == arm and r.get("seed", 0) == seed], key=lambda r: r["fold"])
         if len(rs) != 3:
-            print(f"| {arm} | {seed} | (묶음 {len(rs)}개뿐) |")
+            if rs:
+                print(f"| {arm} | {seed} | (묶음 {len(rs)}개뿐) |")
             continue
         t, f, k, x = total([r["last"] for r in rs])
         maps = [r["last"]["map"] for r in rs]
@@ -56,9 +60,12 @@ def main() -> int:
               f"{sum(k.values())} | {x} | {sum(bmaps) / 3:.3f} | {secs[1]:.0f} |")
         per_class[(arm, seed)] = (t, f, k)
         cv = [curve(r["name"]) for r in rs]
-        if all(len(c) >= 100 for c in cv):
-            curves[(arm, seed)] = [sum(c[e - 1] for c in cv) / 3 for e in (1, 10, 25, 50, 100)] + \
+        if all(len(c) >= epochs for c in cv):
+            curves[(arm, seed)] = [sum(c[e - 1] for c in cv) / 3 for e in marks] + \
                                   [sum(max(c) for c in cv) / 3, [c.index(max(c)) + 1 for c in cv]]
+    if not per_class:
+        print("(이 epoch 수로 세 묶음을 다 돌린 갈래가 없다)")
+        return 0
     print("\n## 클래스별 찾음/클래스까지 (정답 수는 머리글)")
     t0 = next(iter(per_class.values()))[0]
     print("| 갈래 | seed | " + " | ".join(f"{n} ({t0.get(n, 0)})" for n in NAMES) + " |")
@@ -66,10 +73,10 @@ def main() -> int:
     for (arm, seed), (t, f, k) in per_class.items():
         print(f"| {arm} | {seed} | " + " | ".join(f"{f.get(n, 0)}/{k.get(n, 0)}" for n in NAMES) + " |")
     print("\n## 검증 mAP50-95 곡선 (3묶음 평균)")
-    print("| 갈래 | seed | 1 epoch | 10 | 25 | 50 | 100 | 묶음별 최댓값의 평균 | 최댓값이 나온 epoch |")
-    print("|---|---|---|---|---|---|---|---|---|")
+    print("| 갈래 | seed | " + " | ".join(f"{e} epoch" for e in marks) + " | 묶음별 최댓값의 평균 | 최댓값이 나온 epoch |")
+    print("|---|---|" + "---|" * (len(marks) + 2))
     for (arm, seed), v in curves.items():
-        print(f"| {arm} | {seed} | " + " | ".join(f"{x:.3f}" for x in v[:6]) + f" | {v[6]} |")
+        print(f"| {arm} | {seed} | " + " | ".join(f"{x:.3f}" for x in v[:-1]) + f" | {v[-1]} |")
     sw = load("sweep.jsonl")
     if sw:
         print("\n## conf 문턱별 찾음/헛 박스, conf 0.25 에서 정답 크기별 찾은 수 (640)")
