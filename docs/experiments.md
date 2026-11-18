@@ -711,3 +711,27 @@ truck(83) 0.874 → 0.878 → 0.857, pickup(37) 0.715 → 0.768 → 0.723, bus(1
     batch 수 자체보다 GPU·torch 쪽 계산 경로로 보이지만 확인하지 않았다. conf 0.25 칸은 batch 를 바꿔도 같다. **PC 가 다른 기록끼리는
     넷째 자리를 견주지 말 것**(본 차이: 전체 mAP50-95 0.0002, 클래스별 mAP 는 car 0.0009, P 는 1920 의 motorcycle 0.0013 까지). 기록에 `batch`·`torch` 도 남기게 했다(`eval_test.py`).
   - 안 본 것: pod(Runpod), 노트북 WSL 의 조합(torch 2.11.0+cu130), 이 WSL 환경으로 하는 학습(`train_wsl.py`·WSL 학습 버튼).
+- **클래스 짝별 혼동, P2 구조에 옮겨지는 가중치 (2026-11-18, 집 데스크탑 Windows `.venv` — Ultralytics 8.4.212·RTX 5060 Ti 16GB. 사용자의 '라벨링 용도에 맞는 모델 설계' 질문의 근거로 쟀다 — 코드·DB 무변경).**
+  - 같은 newtest8(119장·401박스)을 같은 가중치(`best_y26m_8cls.pt`)로 `eval_test.pin_confusion_thresholds`(conf 0.25·IoU 0.45)·NMS IoU
+    0.6·batch 4 로 다시 쟀다. 맞음·놓침·헛 박스·클래스 틀림이 640 → 344·31·20·26, 1280 → 371·8·23·22 로 위 11-15 의 8.4.212 기록과 같다.
+  - **1280 의 클래스 틀림 22건(정답 → 예측):** car → pickup 8, pickup → car 6, pickup → truck 3, truck → pickup 1, truck → car 1,
+    bus → car 1, bus → truck 1, bicycle → person 1. **18건이 pickup 이 낀 짝이고 21건이 차량끼리다.** 정답 pickup 37개 가운데 9개가
+    다른 차종으로 나왔다(놓친 pickup 은 없다). 640 의 26건: pickup → car 6, pickup → truck 5, car → pickup 4, bus → car 4,
+    truck → pickup 2, truck → car 1, car → truck 1, bus → truck 1, bicycle → person 1, motorcycle → person 1.
+  - 놓침: 640 은 person 14·car 10·bicycle 2·truck 2·pickup 2·scooter 1, 1280 은 car 3·person 2·truck 2·motorcycle 1. 헛 박스: 640 은
+    car 6·truck 5·person 4·pickup 4·bus 1, 1280 은 car 10·pickup 4·person 3·truck 3·motorcycle 2·bus 1(클래스별 헛 박스는 Ultralytics
+    버전에 따라 달라진다 — 위 'WSL 에서 쟀다').
+  - 읽는 법: 입력을 1280 으로 올리면 고칠 박스(놓침 + 헛 박스 + 클래스 틀림)가 77 → 53 이 되고, 남는 53 가운데 22 가 클래스
+    틀림(대부분 pickup 경계)이다 — 해상도를 올린 뒤의 약점은 찾기보다 차종 가르기 쪽이다. 119장·한 번의 측정이라 짝마다 한두 개
+    차이는 잡음이다. responder·cone 이 있는 이미지는 이 세트에서 빠져 있다.
+  - **`yolo26-p2.yaml`(stride 4 출력을 더한 구조 — 8.4.212 에 들어 있다)에 지금 사전학습 가중치를 얹으면** Ultralytics 가
+    `Transferred 420/962 items`(m)·`709/1370`(l)이라고 낸다. 파라미터 수로는 m 59%(12.57M / 21.20M)·l 62%(16.13M / 25.89M)이고,
+    backbone(0–10층)은 전부 옮겨지지만 그 뒤(neck·head)는 20%·25% 뿐이다(층 번호가 밀려 이름이 안 맞는다). P2 용 사전학습
+    가중치가 따로 있는지는 찾아보지 않았고, 학습으로 재 본 것도 아니다.
+  - 그날 DB(읽기 전용 — 승인 175장·카메라 35대·분할 전부 미배정): 가릴 영역이 반 이상 덮은 1,107개를 뺀 박스가 867개다 —
+    car 406·person 189·truck 107·pickup 69·responder 36·bus 25·bicycle 15·cone 12·motorcycle 4·scooter 4. 짧은 변 32px 미만은 입력
+    640 에서 65.3%(중앙값 22.9px), 1280 에서 36.3%(45.9px), 1920 에서 17.3%(68.8px)다(`masks.drops`·`health.short_side` 로 셌다 —
+    데이터 점검 화면을 띄워 견주지는 않았다).
+  - 타일 2×2(겹침 0.2)는 2560 폭 이미지를 1,423px 폭 조각으로 자른다(`tiling.tile_grid`) — 640 으로 추론하면 물체 크기로는 통째
+    약 1,150px 추론과 같다. **타일 모드를 새 데이터에서 통째 1280 과 견준 측정은 아직 없다**(`tools/test_tiles.py` 는 DB 의 test·val
+    분할만 재는데 지금 DB 는 전부 미배정이다).
