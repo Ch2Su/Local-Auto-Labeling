@@ -6,6 +6,9 @@ cone 과 IoU 0.3 이상이면 버린다. 다른 점: ① 문턱을 **이름마�
 ③ 승인된 프레임은 건드리지 않는다(검수 대기만) ④ 묶음 이름을 따로 준다 — 검수 화면 '변경 기록' 에서 묶음째 되돌릴 수 있다.
 기본은 보기만. --apply 면 DB 를 먼저 떠 두고(<db>.bak_sam3_<시각>) 쓴다.
 
+11-20 추가: --max 이름=값 은 그 값 **미만**만 쓴다(이미 넣은 띠를 다시 넣지 않게 — 예: tow truck 0.6~0.7 만), --skip-edited-since
+<UTC ISO 시각> 은 그 뒤에 사람이 고친(ui·mask·restore·revert) 검수 대기 프레임을 건너뛴다(사람이 되돌린 후보를 다시 넣지 않게).
+
   python -I sam3_import.py <hw_sam31_vs_owl.jsonl> --config <작업 사본 config.yaml> --batch "이름" --min "fire truck=0.5" … [--apply]
 """
 import argparse
@@ -33,10 +36,13 @@ def main() -> int:
     ap.add_argument("--config", required=True)
     ap.add_argument("--batch", required=True, help="묶음 이름(뒤에 시각이 붙는다)")
     ap.add_argument("--min", action="append", default=[], help="이름=문턱 (준 이름만 쓴다)")
+    ap.add_argument("--max", action="append", default=[], help="이름=위 문턱 (이 값 미만만 쓴다)")
+    ap.add_argument("--skip-edited-since", default=None, help="이 UTC ISO 시각 뒤에 사람이 고친 프레임은 건너뛴다")
     ap.add_argument("--apply", action="store_true")
     a = ap.parse_args()
     sys.stdout.reconfigure(errors="replace")
     mins = {k.strip(): float(v) for k, v in (m.split("=") for m in a.min)}
+    maxs = {k.strip(): float(v) for k, v in (m.split("=") for m in a.max)}
     cfg = Config.load(a.config)
     if REPO in cfg.db.parents:
         raise SystemExit(f"[멈춤] {cfg.db} 는 저장소 안의 DB 다 — 이 스크립트는 작업 사본에만 쓴다")
@@ -44,6 +50,12 @@ def main() -> int:
     names = store.get_classes()
     idx = {n: i for i, n in enumerate(names)}
     recs = [json.loads(x) for x in a.jsonl.read_text(encoding="utf-8").split("\n") if x.strip()]
+    edited = set()
+    if a.skip_edited_since:
+        ro = sqlite3.connect(f"file:{cfg.db.as_posix()}?mode=ro", uri=True)
+        edited = {r[0] for r in ro.execute("SELECT DISTINCT image_id FROM box_history WHERE at >= ? AND source IN "
+                                           "('ui', 'mask', 'restore', 'revert')", (a.skip_edited_since,))}
+        ro.close()
     todo, tally, skipped, by_name, by_cam = [], collections.Counter(), collections.Counter(), collections.Counter(), collections.Counter()
     for r in recs:
         img = store.get_image(r["id"])
@@ -53,7 +65,11 @@ def main() -> int:
         if img["status"] != "pending":
             skipped[f"상태 {img['status']}"] += 1
             continue
-        cands = [{"label": x[6], "score": x[1], "xyxy": x[2:6]} for x in r["sam"] if x[6] in mins and x[1] >= mins[x[6]]]
+        if r["id"] in edited:
+            skipped["사람이 고친 프레임"] += 1
+            continue
+        cands = [{"label": x[6], "score": x[1], "xyxy": x[2:6]} for x in r["sam"]
+                 if x[6] in mins and mins[x[6]] <= x[1] < maxs.get(x[6], float("inf"))]
         if not cands:
             continue
         before = store.get_boxes(r["id"])
@@ -75,7 +91,7 @@ def main() -> int:
         for c in cands:
             by_name[c["label"]] += 1
     print(f"후보 파일 {len(recs)}장 · 바뀔 이미지 {len(todo)}장 · 건너뜀 {dict(skipped)}")
-    print("  문턱:", mins)
+    print("  문턱:", mins, "· 위 문턱(미만):", maxs)
     print("  문턱을 넘은 후보(이름별):", dict(by_name))
     print("  박스:", ", ".join(f"{k} {v}" for k, v in sorted(tally.items())))
     print("  카메라별 바뀌거나 더해질 박스:", dict(sorted(by_cam.items())))
