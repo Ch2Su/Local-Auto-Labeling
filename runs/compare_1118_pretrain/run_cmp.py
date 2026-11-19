@@ -47,10 +47,14 @@ def run_one(arm: str, fold: int, epochs: int, imgsz: int, batch: int, seed: int 
                # F = 운영 가중치(COCO 에서 출발해 옛 데이터 학습 3,725장·8클래스로 학습한 yolo26m)를 파운데이션으로
                "F": str(cc.REPO / "models" / "best_y26m_8cls.pt"),
                # FZ11·FZ23 = F 와 같은 출발점인데 앞쪽을 얼린다(아래 freeze) — 옛 데이터로 배운 특징을 건드리지 않게
-               "FZ11": str(cc.REPO / "models" / "best_y26m_8cls.pt"), "FZ23": str(cc.REPO / "models" / "best_y26m_8cls.pt")}
+               "FZ11": str(cc.REPO / "models" / "best_y26m_8cls.pt"), "FZ23": str(cc.REPO / "models" / "best_y26m_8cls.pt"),
+               # FZ11X1·FZ11X2 = FZ11 과 같은데 학습 쪽에만 옛 데이터의 responder·cone 이미지를 더한다(make_extra.py —
+               # X1 = 두 클래스 박스가 든 옛 이미지 전부, X2 = 그중 카메라가 적힌 프레임만). 검증 목록은 그대로다.
+               "FZ11X1": str(cc.REPO / "models" / "best_y26m_8cls.pt"), "FZ11X2": str(cc.REPO / "models" / "best_y26m_8cls.pt")}
     # Ultralytics 의 freeze=N 은 층 0..N-1 의 파라미터를 고정하고 그 층들의 BatchNorm 통계도 멈춘다(trainer._model_train).
     # 11 = backbone(층 0-10)만 얼림, 23 = backbone·neck(층 0-22)을 얼려 Detect(층 23)만 학습
-    freeze = {"FZ11": 11, "FZ23": 23}
+    freeze = {"FZ11": 11, "FZ23": 23, "FZ11X1": 11, "FZ11X2": 11}
+    extra = {"FZ11X1": "X1", "FZ11X2": "X2"}
     runs = cc.ROOT / "runs"
     tag = f"e{epochs}"
     name = f"{arm}_f{fold}_{tag}" + (f"_s{seed}" if seed else "")
@@ -58,7 +62,9 @@ def run_one(arm: str, fold: int, epochs: int, imgsz: int, batch: int, seed: int 
     if (out / "done.json").exists():
         print(f"[건너뜀] {name} — 이미 끝났다", flush=True)
         return
-    data = str(cc.ROOT / "folds" / f"f{fold}.yaml")
+    data = str(cc.ROOT / "folds" / (f"f{fold}_{extra[arm]}.yaml" if arm in extra else f"f{fold}.yaml"))
+    train_images = sum(1 for x in (cc.ROOT / "folds" / (f"f{fold}_train_{extra[arm]}.txt" if arm in extra else f"f{fold}_train.txt"))
+                       .read_text(encoding="utf-8").split("\n") if x.strip())
     val_files = cc.fold_files(fold, "val")
     kw = dict(data=data, epochs=epochs, batch=batch, imgsz=imgsz, device=0, patience=120, workers=4, seed=seed,
               project=str(runs), name=name, exist_ok=True, plots=False, pretrained=(arm != "C"), amp=True, cos_lr=True,
@@ -73,7 +79,8 @@ def run_one(arm: str, fold: int, epochs: int, imgsz: int, batch: int, seed: int 
         model.load(str(cc.REPO / "weights" / "yolo26m.pt"))
     model.train(**kw)
     rec = {"name": name, "arm": arm, "fold": fold, "tag": tag, "epochs": epochs, "imgsz": imgsz, "batch": batch, "seed": seed,
-           "freeze": freeze.get(arm, 0), "train_seconds": round(time.time() - t0, 1), "val_images": len(val_files), **curve(out / "results.csv")}
+           "freeze": freeze.get(arm, 0), "extra": extra.get(arm), "train_images": train_images,
+           "train_seconds": round(time.time() - t0, 1), "val_images": len(val_files), **curve(out / "results.csv")}
     for which in ("last", "best"):
         m = YOLO(str(out / "weights" / f"{which}.pt"))
         r = m.val(data=data, split="val", imgsz=imgsz, batch=8, device=0, iou=0.6, plots=False, verbose=False,
