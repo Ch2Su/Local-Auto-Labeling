@@ -1,0 +1,71 @@
+{
+ "tag": "sam31_full",
+ "weights": "sam3.1_multiplex.pt",
+ "imgsz": 1008,
+ "tiles": 0,
+ "images": 175,
+ "dry": false,
+ "sec_per_image_median": 0.482,
+ "vram_peak_gib": 6.49,
+ "by_conf": {
+  "0.25": {
+   "total": {
+    "responder": 36,
+    "cone": 12
+   },
+   "hit": {
+    "responder": 30,
+    "cone": 11
+   },
+   "where": {
+    "cone:맞음": 11,
+    "cone:정답 없는 자리": 93,
+    "responder:다른 클래스(bus)": 3,
+    "responder:다른 클래스(car)": 198,
+    "responder:다른 클래스(pickup)": 55,
+    "responder:다른 클래스(truck)": 34,
+    "responder:맞음": 30,
+    "responder:정답 없는 자리": 33
+   }
+  },
+  "0.35": {
+   "total": {
+    "responder": 36,
+    "cone": 12
+   },
+   "hit": {
+    "responder": 29,
+    "cone": 11
+   },
+   "where": {
+    "cone:맞음": 11,
+    "cone:정답 없는 자리": 41,
+    "responder:다른 클래스(bus)": 2,
+    "responder:다른 클래스(car)": 136,
+    "responder:다른 클래스(pickup)": 46,
+    "responder:다른 클래스(truck)": 21,
+    "responder:맞음": 29,
+    "responder:정답 없는 자리": 14
+   }
+  },
+  "0.5": {
+   "total": {
+    "responder": 36,
+    "cone": 12
+   },
+   "hit": {
+    "responder": 27,
+    "cone": 11
+   },
+   "where": {
+    "cone:맞음": 11,
+    "cone:정답 없는 자리": 23,
+    "responder:다른 클래스(car)": 73,
+    "responder:다른 클래스(pickup)": 32,
+    "responder:다른 클래스(truck)": 11,
+    "responder:맞음": 27,
+    "responder:정답 없는 자리": 3
+   }
+  }
+ }
+}
