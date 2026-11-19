@@ -36,6 +36,14 @@ def main() -> int:
             if any(row.values()):
                 print(f"   {i:2d} f{r['fold']} {r['short640']:6.1f}px  " + "  ".join(f"{a}={k}/{len(arms[a])}" for a, k in row.items()))
         print("  맞힌 seed 수의 분포(정답 개수):", {a: dict(sorted(d.items())) for a, d in dist.items()})
+        # 카메라별(이름 대신 정답이 많은 순서의 번호) — 효과가 한 카메라에 몰렸는지
+        cams = Counter(r["camera"] for r in rs)
+        order = {c: f"카메라{i}" for i, (c, _) in enumerate(cams.most_common(), 1)}
+        print("  카메라별 — 정답 수 · 갈래마다 seed 평균 맞힌 수 · 정답이 든 이미지 수")
+        for c, n in cams.most_common():
+            sub = [r for r in rs if r["camera"] == c]
+            row = {a: sum(1 for nm in names for r in sub if (r["pred"].get(nm) or ("",))[0] == cls) / len(names) for a, names in arms.items()}
+            print(f"   {order[c]}: 정답 {n} · 이미지 {len({r['file'] for r in sub})} · " + "  ".join(f"{a}={v:.1f}" for a, v in row.items()))
     return 0
 
 
