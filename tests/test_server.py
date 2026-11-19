@@ -131,6 +131,80 @@ def test_images_of_a_camera_pinned_to_test_take_no_masks(client, cfg, store, add
     assert client.put(f"/api/images/{i}/boxes", json={"boxes": [], "masks": [area]}).status_code == 409
 
 
+# ----------------------------------------------------------------- 가릴 영역 — 다각형 (2026-11-19)
+
+PTS = [[0.1, 0.1], [0.4, 0.15], [0.2, 0.45]]
+
+
+def test_polygon_masks_go_through_the_api(client, store, add_image):
+    i = add_image("a.jpg", status="pending", boxes=[box()], split="train")
+    rect = {"x1": 0.5, "y1": 0.5, "x2": 0.75, "y2": 0.75}
+    r = client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": [rect, {"pts": PTS}]})
+    assert r.status_code == 200
+    assert store.get_masks(i) == [(0.5, 0.5, 0.75, 0.75), tuple(map(tuple, PTS))]
+    meta = client.get(f"/api/images/{i}").json()
+    assert meta["masks"] == [[0.5, 0.5, 0.75, 0.75], PTS]               # 사각형은 숫자 넷, 다각형은 점 목록
+    assert meta["mask_poly"] is True                                    # 화면은 이것이 있을 때만 다각형을 그리게 한다
+    # pts 가 있으면 다각형이다 — 함께 온 x1~y2 는 보지 않는다(바깥 사각형을 실어 보내는 화면이 있어도)
+    both = {"x1": 0.0, "y1": 0.0, "x2": 1.0, "y2": 1.0, "pts": PTS}
+    assert client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": [both]}).status_code == 200
+    assert store.get_masks(i) == [tuple(map(tuple, PTS))]
+
+
+@pytest.mark.parametrize("mask, status", [
+    ({"pts": [[0.1, "NaN"], [0.4, 0.15], [0.2, 0.45]]}, 422),           # 숫자가 아닌 꼭짓점
+    ({"pts": [[0.1, 0.1, 0.3], [0.4, 0.15], [0.2, 0.45]]}, 422),        # 점은 (x, y) 둘
+    ({"x1": 0.1, "y1": 0.1}, 422),                                      # 사각형도 다각형도 아니다
+    ({"pts": [[0.1 + 0.001 * k, 0.1 + 0.3 * (k % 2)] for k in range(101)]}, 400),     # 꼭짓점 한도(MAX_POINTS)
+])
+def test_bad_polygons_are_rejected_not_saved(client, store, add_image, mask, status):
+    i = add_image("a.jpg", status="pending", boxes=[box()])
+    r = client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": [mask]})
+    assert r.status_code == status
+    assert store.get_masks(i) == [] and keys(store.get_boxes(i)) == keys([box()])
+
+
+def test_nan_inside_polygon_points_is_422(client, store, add_image):
+    i = add_image("a.jpg", status="pending", boxes=[box()])
+    body = '{"boxes": [], "masks": [{"pts": [[0.1, NaN], [0.4, 0.15], [0.2, 0.45]]}]}'
+    r = client.put(f"/api/images/{i}/boxes", content=body, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422 and store.get_masks(i) == []
+
+
+def test_test_images_take_no_polygons(client, store, add_image):
+    i = add_image("a.jpg", status="approved", boxes=[box()], split="test")
+    assert client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": [{"pts": PTS}]}).status_code == 409
+    assert store.get_masks(i) == []
+
+
+def test_restoring_history_brings_polygons_back(client, store, add_image):
+    i = add_image("a.jpg", status="pending", boxes=[box()], split="train")
+    client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": [{"pts": PTS}]})
+    moved = [PTS[0], [0.45, 0.15], PTS[2]]
+    client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": [{"pts": moved}]})
+    entry = client.get(f"/api/images/{i}/history").json()["entries"][0]          # 꼭짓점을 옮긴 저장
+    assert (entry["masks_before"], entry["masks_after"]) == ([PTS], [moved])
+    r = client.post(f"/api/images/{i}/history/{entry['id']}/restore", json={"which": "before"})
+    assert r.status_code == 200 and r.json()["masks"] == [PTS]
+    assert store.get_masks(i) == [tuple(map(tuple, PTS))]
+
+
+def test_polygon_templates_through_the_api(client, store, add_image):
+    i = add_image("a.jpg", status="pending", boxes=[box()], split="train")
+    rect = {"x1": 0.5, "y1": 0.5, "x2": 0.75, "y2": 0.75}
+    r = client.post("/api/mask-templates", json={"name": "다각형", "masks": [rect, {"pts": PTS}], "width": 1280, "height": 720})
+    assert r.status_code == 200
+    (tpl,) = client.get("/api/mask-templates").json()["templates"]
+    assert tpl["rects"] == [[0.5, 0.5, 0.75, 0.75], PTS]
+    too_many = {"pts": [[0.1 + 0.001 * k, 0.1 + 0.3 * (k % 2)] for k in range(101)]}
+    assert client.post("/api/mask-templates", json={"name": "많다", "masks": [too_many]}).status_code == 400
+    r = client.post("/api/bulk/mask-template", json={"ids": [i], "template_id": tpl["id"]})
+    assert r.json()["changed"] == 1
+    assert store.get_masks(i) == [(0.5, 0.5, 0.75, 0.75), tuple(map(tuple, PTS))]
+    assert client.post("/api/history/batch/revert", json={"batch": r.json()["batch"]}).json()["reverted"] == 1
+    assert store.get_masks(i) == []
+
+
 # ----------------------------------------------------------------- 다른 사이트에서 부르기 막기 (_RequestGuard)
 
 def status_call(client, **headers):

@@ -26,7 +26,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.requests import ClientDisconnect
@@ -46,7 +46,7 @@ from .health import report as health_report
 from .ingest import discover_classes, ingest
 from .jobs import JobManager
 from .predictor import AutoLabeler, LiveDetector
-from .masks import MAX_MASKS
+from .masks import MAX_MASKS, MAX_POINTS, to_wire
 from .masks import clean as clean_masks
 from .provenance import (SPLITS, CameraExists, CameraMissing, add_camera, camera_fields, capture_time, edit_camera,
                          load_cameras, remove_cameras, tz_text)
@@ -83,13 +83,25 @@ class BoxIn(BaseModel):
 
 
 class MaskIn(BaseModel):
-    # 가릴 영역 하나 — 정규화 xyxy (2026-11-09, masks.py). NaN·Infinity 는 박스처럼 422.
+    # 가릴 영역 하나 — 사각형은 정규화 xyxy (2026-11-09, masks.py), 다각형은 pts 꼭짓점 [[x, y], …] (2026-11-19 — pts 가
+    # 있으면 다각형이고 x1~y2 는 보지 않는다). NaN·Infinity 는 박스처럼 422. 옛 화면은 x1~y2 만 보낸다.
     model_config = ConfigDict(allow_inf_nan=False)
 
-    x1: float
-    y1: float
-    x2: float
-    y2: float
+    x1: float | None = None
+    y1: float | None = None
+    x2: float | None = None
+    y2: float | None = None
+    pts: list[tuple[float, float]] | None = None
+
+    @model_validator(mode="after")
+    def _shape(self):
+        if self.pts is None and None in (self.x1, self.y1, self.x2, self.y2):
+            raise ValueError("가릴 영역은 x1·y1·x2·y2(사각형)나 pts(다각형 꼭짓점)가 있어야 합니다")
+        return self
+
+    def value(self):
+        """masks.py 의 꼴 — 사각형 (x1, y1, x2, y2), 다각형 ((x, y), …)."""
+        return tuple(self.pts) if self.pts is not None else (self.x1, self.y1, self.x2, self.y2)
 
 
 class BoxesIn(BaseModel):
@@ -490,13 +502,19 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         cams = _cameras()[0]
         return lambda row: mask_block(row, cams)
 
+    def check_mask_count(masks_in: list[MaskIn]) -> None:
+        """한 장 한도(MAX_MASKS)와 다각형 꼭짓점 한도(MAX_POINTS) — 넘으면 400 (화면 app.js 도 같은 한도로 막는다)."""
+        if len(masks_in) > MAX_MASKS:
+            raise HTTPException(400, f"가릴 영역은 한 장에 {MAX_MASKS}개까지입니다.")
+        if any(m.pts is not None and len(m.pts) > MAX_POINTS for m in masks_in):
+            raise HTTPException(400, f"다각형의 꼭짓점은 {MAX_POINTS}개까지입니다.")
+
     def clean_mask_input(row, masks_in: list[MaskIn] | None) -> list | None:
         """요청의 영역을 정리한다. 너무 많으면 400, test 이미지에 영역을 남기려 하면 409(지우기만은 받는다)."""
         if masks_in is None:
             return None
-        if len(masks_in) > MAX_MASKS:
-            raise HTTPException(400, f"가릴 영역은 한 장에 {MAX_MASKS}개까지입니다.")
-        masks = clean_masks([(m.x1, m.y1, m.x2, m.y2) for m in masks_in])
+        check_mask_count(masks_in)
+        masks = clean_masks([m.value() for m in masks_in])
         if masks and (why := mask_block(row)):
             raise HTTPException(409, why + " 이 이미지의 가릴 영역을 모두 지워야 저장됩니다.")
         return masks
@@ -812,14 +830,13 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     @app.post("/api/mask-templates")
     def save_mask_template(payload: MaskTemplateIn) -> dict:
         """영역을 이름으로 남긴다. 같은 이름이 있으면 409 — overwrite=true 로 다시 보내면 덮어쓴다."""
-        if len(payload.masks) > MAX_MASKS:
-            raise HTTPException(400, f"가릴 영역은 {MAX_MASKS}개까지입니다.")
+        check_mask_count(payload.masks)
         camera = None
         if payload.image_id is not None and (row := store.get_image(payload.image_id)) is not None:
             camera = row["camera"]
         try:
             tid, replaced = store.save_mask_template(
-                payload.name, [(m.x1, m.y1, m.x2, m.y2) for m in payload.masks],
+                payload.name, [m.value() for m in payload.masks],
                 width=payload.width, height=payload.height, image_id=payload.image_id, camera=camera,
                 overwrite=payload.overwrite)
         except TemplateExists as exc:
@@ -924,9 +941,12 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             "camera_place": _camera_place(row["camera"]),
             "domain": row["domain"],
             "tags": store.image_tag_ids(image_id),
-            # 가릴 영역(정규화 xyxy)과, 둘 수 없으면 그 이유(test 이미지) — masks.py
-            "masks": [list(m) for m in store.get_masks(image_id)],
+            # 가릴 영역(사각형 [x1, y1, x2, y2]·다각형 [[x, y], …])과, 둘 수 없으면 그 이유(test 이미지) — masks.py
+            "masks": [to_wire(m) for m in store.get_masks(image_id)],
             "mask_block": mask_block(row),
+            # 이 서버는 다각형을 안다 (2026-11-19) — 화면은 이것이 참일 때만 다각형을 그리게 한다. 서버를 다시 켜기 전에
+            # 페이지만 새로 고친 화면(새 app.js + 옛 서버)이 다각형을 옛 서버로 보내 바깥 사각형으로 바뀌지 않게
+            "mask_poly": True,
         }
 
     @app.get("/api/images/{image_id}/file")
@@ -1034,7 +1054,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         return {"ok": True, "n_boxes": n_after, "n_before": n_before,
                 "n_history": store.history_count(image_id),
                 "boxes": [b.to_dict() for b in store.get_boxes(image_id)],
-                "masks": [list(m) for m in store.get_masks(image_id)]}
+                "masks": [to_wire(m) for m in store.get_masks(image_id)]}
 
     # ------------------------------------------------------- 같은 자리 일괄 수정
 

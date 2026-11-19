@@ -10,7 +10,8 @@
 - 영역은 지금 이미지(EXIF 회전을 적용한 화면) 픽셀 `id:x1,y1,x2,y2` — `--mask` 를 여러 번, 같은 id 를 되풀이하면 그 장에
   여러 개. 여러 장에 같은 영역은 `--ids 8017-8029 --rect x1,y1,x2,y2`.
 - 이미 있는 영역 뒤에 더한다. `--replace` 면 고른 장의 영역을 이것으로 바꾼다(`--replace` 에 영역을 안 주면 그 장들의
-  영역을 지운다 — `--ids` 만).
+  영역을 지운다 — `--ids` 만). 이 도구로 넣는 것은 사각형뿐이다 — 다각형(2026-11-19)은 검수 화면에서 그리고, 이미 있는
+  다각형은 더할 때 그대로 남는다(대조 그림에도 칠해진다).
 - **test 이미지에는 넣지 않는다**(분할이 test 이거나 cameras.yaml 에서 test 로 고정한 카메라면 멈춘다) — 평가는 실제
   화면 그대로여야 한다.
 - 영역들의 합집합이 박스 넓이의 반 이상을 덮으면 그 박스는 **학습 라벨에서만** 빠진다(DB 박스는 그대로). 반 미만으로
@@ -41,11 +42,9 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from autolabel.config import Config  # noqa: E402
-from autolabel.masks import DROP, MAX_MASKS, clean, covered, pixel_rect  # noqa: E402
+from autolabel.masks import DROP, MAX_MASKS, bbox, clean, covered, paint_array  # noqa: E402
 from autolabel.provenance import load_cameras  # noqa: E402
 from autolabel.store import Store  # noqa: E402
-
-GRAY = (114, 114, 114)
 
 Rect = tuple[int, int, int, int]
 
@@ -82,18 +81,18 @@ def parse_ids(text: str) -> list[int]:
 
 
 def preview(out: Path, items: list) -> None:
-    """영역 둘레(여백 40px)를 칠하기 전·후로 나란히 — 박스는 학습에서 빠짐 빨강, 일부 가림 노랑, 나머지는 그리지 않는다."""
+    """영역 둘레(여백 40px)를 칠하기 전·후로 나란히 — 박스는 학습에서 빠짐 빨강, 일부 가림 노랑, 나머지는 그리지 않는다.
+    칠하기는 학습 세트와 같은 함수(masks.paint_array — 다각형은 픽셀 중심이 안이면)다."""
     tiles = []
-    for iid, img, rects_px, boxes, fracs in items:
+    for iid, img, rects, boxes, fracs in items:
         h, w = img.shape[:2]
-        painted = img.copy()
-        for x1, y1, x2, y2 in rects_px:
-            painted[y1:y2, x1:x2] = GRAY
-        if rects_px:
-            x1 = max(0, min(q[0] for q in rects_px) - 40)
-            y1 = max(0, min(q[1] for q in rects_px) - 40)
-            x2 = min(w, max(q[2] for q in rects_px) + 40)
-            y2 = min(h, max(q[3] for q in rects_px) + 40)
+        painted = paint_array(img.copy(), rects)
+        if rects:
+            boxes_px = [bbox(m) for m in rects]
+            x1 = max(0, int(min(q[0] for q in boxes_px) * w) - 40)
+            y1 = max(0, int(min(q[1] for q in boxes_px) * h) - 40)
+            x2 = min(w, int(max(q[2] for q in boxes_px) * w) + 41)
+            y2 = min(h, int(max(q[3] for q in boxes_px) * h) + 41)
         else:
             x1, y1, x2, y2 = 0, 0, w, h
         pair = []
@@ -185,7 +184,7 @@ def main() -> int:
         tally["out"] += sum(out.values())
         tally["part"] += len(part)
         plan.append((r, new))
-        shown.append((r["id"], img, [pixel_rect(m, w, h) for m in new], boxes, fracs))
+        shown.append((r["id"], img, new, boxes, fracs))
         print(f"  {r['id']} {r['status']:8s} 영역 {len(old)} → {len(new)}: 박스 {len(boxes)}"
               + (f" · 학습에서 빠짐 {dict(out)}" if out else "")
               + (f" · 일부 가림(클래스:몫) {part}" if part else ""))

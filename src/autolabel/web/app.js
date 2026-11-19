@@ -22,12 +22,15 @@ const S = {
   cur: null,          // 현재 이미지 메타
   boxes: [],          // [{cls, cx, cy, w, h, conf, origin}]
   sel: -1,            // 선택된 박스 인덱스
-  // 가릴 영역 (2026-11-09, masks.py): 학습 세트를 만들 때만 회색으로 칠할 사각형. 박스와 같은 {cx, cy, w, h} 로 들고
-  // 있어 고르기·옮기기·크기 조절을 박스 코드로 한다(서버와는 xyxy — maskFromXyxy·maskToXyxy).
+  // 가릴 영역 (2026-11-09, masks.py): 학습 세트를 만들 때만 회색으로 칠할 사각형·다각형. 박스와 같은 {cx, cy, w, h} 로 들고
+  // 있어 고르기·옮기기·크기 조절을 박스 코드로 한다. 다각형(2026-11-19)은 꼭짓점 pts 를 더 든다(cx~h 는 바깥 사각형).
+  // 서버와는 maskFromWire·maskToWire·maskToBody 로 오간다.
   masks: [],
   msel: -1,           // 고른 가릴 영역 번호 (박스 선택 S.sel 과 함께 쓰지 않는다)
   masksTouched: false,// 이 이미지에서 영역을 손댔나 — 손댄 뒤로만 저장에 영역을 싣는다(영역을 모르는 저장이 덮지 않게)
   maskBlock: null,    // 영역을 둘 수 없는 이유(test 이미지) — 서버가 준다
+  maskPoly: false,    // 서버가 다각형 영역을 아는가 (2026-11-19, /api/images 의 mask_poly — 옛 서버면 다각형을 시작하지 않는다)
+  poly: null,         // 그리는 중인 다각형 {id, pts: [[이미지 x, y], …], cur: 커서} — 닫으면 S.masks 로 (polyStart·polyClose)
   mtpls: [],          // 가릴 영역 템플릿 [{id, name, rects(xyxy), width, height, image_id, camera}] 이름순 (2026-11-10)
   tplGhost: null,     // 템플릿 줄에 마우스를 올린 동안 미리 보는 영역({cx, cy, w, h} 목록)
   curClass: 0,        // 새 박스에 붙일 클래스
@@ -205,25 +208,68 @@ function tooSmall(b) {
   return Math.min(b.w * S.cur.width, b.h * S.cur.height) < 1 || Math.min(b.w, b.h) <= 2e-4;
 }
 
-/* 가릴 영역 (2026-11-09) — 서버는 정규화 xyxy, 화면은 박스와 같은 {cx, cy, w, h}. */
+/* 가릴 영역 (2026-11-09) — 서버는 정규화 xyxy, 화면은 박스와 같은 {cx, cy, w, h}.
+ * 다각형 (2026-11-19) — 서버는 꼭짓점 [[x, y], …](masks.py 의 꼴), 화면은 {cx, cy, w, h, pts}: pts 는 정규화 꼭짓점이고 받은
+ * 값을 그대로 둔다(덮는 몫이 서버와 끝자리까지 같게 — 사각형처럼 {cx, cy, w, h} 로 오가지 않는다). cx~h 는 바깥 사각형이라
+ * 고르기 거르기·목록 크기에만 쓴다(polyMask 가 pts 에서 다시 센다 — 점을 바꾸면 polyMask 로 새로 만들 것). */
 const maskFromXyxy = ([x1, y1, x2, y2]) => ({ cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: x2 - x1, h: y2 - y1 });
 const maskToXyxy = (m) => [m.cx - m.w / 2, m.cy - m.h / 2, m.cx + m.w / 2, m.cy + m.h / 2];
 const MASK_DROP = 0.5;      // masks.DROP — 이만큼 넘게 가려진 박스는 학습 라벨에서 빠진다
 const MASK_MAX = 500;       // masks.MAX_MASKS (11-11 에 50 → 500)
+const MASK_MAX_PTS = 100;   // masks.MAX_POINTS — 다각형 하나의 꼭짓점 한도 (2026-11-19)
+
+/** 꼭짓점들의 바깥 사각형 [x1, y1, x2, y2] — 서버 masks.bbox 와 같다(덮는 몫이 다각형을 거르는 데 쓴다). */
+function ptsBox(pts) {
+  let x1 = pts[0][0], y1 = pts[0][1], x2 = x1, y2 = y1;
+  for (const [x, y] of pts) {
+    if (x < x1) x1 = x; if (x > x2) x2 = x;
+    if (y < y1) y1 = y; if (y > y2) y2 = y;
+  }
+  return [x1, y1, x2, y2];
+}
+
+/** 정규화 꼭짓점으로 화면의 다각형 영역 {cx, cy, w, h, pts}. */
+function polyMask(pts) {
+  const [x1, y1, x2, y2] = ptsBox(pts);
+  return { cx: (x1 + x2) / 2, cy: (y1 + y2) / 2, w: x2 - x1, h: y2 - y1, pts };
+}
+
+/** 서버의 꼴(사각형 [x1, y1, x2, y2]·다각형 [[x, y], …]) → 화면의 영역. */
+function maskFromWire(w) {
+  return Array.isArray(w[0]) ? polyMask(w.map((p) => [p[0], p[1]])) : maskFromXyxy(w);
+}
+
+/** 화면의 영역 → 서버의 꼴(이력·템플릿·'같은 자리' 판정이 쓰는 꼴). */
+function maskToWire(m) {
+  return m.pts ? m.pts.map((p) => [p[0], p[1]]) : maskToXyxy(m);
+}
+
+/** 저장(PUT boxes·템플릿 저장)에 싣는 꼴 — 사각형 {x1, y1, x2, y2}, 다각형 {pts} (server.MaskIn). */
+function maskToBody(m) {
+  if (m.pts) return { pts: maskToWire(m) };
+  const [x1, y1, x2, y2] = maskToXyxy(m);
+  return { x1, y1, x2, y2 };
+}
 
 /** 박스 넓이 가운데 가릴 영역들의 **합집합**이 덮는 몫(0~1). 서버 masks.covered 와 같은 식이다(좌표 압축 — 영역마다 제 칸에
- *  표시하고 표시된 칸의 넓이를 줄·칸 순서로 더한다. 11-11 전에는 칸마다 모든 영역을 견줘 영역 수의 세제곱이었다) — 고치면 둘 다.
- *  그릴 때마다(끄는 동안 매 프레임) 박스마다 부른다. */
+ *  표시하고 표시된 칸의 넓이를 줄·칸 순서로 더한다. 11-11 전에는 칸마다 모든 영역을 견줘 영역 수의 세제곱이었다. 다각형이
+ *  걸린 박스는 세로 띠로 — maskSlabs, 2026-11-19) — 고치면 둘 다. 그릴 때마다(끄는 동안 매 프레임) 박스마다 부른다. */
 function maskCover(b, masks = S.masks) {
   const bx1 = b.cx - b.w / 2, by1 = b.cy - b.h / 2, bx2 = b.cx + b.w / 2, by2 = b.cy + b.h / 2;
   const area = (bx2 - bx1) * (by2 - by1);
   if (!(area > 0) || !masks.length) return 0;
-  const parts = [];
+  const parts = [], polys = [];
   for (const m of masks) {
+    if (m.pts) {
+      const [x1, y1, x2, y2] = ptsBox(m.pts);
+      if (x2 > bx1 && x1 < bx2 && y2 > by1 && y1 < by2) polys.push(m.pts);
+      continue;
+    }
     const [x1, y1, x2, y2] = maskToXyxy(m);
     const a = Math.max(x1, bx1), t = Math.max(y1, by1), c = Math.min(x2, bx2), d = Math.min(y2, by2);
     if (c > a && d > t) parts.push([a, t, c, d]);
   }
+  if (polys.length) return Math.min(1, maskSlabs(bx1, by1, bx2, by2, parts, polys) / area);
   if (!parts.length) return 0;
   const xs = [...new Set(parts.flatMap((p) => [p[0], p[2]]))].sort((u, v) => u - v);
   const ys = [...new Set(parts.flatMap((p) => [p[1], p[3]]))].sort((u, v) => u - v);
@@ -242,6 +288,86 @@ function maskCover(b, masks = S.masks) {
     }
   }
   return Math.min(1, inside / area);
+}
+
+/** 박스 안에서 사각형 조각(parts — 박스로 자른 [a, t, c, d])과 다각형들(polys — 정규화 꼭짓점)의 합집합 넓이. 서버
+ *  masks._slab_union 과 **연산 순서까지** 같은 식이다(세로 띠: 경계는 박스·사각형의 x, 꼭짓점 x, 변끼리·변과 가로선이 엇갈리는 x
+ *  — 그 사이에서는 단면 길이가 직선이라 가운데 단면 × 폭이 정확한 넓이다. 다각형의 안은 홀짝 규칙) — 고치면 둘 다
+ *  (tests/test_js_parity.py 가 끝자리까지 견준다). */
+function maskSlabs(bx1, by1, bx2, by2, parts, polys) {
+  const per = polys.map((pts) => pts.map((p, i) => {
+    const q = pts[(i + 1) % pts.length];
+    return [p[0], p[1], q[0], q[1]];
+  }));
+  const xs = new Set([bx1, bx2]);
+  const lines = [by1, by2];
+  for (const [a, t, c, d] of parts) {
+    xs.add(a);
+    xs.add(c);
+    lines.push(t);
+    lines.push(d);
+  }
+  const near = [];
+  for (const es of per) {
+    for (const e of es) {
+      xs.add(e[0]);
+      if (Math.max(e[0], e[2]) >= bx1 && Math.min(e[0], e[2]) <= bx2
+          && Math.max(e[1], e[3]) >= by1 && Math.min(e[1], e[3]) <= by2) near.push(e);
+    }
+  }
+  for (let i = 0; i < near.length; i++) {
+    const [xa, ya, xb, yb] = near[i];
+    for (const h of lines) {
+      if ((ya - h) * (yb - h) < 0) xs.add(xa + (h - ya) * (xb - xa) / (yb - ya));
+    }
+    for (let j = i + 1; j < near.length; j++) {
+      const [xc, yc, xd, yd] = near[j];
+      const rx = xb - xa, ry = yb - ya, sx = xd - xc, sy = yd - yc;
+      const den = rx * sy - ry * sx;
+      if (den === 0) continue;
+      const qx = xc - xa, qy = yc - ya;
+      const t = (qx * sy - qy * sx) / den;
+      const u = (qx * ry - qy * rx) / den;
+      if (0 < t && t < 1 && 0 < u && u < 1) xs.add(xa + t * rx);
+    }
+  }
+  const cuts = [...xs].filter((v) => bx1 <= v && v <= bx2).sort((u, v) => u - v);
+  let inside = 0;
+  for (let k = 0; k < cuts.length - 1; k++) {
+    const x0 = cuts[k], x1 = cuts[k + 1];
+    const xm = (x0 + x1) / 2;
+    const spans = [];
+    for (const [a, t, c, d] of parts) {
+      if (a < xm && xm < c) spans.push([t, d]);
+    }
+    for (const es of per) {
+      const ys = [];
+      for (const [xa, ya, xb, yb] of es) {
+        if ((xa <= xm && xm < xb) || (xb <= xm && xm < xa)) ys.push(ya + (xm - xa) * (yb - ya) / (xb - xa));
+      }
+      ys.sort((u, v) => u - v);
+      for (let j = 0; j + 1 < ys.length; j += 2) {
+        const lo = Math.max(ys[j], by1), hi = Math.min(ys[j + 1], by2);
+        if (hi > lo) spans.push([lo, hi]);
+      }
+    }
+    if (!spans.length) continue;
+    spans.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    let [lo, hi] = spans[0];
+    let run = 0;
+    for (let q = 1; q < spans.length; q++) {
+      const [s, e] = spans[q];
+      if (s > hi) {
+        run += hi - lo;
+        lo = s; hi = e;
+      } else if (e > hi) {
+        hi = e;
+      }
+    }
+    run += hi - lo;
+    inside += (x1 - x0) * run;
+  }
+  return inside;
 }
 
 /** 이동용. 크기를 유지한 채 이미지 안으로 밀어 넣는다 (잘라서 줄이지 않는다). */
@@ -350,8 +476,12 @@ function draw() {
     if (selected) drawHandles(b);
     ctx.globalAlpha = 1;
   });
-  // 고른 가릴 영역의 손잡이는 박스 위에 — 박스 밑에 깔린 영역도 크기를 바꿀 수 있게
-  if (S.msel >= 0 && S.masks[S.msel]) drawHandles(S.masks[S.msel]);
+  // 고른 가릴 영역의 손잡이는 박스 위에 — 박스 밑에 깔린 영역도 크기를 바꿀 수 있게(다각형은 꼭짓점·변 가운데 손잡이)
+  if (S.msel >= 0 && S.masks[S.msel]) {
+    const m = S.masks[S.msel];
+    if (m.pts) drawPolyHandles(m); else drawHandles(m);
+  }
+  if (S.poly) drawPolyDraft();
 
   if (S.predOn) drawFindings();
 
@@ -380,6 +510,12 @@ function draw() {
     ctx.strokeStyle = "rgba(255, 214, 10, 0.95)";
     ctx.fillStyle = "rgba(255, 214, 10, 0.15)";
     for (const m of S.tplGhost) {
+      if (m.pts) {
+        polyPath(m.pts);
+        ctx.fill("evenodd");
+        ctx.stroke();
+        continue;
+      }
       const [ix, iy, iw, ih] = boxRect(m);
       const [x, y] = toScreen(ix, iy);
       ctx.fillRect(x, y, iw * S.view.scale, ih * S.view.scale);
@@ -387,6 +523,77 @@ function draw() {
     }
     ctx.restore();
   }
+}
+
+/** 정규화 꼭짓점의 닫힌 경로를 지금 화면 좌표로 그린다(채우기·긋기는 부르는 쪽 — 채우기는 'evenodd', 서버와 같은 홀짝 규칙). */
+function polyPath(pts) {
+  const W = S.cur.width, H = S.cur.height;
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => {
+    const [sx, sy] = toScreen(x * W, y * H);
+    if (i) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy);
+  });
+  ctx.closePath();
+}
+
+/** 고른 다각형의 손잡이 — 꼭짓점(네모, 끌면 옮김·우클릭이면 지움)과 변 가운데(동그라미, 끌면 꼭짓점이 생김). */
+function drawPolyHandles(m) {
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "#14161a";
+  for (const [, hx, hy] of polyMidpoints(m)) {
+    ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+    ctx.beginPath();
+    ctx.arc(hx, hy, HANDLE / 2 - 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#fff";
+  for (const [, hx, hy] of polyVertices(m)) {
+    ctx.fillRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
+    ctx.strokeRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
+  }
+  ctx.restore();
+}
+
+/** 그리는 중인 다각형(S.poly — 이미지 픽셀 꼭짓점) — 칠해질 모양(빗금)과 찍은 변, 마지막 점에서 커서까지의 점선. */
+function drawPolyDraft() {
+  const P = S.poly;
+  if (!P || P.id !== S.cur.id || !P.pts.length) return;
+  const pts = P.pts.map(([x, y]) => toScreen(x, y));
+  const cur = P.cur ? toScreen(...P.cur) : null;
+  ctx.save();
+  if (pts.length + (cur ? 1 : 0) >= 3) {          // 닫으면 덮일 자리 — 커서를 마지막 점으로 친 모양
+    ctx.beginPath();
+    [...pts, ...(cur ? [cur] : [])].forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+    ctx.fillStyle = hatchPattern();
+    ctx.fill("evenodd");
+  }
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#ffffff";
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.stroke();
+  if (cur) {
+    ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    ctx.moveTo(...pts[pts.length - 1]);
+    ctx.lineTo(...cur);
+    if (pts.length >= 2) ctx.lineTo(...pts[0]);    // 닫히는 변
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.fillStyle = "#fff";
+  ctx.strokeStyle = "#14161a";
+  ctx.lineWidth = 1;
+  pts.forEach(([x, y], i) => {
+    const r = i === 0 && pts.length >= 3 ? HANDLE : HANDLE / 2;     // 첫 점 — 누르면 닫힌다
+    ctx.fillRect(x - r / 2, y - r / 2, r, r);
+    ctx.strokeRect(x - r / 2, y - r / 2, r, r);
+  });
+  ctx.restore();
 }
 
 const clsName = (i) => S.classes[i] ?? `cls_${i}`;
@@ -427,14 +634,20 @@ function drawMasks() {
   ctx.save();
   ctx.fillStyle = hatchPattern();
   S.masks.forEach((m, i) => {
-    const [ix, iy, iw, ih] = boxRect(m);
-    const [x, y] = toScreen(ix, iy);
-    const w = iw * S.view.scale, h = ih * S.view.scale;
-    ctx.fillRect(x, y, w, h);
     const selected = i === S.msel;
     ctx.lineWidth = selected ? 2.5 : 1.5;
     ctx.strokeStyle = selected ? "#ffffff" : "rgba(220, 220, 220, 0.9)";
     ctx.setLineDash(selected ? [] : [4, 3]);
+    if (m.pts) {                                  // 다각형 — 학습 세트처럼 홀짝 규칙으로 칠한다(masks.poly_pixels)
+      polyPath(m.pts);
+      ctx.fill("evenodd");
+      ctx.stroke();
+      return;
+    }
+    const [ix, iy, iw, ih] = boxRect(m);
+    const [x, y] = toScreen(ix, iy);
+    const w = iw * S.view.scale, h = ih * S.view.scale;
+    ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x, y, w, h);
   });
   ctx.restore();
@@ -484,6 +697,7 @@ function setMode(mode) {
   if (mode === "mask" && S.maskBlock) { toast(S.maskBlock, true); return; }
   // 영역은 가릴 영역 모드에서만 고르고 옮긴다 — 다른 모드로 가면 고른 영역을 놓는다(Del 이 엉뚱한 것을 지우지 않게)
   if (mode !== "mask" && S.msel >= 0) { S.msel = -1; renderBoxList(); draw(); }
+  if (mode !== "mask") polyCancel("그리던 다각형을 버렸습니다 (다른 모드로 바꿈)");
   S.mode = mode;
   renderMode();
 }
@@ -497,11 +711,14 @@ function renderMode() {
 
   const el = $("#mode-badge");
   if (!el) return;
-  el.textContent = S.samBusy && eff === "sam" ? "SAM…" : MODE_LABEL[eff];
+  el.textContent = S.samBusy && eff === "sam" ? "SAM…"
+    : eff === "mask" && S.poly ? `가릴 영역 · 다각형 ${S.poly.pts.length}점` : MODE_LABEL[eff];
   el.className = "mode-badge " + eff + (S.ctrl ? " temp" : "");
   el.title = S.ctrl
     ? "Ctrl 을 누르고 있는 동안 임시로 바뀐 상태입니다"
-    : "B = 새 박스, C = SAM 클릭, M = 가릴 영역, D = 화면 끌기 (Ctrl 을 누르면 잠시 화면 끌기로)";
+    : eff === "mask"
+      ? "가릴 영역 — 끌면 사각형, 누르기만 하면 다각형 꼭짓점(첫 점·마지막 점 한 번 더·Enter 로 닫기, Esc 버리기, Backspace 한 점 지우기)"
+      : "B = 새 박스, C = SAM 클릭, M = 가릴 영역, D = 화면 끌기 (Ctrl 을 누르면 잠시 화면 끌기로)";
 }
 
 /* ───────────────────────────── SAM ───────────────────────────── */
@@ -576,7 +793,7 @@ function hitHandle(sx, sy, b = S.sel >= 0 ? S.boxes[S.sel] : null) {
   return null;
 }
 
-/** 누른 자리의 박스 번호(겹치면 가장 작은 것). list 를 주면 그 목록에서 (가릴 영역 — S.masks). */
+/** 누른 자리의 박스 번호(겹치면 가장 작은 것). list 를 주면 그 목록에서. */
 function hitBox(sx, sy, list = S.boxes) {
   const [ix, iy] = toImage(sx, sy);
   let best = -1, bestArea = Infinity;
@@ -587,6 +804,65 @@ function hitBox(sx, sy, list = S.boxes) {
     }
   });
   return best;
+}
+
+/** 이미지 픽셀 (ix, iy) 가 다각형(정규화 꼭짓점) 안인가 — 홀짝 규칙(그림·학습 세트와 같다). */
+function inPoly(ix, iy, pts) {
+  const x = ix / S.cur.width, y = iy / S.cur.height;
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xa, ya] = pts[i], [xb, yb] = pts[j];
+    if ((ya > y) !== (yb > y) && x < xa + (y - ya) * (xb - xa) / (yb - ya)) inside = !inside;
+  }
+  return inside;
+}
+
+/** 다각형의 넓이(이미지 픽셀², 신발끈) — 고르기에서 작은 것을 먼저, 너무 작은 다각형 막기. */
+function polyAreaPx(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % pts.length];
+    s += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(s) / 2 * S.cur.width * S.cur.height;
+}
+
+/** 누른 자리의 가릴 영역 번호(겹치면 가장 작은 것) — 다각형은 **안쪽**을 눌렀을 때만(바깥 사각형이 아니라: 대각선 영역의
+ *  빈 모서리를 눌러도 그 영역이 잡히면 그 자리에 새 영역을 그릴 수 없다). */
+function hitMask(sx, sy) {
+  const [ix, iy] = toImage(sx, sy);
+  let best = -1, bestArea = Infinity;
+  S.masks.forEach((m, i) => {
+    const [x, y, w, h] = boxRect(m);
+    if (!(ix >= x && ix <= x + w && iy >= y && iy <= y + h)) return;
+    if (m.pts && !inPoly(ix, iy, m.pts)) return;
+    const a = m.pts ? polyAreaPx(m.pts) : w * h;
+    if (a < bestArea) { best = i; bestArea = a; }
+  });
+  return best;
+}
+
+/** 다각형의 꼭짓점 손잡이 [[번호, 화면 x, 화면 y], …]. */
+function polyVertices(m) {
+  const W = S.cur.width, H = S.cur.height;
+  return m.pts.map(([x, y], i) => [i, ...toScreen(x * W, y * H)]);
+}
+
+/** 다각형의 변 가운데 손잡이 [[변 번호(꼭짓점 i 와 i+1 사이), 화면 x, 화면 y], …] — 끌면 그 자리에 꼭짓점이 생긴다. */
+function polyMidpoints(m) {
+  const W = S.cur.width, H = S.cur.height, n = m.pts.length;
+  return m.pts.map(([x, y], i) => {
+    const [x2, y2] = m.pts[(i + 1) % n];
+    return [i, ...toScreen((x + x2) / 2 * W, (y + y2) / 2 * H)];
+  });
+}
+
+/** 손잡이 목록에서 (sx, sy) 를 누른 것의 번호, 없으면 -1. */
+function hitPoint(sx, sy, handles) {
+  for (const [i, hx, hy] of handles) {
+    if (Math.abs(sx - hx) <= HANDLE && Math.abs(sy - hy) <= HANDLE) return i;
+  }
+  return -1;
 }
 
 canvas.addEventListener("mousedown", (e) => {
@@ -624,23 +900,39 @@ canvas.addEventListener("mousedown", (e) => {
   // 영역 안에 서 있는 사람 박스를 고치다 영역이 딸려 오거나, 영역을 그리다 박스가 옮겨지지 않게.
   if (effectiveMode() === "mask") {
     if (S.maskBlock) { toast(S.maskBlock, true); return; }
+    // 다각형을 그리는 중이면 누르는 곳마다 꼭짓점이다 — 영역 위여도(놓을 때 찍는다, polyClick)
+    if (S.poly) { drag = { mode: "poly", sx, sy, id: S.cur.id }; return; }
     const cur = S.msel >= 0 ? S.masks[S.msel] : null;
-    const mh = hitHandle(sx, sy, cur);
-    if (mh) {
-      drag = { mode: "resize", handle: mh, start: boxRect(cur), sx, sy, box: cur, mask: true };
-      return;
+    if (cur && cur.pts) {             // 고른 다각형 — 꼭짓점을 끌면 옮기고, 변 가운데를 끌면 그 자리에 꼭짓점이 생긴다
+      const vi = hitPoint(sx, sy, polyVertices(cur));
+      if (vi >= 0) { drag = { mode: "vertex", vi, sx, sy, box: cur, mask: true }; return; }
+      const ei = hitPoint(sx, sy, polyMidpoints(cur));
+      if (ei >= 0) {
+        if (cur.pts.length >= MASK_MAX_PTS) { toast(`다각형의 꼭짓점은 ${MASK_MAX_PTS}개까지입니다`, true); return; }
+        drag = { mode: "vertex", vi: ei + 1, insert: true, sx, sy, box: cur, mask: true };
+        return;
+      }
+    } else {
+      const mh = hitHandle(sx, sy, cur);
+      if (mh) {
+        drag = { mode: "resize", handle: mh, start: boxRect(cur), sx, sy, box: cur, mask: true };
+        return;
+      }
     }
-    const mi = hitBox(sx, sy, S.masks);
+    const mi = hitMask(sx, sy);
     if (mi >= 0) {
       selectMask(mi);
+      const m = S.masks[mi];
       const [ix, iy] = toImage(sx, sy);
-      const [x, y] = boxRect(S.masks[mi]);
-      drag = { mode: "move", dx: ix - x, dy: iy - y, sx, sy, box: S.masks[mi], mask: true };
+      const [x, y] = boxRect(m);
+      // 다각형은 처음 꼭짓점(p0)에서 옮긴 만큼으로 — 매번 지금 점에서 옮기면 끝자리 잡음이 쌓인다
+      drag = { mode: "move", dx: ix - x, dy: iy - y, sx, sy, box: m, mask: true,
+               p0: m.pts ? m.pts.map((p) => [p[0], p[1]]) : null, b0: [x, y] };
       return;
     }
     selectMask(-1);
     const [ix, iy] = toImage(sx, sy);
-    drag = { mode: "new", ix, iy, id: S.cur.id, mask: true };
+    drag = { mode: "new", ix, iy, sx, sy, id: S.cur.id, mask: true };      // 끌면 사각형, 누르기만 하면 다각형(mouseup)
     return;
   }
 
@@ -666,6 +958,11 @@ canvas.addEventListener("mousedown", (e) => {
 });
 
 window.addEventListener("mousemove", (e) => {
+  // 다각형을 그리는 중이면 마지막 점에서 커서까지 점선이 따라온다 (2026-11-19)
+  if (S.poly && S.cur && S.poly.id === S.cur.id) {
+    S.poly.cur = clampImg(toImage(...mousePos(e)));
+    if (!drag || drag.mode === "poly") draw();
+  }
   if (!drag || !S.cur) return;
   if (dragLost()) { drag = null; renderMode(); draw(); return; }
   const [sx, sy] = mousePos(e);
@@ -698,15 +995,35 @@ window.addEventListener("mousemove", (e) => {
   }
 
   // 박스를 고르려고 누른 손이 1~2px 떨린 것은 이동·크기 조절로 치지 않는다.
-  if ((drag.mode === "move" || drag.mode === "resize") && !drag.changed) {
+  if ((drag.mode === "move" || drag.mode === "resize" || drag.mode === "vertex") && !drag.changed) {
     if (Math.abs(sx - drag.sx) + Math.abs(sy - drag.sy) < 3) return;
     drag.changed = true;
   }
 
   if (drag.mode === "move") {
     const [, , w, h] = boxRect(drag.box);
+    if (drag.p0) {                    // 다각형 — 바깥 사각형이 이미지 안에 남게 옮긴다(rectToBoxInside 와 같은 규칙)
+      const W = S.cur.width, H = S.cur.height;
+      const tx = Math.max(0, Math.min(W - Math.min(w, W), ix - drag.dx));
+      const ty = Math.max(0, Math.min(H - Math.min(h, H), iy - drag.dy));
+      const dx = (tx - drag.b0[0]) / W, dy = (ty - drag.b0[1]) / H;
+      editDragPoly(drag.p0.map(([x, y]) => [clamp01(x + dx), clamp01(y + dy)]));
+      return;
+    }
     // 이동은 크기를 지킨다. 잘라내면 이미지 밖으로 끌었을 때 박스가 쪼그라든다.
     editDragBox(rectToBoxInside(ix - drag.dx, iy - drag.dy, w, h));
+    return;
+  }
+
+  if (drag.mode === "vertex") {       // 다각형의 꼭짓점 옮기기·변 가운데에서 꼭짓점 더하기 — 이미지 밖으로는 못 나간다
+    const [cx, cy] = clampImg([ix, iy]);
+    const p = [cx / S.cur.width, cy / S.cur.height];
+    const pts = drag.box.pts.map((q) => [q[0], q[1]]);
+    if (drag.insert && !drag.inserted) pts.splice(drag.vi, 0, p); else pts[drag.vi] = p;
+    // 한 줄로 늘어서거나 1px 아래로 줄어드는 움직임은 받지 않는다(직전 모양으로 남는다 — 박스의 tooSmall 과 같은 뜻)
+    if (pts.length > MASK_MAX_PTS || polyTooSmall(pts)) return;
+    drag.inserted = true;
+    editDragPoly(pts);
     return;
   }
 
@@ -737,6 +1054,16 @@ window.addEventListener("mouseup", (e) => {
     }
     drag = null;
     renderMode();
+    draw();
+    return;
+  }
+
+  // 다각형을 그리는 중의 누르기 — 거의 움직이지 않았으면 꼭짓점을 찍는다(끌었으면 버린다 — 화면 끌기는 Ctrl·가운데 버튼)
+  if (drag.mode === "poly") {
+    const [sx, sy] = mousePos(e);
+    const d = drag;
+    drag = null;
+    if (Math.abs(sx - d.sx) + Math.abs(sy - d.sy) < 4) polyClick(sx, sy);
     draw();
     return;
   }
@@ -797,9 +1124,13 @@ window.addEventListener("mouseup", (e) => {
         selectBox(S.boxes.length - 1);
         markDirty();
       }
+    } else if (drag.mask) {
+      // 가릴 영역 모드에서 끌지 않고 누르기만 했다 — 다각형의 첫 꼭짓점 (2026-11-19 사용자 결정: 끌면 사각형, 누르면 다각형)
+      const [sx, sy] = mousePos(e);
+      if (Math.abs(sx - drag.sx) + Math.abs(sy - drag.sy) < 4) polyStart(drag.ix, drag.iy);
     }
   }
-  if (drag.mode === "move" || drag.mode === "resize") {
+  if (drag.mode === "move" || drag.mode === "resize" || drag.mode === "vertex") {
     if (drag.edited && !drag.mask) {
       // 사람이 손댄 박스는 더 이상 모델 예측이 아니다. 끄는 도중에 자동 저장이 한 번
       // 돌았을 수 있으므로 이 변경도 저장 대상으로 올린다.
@@ -837,7 +1168,13 @@ canvas.addEventListener("contextmenu", (e) => {
   if (!S.cur || S.imgId !== S.cur.id) return;     // 사진이 뜨기 전에는 보이지 않는 박스를 지우지 않게 (mousedown 과 같다)
   const [sx, sy] = mousePos(e);
   if (effectiveMode() === "mask") {               // 가릴 영역 모드에서는 영역만 지운다 (박스는 B 모드로)
-    const mi = hitBox(sx, sy, S.masks);
+    if (S.poly) { polyBackspace(); return; }      // 다각형을 그리는 중이면 마지막 점을 지운다
+    const cur = S.msel >= 0 ? S.masks[S.msel] : null;
+    if (cur && cur.pts) {                         // 고른 다각형의 꼭짓점 위면 그 꼭짓점만
+      const vi = hitPoint(sx, sy, polyVertices(cur));
+      if (vi >= 0) { deleteVertex(S.msel, vi); return; }
+    }
+    const mi = hitMask(sx, sy);
     if (mi >= 0) deleteMask(mi);
     return;
   }
@@ -893,6 +1230,140 @@ function deleteMask(i) {
   refresh();
 }
 
+/* ───────────────────── 가릴 영역 — 다각형 (2026-11-19, 사용자 요청) ─────────────────────
+ * 대각선 모양을 덮으려면 작은 사각형을 여러 개 그려야 했다. M 모드에서 끌면 사각형(그대로), 누르기만 하면 다각형의 첫
+ * 꼭짓점이다(사용자 결정). 이어서 누르는 곳마다 꼭짓점 — 첫 점을 누르거나, 마지막 점을 한 번 더 누르거나(더블클릭), Enter 로
+ * 닫는다. Esc 는 버리기, Backspace·Del·Ctrl+Z·우클릭은 마지막 점 지우기. 그리는 동안 Space·Enter 는 승인하지 않는다(덮으려던
+ * 자리 없이 승인되지 않게). 다른 이미지·다른 모드로 가면 그리던 것은 버린다. 그리는 중인 것은 S.poly 에만 있고(이미지 픽셀
+ * 꼭짓점) 닫을 때 S.masks 에 정규화 꼭짓점으로 들어간다 — 그때 되돌리기 한 칸이 쌓이고 저장된다. 서버가 다각형을 안다고
+ * 할 때만(S.maskPoly ← /api/images 의 mask_poly) 시작한다 — 페이지만 새로 고친 옛 서버는 다각형을 바깥 사각형으로 바꾼다. */
+
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+
+/** 이미지 픽셀 점을 이미지 안으로. */
+function clampImg([x, y]) {
+  return [Math.max(0, Math.min(S.cur.width, x)), Math.max(0, Math.min(S.cur.height, y))];
+}
+
+/** 서버가 받지 않을 다각형인가 — 바깥 사각형이 1px·2e-4 보다 좁거나, 넓이가 1px² 아래(한 줄로 늘어섬). 서버 masks.clean 은
+ *  MIN_SIDE(1e-4)·그 제곱으로 버린다 — 여기서 더 넉넉히 막아 화면에 남은 다각형이 저장에서 조용히 빠지지 않게 한다. */
+function polyTooSmall(pts) {
+  const [x1, y1, x2, y2] = ptsBox(pts);
+  const W = S.cur.width, H = S.cur.height, a = polyAreaPx(pts);
+  return Math.min((x2 - x1) * W, (y2 - y1) * H) < 1 || Math.min(x2 - x1, y2 - y1) <= 2e-4
+    || a < 1 || a / (W * H) <= 2e-8;
+}
+
+/** 다각형의 첫 꼭짓점 (이미지 픽셀). 첫 점은 이미지 안이어야 한다(바깥 여백을 누른 것은 시작하지 않는다 — 다음 점부터는
+ *  밖을 눌러도 가장자리에 붙는다: 가장자리에 닿는 자리를 덮기 쉽게). */
+function polyStart(ix, iy) {
+  if (!S.cur || S.imgId !== S.cur.id) return;
+  if (ix < 0 || iy < 0 || ix > S.cur.width || iy > S.cur.height) { toast("이미지 안을 누르세요"); return; }
+  if (!S.maskPoly) {
+    toast("이 검수 서버는 다각형을 모릅니다 — 서버를 다시 켜면 다각형을 그릴 수 있습니다 (사각형은 끌어서)", true);
+    return;
+  }
+  if (S.masks.length >= MASK_MAX) { toast(`가릴 영역은 한 장에 ${MASK_MAX}개까지입니다`, true); return; }
+  S.poly = { id: S.cur.id, pts: [clampImg([ix, iy])], cur: null };
+  selectMask(-1);
+  renderMode();
+  toast("다각형 — 누르는 곳마다 꼭짓점 · 첫 점·Enter 로 닫기 · Esc 버리기 · Backspace 한 점 지우기");
+}
+
+/** 그리는 중의 누르기 (화면 좌표) — 첫 점이면 닫고, 마지막 점을 한 번 더 누르면 닫고, 아니면 꼭짓점을 더한다. */
+function polyClick(sx, sy) {
+  const P = S.poly;
+  if (!P || !S.cur || P.id !== S.cur.id) { polyCancel(); return; }
+  const [fx, fy] = toScreen(...P.pts[0]);
+  const [lx, ly] = toScreen(...P.pts[P.pts.length - 1]);
+  if (P.pts.length >= 3 && Math.abs(sx - fx) <= HANDLE && Math.abs(sy - fy) <= HANDLE) { polyClose(); return; }
+  if (Math.abs(sx - lx) <= 4 && Math.abs(sy - ly) <= 4) {      // 같은 자리를 한 번 더 — 더블클릭이면 닫는다
+    if (P.pts.length >= 3) polyClose();
+    return;
+  }
+  if (P.pts.length >= MASK_MAX_PTS) {
+    toast(`다각형의 꼭짓점은 ${MASK_MAX_PTS}개까지입니다 — Enter 로 닫으세요`, true);
+    return;
+  }
+  P.pts.push(clampImg(toImage(sx, sy)));
+  renderMode();
+}
+
+/** 그리던 다각형을 닫아 가릴 영역으로 넣는다 (되돌리기 한 칸, 자동 저장). */
+function polyClose() {
+  const P = S.poly;
+  if (!P || !S.cur || P.id !== S.cur.id) { polyCancel(); return; }
+  if (P.pts.length < 3) { toast("꼭짓점이 3개 넘어야 닫힙니다 (Esc 로 버리기)"); return; }
+  const W = S.cur.width, H = S.cur.height;
+  const pts = P.pts.map(([x, y]) => [x / W, y / H]);
+  if (polyTooSmall(pts)) {
+    toast("다각형이 너무 작거나 한 줄로 늘어섰습니다 (이미지에서 1px 미만) — 점을 더 찍거나 Esc 로 버리세요", true);
+    return;
+  }
+  if (S.masks.length >= MASK_MAX) { toast(`가릴 영역은 한 장에 ${MASK_MAX}개까지입니다`, true); return; }
+  S.poly = null;
+  pushUndo();
+  S.masks.push(polyMask(pts));
+  S.masksTouched = true;
+  selectMask(S.masks.length - 1);
+  markDirty();
+  renderMode();
+}
+
+/** 그리던 다각형을 버린다. msg 를 주면 점을 둘 넘게 찍었을 때만 알린다(누르기 한 번은 실수로 친다). */
+function polyCancel(msg) {
+  if (!S.poly) return;
+  const n = S.poly.pts.length;
+  S.poly = null;
+  if (msg && n >= 2) toast(msg);
+  renderMode();
+  if (S.cur && S.imgId === S.cur.id) draw();
+}
+
+/** 그리던 다각형의 마지막 점을 지운다 — 남는 점이 없으면 버린다. */
+function polyBackspace() {
+  if (!S.poly) return;
+  S.poly.pts.pop();
+  if (!S.poly.pts.length) { polyCancel(); return; }
+  renderMode();
+  draw();
+}
+
+/** 그리는 중의 키 — 받았으면 true (keydown 이 더 보지 않는다). */
+function polyKey(e) {
+  const k = e.key;
+  if ((e.ctrlKey || e.metaKey) && (k.toLowerCase() === "z" || k === "ㅋ" || e.code === "KeyZ")) { polyBackspace(); return true; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  if (k === "Enter") { if (!e.repeat) polyClose(); return true; }
+  if (k === "Escape") { polyCancel(); return true; }
+  if (k === "Backspace" || k === "Delete") { polyBackspace(); return true; }
+  if (k === " ") { toast("그리던 다각형이 있습니다 — Enter 로 닫거나 Esc 로 버린 뒤 승인하세요"); return true; }
+  return false;
+}
+
+/** 끄는 다각형(drag.box)의 꼭짓점을 pts 로 — 되돌리기는 처음 바꿀 때 한 번 쌓는다(editDragBox 와 같다). */
+function editDragPoly(pts) {
+  if (!drag.edited) { pushUndo(); drag.edited = true; }
+  Object.assign(drag.box, polyMask(pts));
+  S.masksTouched = true;
+  markDirty();
+  draw();
+}
+
+/** 다각형 영역 mi 의 꼭짓점 vi 를 지운다 — 3개는 남긴다. */
+function deleteVertex(mi, vi) {
+  const m = S.masks[mi];
+  if (!m || !m.pts) return;
+  if (m.pts.length <= 3) { toast("꼭짓점이 3개뿐이라 지울 수 없습니다 — 영역째 지우려면 Del"); return; }
+  const pts = m.pts.filter((_, i) => i !== vi);
+  if (polyTooSmall(pts)) { toast("그 꼭짓점을 지우면 다각형이 한 줄로 늘어섭니다", true); return; }
+  pushUndo();
+  Object.assign(m, polyMask(pts));
+  S.masksTouched = true;
+  markDirty();
+  refresh();
+}
+
 function markDirty() {
   S.dirty = true;
   S.rev += 1;
@@ -923,10 +1394,8 @@ async function saveBoxes() {
     conf: b.conf, origin: b.origin || "human",
   }));
   const body = { boxes: payload };
-  // 가릴 영역은 이 이미지에서 손댄 뒤로만 싣는다 — 안 실으면 서버가 그대로 둔다(masks.py)
-  if (S.masksTouched) {
-    body.masks = S.masks.map((m) => { const [x1, y1, x2, y2] = maskToXyxy(m); return { x1, y1, x2, y2 }; });
-  }
+  // 가릴 영역은 이 이미지에서 손댄 뒤로만 싣는다 — 안 실으면 서버가 그대로 둔다(masks.py). 다각형은 {pts}
+  if (S.masksTouched) body.masks = S.masks.map(maskToBody);
   S.saving = api(`/api/images/${id}/boxes`, { method: "PUT", body });
   try {
     const res = await S.saving;
@@ -1120,9 +1589,10 @@ function renderBoxList() {
     const [, , iw, ih] = boxRect(m);
     li.innerHTML = '<span class="swatch hatch"></span><span class="nm"></span>'
       + '<span class="msize"></span><span class="del" title="삭제">✕</span>';
-    li.querySelector(".nm").textContent = `가릴 영역 ${i + 1}`;
-    li.querySelector(".msize").textContent = `${Math.round(iw)}×${Math.round(ih)}px`;
-    li.title = "학습 세트를 만들 때 이 자리를 회색(114)으로 칠합니다 — 원본 그림은 그대로입니다. 반 넘게 가려진 박스는 학습 라벨에서 빠집니다.";
+    li.querySelector(".nm").textContent = `가릴 영역 ${i + 1}` + (m.pts ? " (다각형)" : "");
+    li.querySelector(".msize").textContent = (m.pts ? `${m.pts.length}점 · ` : "") + `${Math.round(iw)}×${Math.round(ih)}px`;
+    li.title = "학습 세트를 만들 때 이 자리를 회색(114)으로 칠합니다 — 원본 그림은 그대로입니다. 반 넘게 가려진 박스는 학습 라벨에서 빠집니다."
+      + (m.pts ? "\n다각형 — 고르면 꼭짓점을 끌어 옮기고, 변 가운데 점을 끌면 꼭짓점이 생기고, 꼭짓점을 우클릭하면 지웁니다. 크기는 바깥 사각형입니다." : "");
     li.onclick = (e) => {
       if (e.target.classList.contains("del")) { deleteMask(i); return; }
       if (S.mode !== "mask" && !S.maskBlock) setMode("mask");
@@ -1823,12 +2293,21 @@ async function deleteTag(t) {
  * (서버 masks.merge 와 같은 규칙). 여러 장에는 이미지 보기의 '가릴 영역 템플릿'(gallery.js — 일괄 수정 묶음이라 변경
  * 기록에서 묶음째 되돌린다). */
 
-/** 정규화 xyxy 두 개가 '같은 자리' 인가 — 네 좌표가 모두 MASK_SAME 안. 서버 masks.same_rect·SAME 과 같은 식이다 — 고치면 둘 다
- *  (tests/test_js_parity.py 가 대조한다). 화면은 영역을 {cx, cy, w, h} 로 들었다 xyxy 로 되돌려 끝자리가 달라진다.
+/** 서버의 꼴(maskToWire) 두 영역이 '같은 자리' 인가 — 사각형끼리는 네 좌표가 모두 MASK_SAME 안, 다각형끼리는 꼭짓점 수가
+ *  같고 순서대로 모든 좌표가 MASK_SAME 안(2026-11-19), 사각형과 다각형은 늘 다르다. 서버 masks.same_rect·SAME 과 같은 식이다
+ *  — 고치면 둘 다 (tests/test_js_parity.py 가 대조한다). 화면은 사각형을 {cx, cy, w, h} 로 들었다 xyxy 로 되돌려 끝자리가 달라진다.
  *  2026-11-12 까지는 소수 7자리로 반올림한 키를 견줬는데, 픽셀에 딱 맞춘 좌표(2560·1280 폭)가 반올림 경계에 자주 걸려 그
  *  잡음만으로 같은 자리를 못 알아봤다(같은 템플릿을 두 번 더하면 겹쳐 들어갔다) — 이유·수치는 masks.py 의 SAME. */
 const MASK_SAME = 7.5e-8;
-const sameRect = (a, b) => a.every((v, i) => Math.abs(v - b[i]) <= MASK_SAME);
+function sameRect(a, b) {
+  const pa = Array.isArray(a[0]), pb = Array.isArray(b[0]);
+  if (pa !== pb) return false;
+  if (pa) {
+    return a.length === b.length
+      && a.every((p, i) => Math.abs(p[0] - b[i][0]) <= MASK_SAME && Math.abs(p[1] - b[i][1]) <= MASK_SAME);
+  }
+  return a.every((v, i) => Math.abs(v - b[i]) <= MASK_SAME);
+}
 
 async function loadMaskTemplates() {
   let data;
@@ -1889,7 +2368,7 @@ function renderMaskTemplates() {
     };
     li.querySelector(".ed").onclick = (e) => { e.stopPropagation(); renameMaskTemplate(t); };
     li.querySelector(".del").onclick = (e) => { e.stopPropagation(); deleteMaskTemplate(t); };
-    li.onmouseenter = () => { if (S.cur && S.imgId === S.cur.id) { S.tplGhost = t.rects.map(maskFromXyxy); draw(); } };
+    li.onmouseenter = () => { if (S.cur && S.imgId === S.cur.id) { S.tplGhost = t.rects.map(maskFromWire); draw(); } };
     li.onmouseleave = () => { if (S.tplGhost) { S.tplGhost = null; draw(); } };
     ul.appendChild(li);
   }
@@ -1906,12 +2385,17 @@ function applyMaskTemplate(t) {
           + `${S.cur.width}×${S.cur.height} 라 가로·세로 비율이 다릅니다 — 영역이 늘어나거나 줄어든 자리에 덮입니다.\n`
           + "그래도 더할까요?")) return;
   }
-  const have = S.masks.map(maskToXyxy);
+  // 다각형이 든 템플릿은 다각형을 모르는 옛 서버로 보내지 않는다 — 바깥 사각형으로 바뀐다(polyStart 와 같은 뜻)
+  if (!S.maskPoly && t.rects.some((r) => Array.isArray(r[0]))) {
+    toast("이 템플릿에는 다각형이 있는데 이 검수 서버는 다각형을 모릅니다 — 서버를 다시 켠 뒤 적용하세요", true);
+    return;
+  }
+  const have = S.masks.map(maskToWire);
   const add = [];
   for (const r of t.rects) {
     if (have.some((h) => sameRect(h, r))) continue;
     have.push(r);
-    add.push(maskFromXyxy(r));
+    add.push(maskFromWire(r));
   }
   if (!add.length) { toast(`'${t.name}' 의 영역이 이미 모두 들어 있습니다`); return; }
   if (S.masks.length + add.length > MASK_MAX) {
@@ -1936,7 +2420,7 @@ async function saveMaskTemplate() {
   if (!name) { input.focus(); toast("템플릿 이름을 넣으세요 (예: 카메라A_1)"); return; }
   const body = {
     name, width: S.cur.width, height: S.cur.height, image_id: S.cur.id,
-    masks: S.masks.map((m) => { const [x1, y1, x2, y2] = maskToXyxy(m); return { x1, y1, x2, y2 }; }),
+    masks: S.masks.map(maskToBody),
   };
   let res;
   try {
@@ -2365,7 +2849,7 @@ async function restoreEntry(h) {
     if (!S.cur || S.cur.id !== id) return;
     pushUndo();                       // Ctrl+Z 로 되돌리기 전으로 다시 갈 수 있다
     S.boxes = r.boxes.map((b) => ({ ...b, cls0: b.cls }));
-    if (r.masks) S.masks = r.masks.map(maskFromXyxy);    // 그 저장에서 영역도 바뀌었으면 영역도 되돌아왔다
+    if (r.masks) S.masks = r.masks.map(maskFromWire);    // 그 저장에서 영역도 바뀌었으면 영역도 되돌아왔다
     S.sel = -1;
     S.msel = -1;
     S.ghost = null;
@@ -2854,8 +3338,10 @@ async function reloadCurrentBoxes() {
   const meta = await api(`/api/images/${id}`);
   if (!S.cur || S.cur.id !== id) return;
   S.boxes = meta.boxes.map((b) => ({ ...b, cls0: b.cls }));
-  S.masks = (meta.masks || []).map(maskFromXyxy);
+  polyCancel("그리던 다각형을 버렸습니다 (서버에서 다시 읽음)");
+  S.masks = (meta.masks || []).map(maskFromWire);
   S.maskBlock = meta.mask_block || null;
+  S.maskPoly = !!meta.mask_poly;
   S.masksTouched = false;
   S.sel = -1;
   S.msel = -1;
@@ -3074,10 +3560,12 @@ async function loadImageNow(id) {
   // 저장 페이로드에는 들어가지 않는다 (saveBoxes 가 필드를 골라 보낸다).
   S.boxes = meta.boxes.map((b) => ({ ...b, cls0: b.cls }));
   S.sel = -1;
-  S.masks = (meta.masks || []).map(maskFromXyxy);       // 옛 서버(영역 모름)면 비어 있다
+  polyCancel("그리던 다각형을 버렸습니다 (다른 이미지를 엶)");
+  S.masks = (meta.masks || []).map(maskFromWire);       // 옛 서버(영역 모름)면 비어 있다
   S.msel = -1;
   S.masksTouched = false;
   S.maskBlock = meta.mask_block || null;
+  S.maskPoly = !!meta.mask_poly;                        // 다각형을 모르는 옛 서버면 다각형을 시작하지 않는다
   renderMaskTemplates();                                // test 이미지면 적용을 흐리게, 미리 보기는 끈다
   if (S.mode === "mask" && S.maskBlock) {               // test 이미지 — 영역을 그릴 수 없으니 새 박스 모드로
     S.mode = "box";
@@ -3151,6 +3639,11 @@ async function setStatus(status) {
   }
   if (status === "approved" && S.imgId !== S.cur.id) {
     toast("이 이미지의 사진이 아직 화면에 없어 승인하지 않았습니다 (받는 중이거나 받지 못했습니다)", true);
+    return;
+  }
+  // 그리던 다각형은 아직 영역이 아니다 — 승인하면 덮으려던 자리가 칠해지지 않은 채 학습에 들어간다 (2026-11-19)
+  if (status === "approved" && S.poly) {
+    toast("그리던 다각형이 있습니다 — Enter 로 닫거나 Esc 로 버린 뒤 승인하세요", true);
     return;
   }
   S.statusBusy = true;
@@ -3336,7 +3829,7 @@ function clearCurrent() {
   clearTimeout(S._predTimer);
   Object.assign(S, {
     cur: null, boxes: [], sel: -1, undo: [], dirty: false, img: null, imgId: null,
-    masks: [], msel: -1, masksTouched: false, maskBlock: null,
+    masks: [], msel: -1, masksTouched: false, maskBlock: null, poly: null,
     ghost: null, history: [], pred: null, predLoading: false, findings: [], findHot: -1,
   });
   $("#img-name").textContent = "";
@@ -3906,6 +4399,9 @@ window.addEventListener("keydown", (e) => {
     if (!S.ctrl) { S.ctrl = true; renderMode(); }
     if (e.key === "Control") return;
   }
+
+  // 다각형을 그리는 중 (2026-11-19) — Enter 닫기·Esc 버리기·Backspace/Del/Ctrl+Z 마지막 점 지우기, Space 는 승인하지 않는다
+  if (S.poly && polyKey(e)) { e.preventDefault(); return; }
 
   // 한글 입력 상태면 e.key 가 'ㅋ' 이다 (이미지 보기의 Ctrl+'ㅁ' 와 같다, 2026-11-05)
   if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "z" || e.key === "ㅋ" || e.code === "KeyZ")) {

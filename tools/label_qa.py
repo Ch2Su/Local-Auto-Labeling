@@ -55,7 +55,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
 from autolabel.config import Config, resolve
-from autolabel.masks import applies_to, drops
+from autolabel.masks import applies_to, drops, from_row
 from autolabel.predictor import build_class_map
 
 _Box = namedtuple("_Box", "cx cy w h")      # masks.drops 가 읽는 꼴(정규화)
@@ -97,10 +97,13 @@ def load_db(db: Path):
         gt[r["image_id"]].append((r["cls"], r["cx"], r["cy"], r["w"], r["h"]))
     masks = defaultdict(list)
     try:
+        # 다각형 꼭짓점 열(poly, 2026-11-19)이 생기기 전의 DB 는 읽기 전용이라 열을 더하지 않고 NULL(사각형)로 읽는다
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(masks)")}
+        poly = "m.poly" if "poly" in cols else "NULL"
         for r in con.execute(
-                "SELECT m.image_id, m.x1, m.y1, m.x2, m.y2 FROM masks m "
+                f"SELECT m.image_id, m.x1, m.y1, m.x2, m.y2, {poly} FROM masks m "
                 "JOIN images i ON i.id = m.image_id WHERE i.status='approved' ORDER BY m.image_id, m.id"):
-            masks[r["image_id"]].append((r["x1"], r["y1"], r["x2"], r["y2"]))
+            masks[r[0]].append(from_row(*tuple(r)[1:]))       # 사각형 (x1, y1, x2, y2)·다각형 ((x, y), …) — masks.py
     except sqlite3.OperationalError:    # masks 표가 생기기 전(2026-11-09)의 DB — 보관해 둔 옛 DB 도 읽을 수 있게
         pass
     con.close()
@@ -108,7 +111,7 @@ def load_db(db: Path):
 
 
 def applied_rects(images: list[dict], masks) -> dict[int, list]:
-    """가릴 영역을 **적용하는** 이미지의 영역 {이미지 id: [(x1, y1, x2, y2)]} — 학습 세트와 같은 규칙이다(`masks.applies_to`):
+    """가릴 영역을 **적용하는** 이미지의 영역 {이미지 id: [영역(사각형·다각형)]} — 학습 세트와 같은 규칙이다(`masks.applies_to`):
     test 분할은 평가라 칠하지도, 박스를 빼지도 않으니 여기서도 영역이 없는 것으로 본다."""
     return {im["id"]: masks[im["id"]] for im in images if masks.get(im["id"]) and applies_to(im["split"])}
 

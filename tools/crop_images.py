@@ -11,7 +11,7 @@
 - 영역은 지금 이미지 픽셀 `[x1, y1, x2, y2]`. 고른 이미지는 모두 크기가 같아야 한다(다르면 멈춘다 — 다른 화면이 섞였다).
 - 박스는 영역으로 자르고, 원래 넓이의 30% 미만만 남거나 1px 이하면 버린다(`import_virat.crop_gt` 와 같은 규칙).
   사람이 그린 박스도 좌표만 옮긴다(다시 라벨링하지 않는다). 출처·신뢰도는 그대로다. 가릴 영역(`src/autolabel/masks.py`)도
-  같은 영역 좌표로 옮기고, 영역 밖으로 다 나간 것은 버린다.
+  같은 영역 좌표로 옮기고(다각형은 남길 영역으로 잘라서), 영역 밖으로 다 나간 것은 버린다.
 - 새 파일은 같은 폴더에 이름 끝 `_c<x1>-<y1>-<x2>-<y2>`(처음 통째 화면 기준 — 이미 잘린 이미지를 또 자르면 꼬리표를
   합친다), JPEG 95. 옛 파일은 지우지 않고 `<DB 폴더>/backups/crop_<시각>/` 로 옮긴다(목록 `manifest.tsv` 도 거기 —
   이미지 이름이 든 목록이라 git 밖에 둔다).
@@ -44,6 +44,8 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 
 from autolabel.config import Config  # noqa: E402
+from autolabel.masks import clean as clean_masks  # noqa: E402
+from autolabel.masks import clip_poly, is_poly  # noqa: E402
 from autolabel.scoring import image_uncertainty  # noqa: E402
 from autolabel.store import Store  # noqa: E402
 from autolabel.yolo_io import Box  # noqa: E402
@@ -112,9 +114,19 @@ def crop_box(b: Box, img_w: int, img_h: int, rect: Rect) -> tuple[Box | None, st
     return nb, ("clipped" if clipped else "kept")
 
 
-def crop_mask(m, img_w: int, img_h: int, rect: Rect) -> tuple[float, float, float, float] | None:
-    """가릴 영역 하나(정규화 xyxy, masks.py)를 남길 영역 좌표로 — 영역 밖으로 다 나가거나 1px 아래로 줄면 None."""
+def crop_mask(m, img_w: int, img_h: int, rect: Rect):
+    """가릴 영역 하나(masks.py — 사각형 정규화 xyxy·다각형 꼭짓점)를 남길 영역 좌표로 — 영역 밖으로 다 나가거나 1px 아래로
+    줄면 None. 다각형(2026-11-19)은 남길 영역으로 잘라(masks.clip_poly) 꼭짓점을 옮긴다 — 바깥 사각형만 자르면 영역 밖의
+    꼭짓점이 새 그림의 가장자리에 엉뚱한 모양을 만든다."""
     x1, y1, x2, y2 = rect
+    if is_poly(m):
+        pts = clip_poly([(p[0] * img_w, p[1] * img_h) for p in m], rect)
+        if len(pts) < 3 or max(p[0] for p in pts) - min(p[0] for p in pts) < 1 \
+                or max(p[1] for p in pts) - min(p[1] for p in pts) < 1:
+            return None
+        cw, ch = x2 - x1, y2 - y1
+        out = clean_masks([[((x - x1) / cw, (y - y1) / ch) for x, y in pts]])
+        return out[0] if out else None
     a, t, c, d = m[0] * img_w, m[1] * img_h, m[2] * img_w, m[3] * img_h
     ca, ct, cc, cd = max(a, x1), max(t, y1), min(c, x2), min(d, y2)
     if cc - ca < 1 or cd - ct < 1:

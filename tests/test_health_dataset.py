@@ -89,6 +89,52 @@ def test_the_report_counts_what_an_export_with_images_labels(cfg, store, masked,
     assert done.mask_dropped == r["masks"]["dropped"]
 
 
+@pytest.fixture
+def poly_masked(store, add_image):
+    """다각형 영역 (2026-11-19) — train·val·test 장에 같은 박스와 같은 다각형 둘. 대각선으로 덮어 보는 자리:
+    차는 왼쪽 위 삼각형(x+y≤0.8) 안에 통째로 → 뺀다, 큰 트럭은 x+y≤1.26 쪽이 68% → 뺀다, 작은 트럭은 43% → 남는다,
+    사람은 안 덮인다. 사각형으로 재면(바깥 사각형) 작은 트럭과 사람까지 덮인 것으로 나온다."""
+    boxes = [
+        box(CAR, 0.25, 0.25, 0.2, 0.2),         # 0.15~0.35 — 첫 삼각형 안
+        box(TRUCK, 0.6, 0.6, 0.3, 0.3),         # 0.45~0.75 — 둘째 삼각형이 68%
+        box(TRUCK, 0.62, 0.2, 0.3, 0.2),        # x 0.47~0.77, y 0.1~0.3 — 첫 삼각형이 43%
+        box(PERSON, 0.9, 0.9, 0.05, 0.1),       # 안 덮인다
+    ]
+    polys = [((0.0, 0.0), (0.8, 0.0), (0.0, 0.8)), ((0.4, 0.4), (0.86, 0.4), (0.4, 0.86))]
+    hashes = far_hashes(3, seed=5)
+    ids = {sp: add_image(f"p_{sp}.jpg", camera=f"pc-{k}", boxes=boxes, dhash=hashes[k], split=sp)
+           for k, sp in enumerate(SPLITS)}
+    for image_id in ids.values():
+        path = Path(store.get_image(image_id)["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1280, 720), (90, 120, 150)).save(path, quality=90)
+        store.set_masks(image_id, polys)
+    return ids
+
+
+def test_polygons_paint_and_drop_the_same_in_training_set_and_report(cfg, store, poly_masked):
+    r = report(store)
+    built = build_dataset(cfg, store)
+    assert (built.masked, built.masked_test, built.mask_dropped) == (2, 1, 4)     # train·val 에서 둘씩, test 는 그대로
+    for sp in SPLITS:
+        got = label_counts(cfg.dataset / "labels" / sp)
+        assert sum(got.values()) == r["splits"]["boxes"][sp], sp
+    assert r["splits"]["boxes"] == {"train": 2, "val": 2, "test": 4, "none": 0}
+    assert (r["masks"]["dropped"], r["masks"]["rects"], r["masks"]["test_images"]) == (4, 6, 1)
+
+    # 칠한 그림 — 다각형 안은 회색, 바깥 사각형 안이라도 모양 밖은 그대로 (픽셀 중심 규칙)
+    px = lambda im, x, y: im.getpixel((int(x * 1280), int(y * 720)))
+    with Image.open(next((cfg.dataset / "images" / "train").glob("p_train__*.jpg"))) as im:
+        first, second = px(im, 0.1, 0.1), px(im, 0.5, 0.5)            # 두 삼각형 안
+        corner, beyond = px(im, 0.75, 0.1), px(im, 0.7, 0.7)            # 바깥 사각형 안, 모양 밖(x+y 0.85 > 0.8, 1.4 > 1.26)
+    assert all(abs(v - 114) <= 6 for v in first) and all(abs(v - 114) <= 6 for v in second)
+    assert abs(corner[2] - 150) <= 8 and abs(beyond[2] - 150) <= 8     # 원래 색(90, 120, 150)
+    # test 장은 칠하지 않고 원본을 그대로 쓴다
+    test_img = next((cfg.dataset / "images" / "test").glob("p_test__*"))
+    with Image.open(test_img) as im:
+        assert abs(im.getpixel((int(0.1 * 1280), int(0.1 * 720)))[2] - 150) <= 8
+
+
 def test_keeping_masked_boxes_counts_the_database(cfg, store, masked):
     """'넣고 셈' 은 DB 의 박스 전부다 — 라벨만 내보낼 때(그림을 칠하지 않으니 박스도 빼지 않는다)와 같다."""
     r = report(store, drop=False)

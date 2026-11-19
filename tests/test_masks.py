@@ -226,6 +226,214 @@ def test_write_masked_leaves_the_original_and_applies_rotation(tmp_path):
 
 
 def test_limits_are_what_the_docs_say():
-    # 바꾸면 화면(app.js MASK_MAX·MASK_DROP)·문서도 함께 — 화면과의 대조는 test_js_parity.py
+    # 바꾸면 화면(app.js MASK_MAX·MASK_DROP·MASK_MAX_PTS)·문서도 함께 — 화면과의 대조는 test_js_parity.py
     assert masks.MAX_MASKS == 500
+    assert masks.MAX_POINTS == 100
     assert masks.MIN_SIDE == 1e-4
+
+
+# ----------------------------------------------------------------- 다각형 (2026-11-19)
+
+TRI = ((0.25, 0.25), (0.75, 0.25), (0.25, 0.75))        # BOX 의 왼쪽 위 절반(대각선 아래가 아니라 위)
+
+
+def old_rect_cover(box: Box, rects) -> float:
+    """다각형을 더하기 전의 masks.covered 를 그대로 옮긴 것 — 사각형만 걸린 박스의 값이 끝자리까지 그대로인지 본다."""
+    bx1, by1 = box.cx - box.w / 2, box.cy - box.h / 2
+    bx2, by2 = box.cx + box.w / 2, box.cy + box.h / 2
+    area = (bx2 - bx1) * (by2 - by1)
+    if area <= 0:
+        return 0.0
+    parts = []
+    for x1, y1, x2, y2 in rects:
+        a, t, c, d = max(x1, bx1), max(y1, by1), min(x2, bx2), min(y2, by2)
+        if c > a and d > t:
+            parts.append((a, t, c, d))
+    if not parts:
+        return 0.0
+    xs = sorted({v for p in parts for v in (p[0], p[2])})
+    ys = sorted({v for p in parts for v in (p[1], p[3])})
+    xi = {v: i for i, v in enumerate(xs)}
+    yi = {v: j for j, v in enumerate(ys)}
+    ny = len(ys) - 1
+    cell = bytearray((len(xs) - 1) * ny)
+    for a, t, c, d in parts:
+        j1, j2 = yi[t], yi[d]
+        for i in range(xi[a], xi[c]):
+            cell[i * ny + j1:i * ny + j2] = b"\x01" * (j2 - j1)
+    inside = 0.0
+    for i in range(len(xs) - 1):
+        dx = xs[i + 1] - xs[i]
+        row = i * ny
+        for j in range(ny):
+            if cell[row + j]:
+                inside += dx * (ys[j + 1] - ys[j])
+    return min(1.0, inside / area)
+
+
+def sampled_cover(box: Box, ms, n: int = 400) -> float:
+    """격자 n×n 점 가운데 영역(합집합, 다각형은 홀짝 규칙) 안에 드는 몫 — covered 와 따로 짠 거친 기준(오차 1/n 쯤)."""
+    import numpy as np
+    bx1, by1 = box.cx - box.w / 2, box.cy - box.h / 2
+    X, Y = np.meshgrid(bx1 + (np.arange(n) + 0.5) / n * box.w, by1 + (np.arange(n) + 0.5) / n * box.h)
+    hit = np.zeros(X.shape, bool)
+    for m in ms:
+        if masks.is_poly(m):
+            P = np.array(m, float)
+            inside = np.zeros(X.shape, bool)
+            for (xa, ya), (xb, yb) in zip(P, np.roll(P, -1, axis=0)):
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    xc = xa + (Y - ya) * (xb - xa) / (yb - ya)
+                inside ^= ((ya > Y) != (yb > Y)) & (X < xc)
+            hit |= inside
+        else:
+            x1, y1, x2, y2 = m
+            hit |= (X >= x1) & (X < x2) & (Y >= y1) & (Y < y2)
+    return float(hit.mean())
+
+
+def test_rect_only_boxes_keep_the_old_value_to_the_last_digit():
+    """'기존 사각형 영역은 그대로' — 다각형이 걸리지 않은 박스는 다각형을 더하기 전의 식과 끝자리까지 같다(문턱 0.5 의
+    판정도 그래서 그대로다). 다각형이 있어도 그 박스에 안 걸리면 같다."""
+    rng = random.Random(1119)
+    far_poly = ((0.95, 0.95), (1.0, 0.95), (1.0, 1.0))
+    for _ in range(3000):
+        b = Box(0, rng.random(), rng.random(), 0.01 + 0.5 * rng.random(), 0.01 + 0.5 * rng.random())
+        rects = []
+        for _ in range(rng.choice([0, 1, 2, 5, 13])):
+            x1, x2 = sorted((rng.random(), rng.random()))
+            y1, y2 = sorted((rng.random(), rng.random()))
+            rects.append((x1, y1, x2, y2))
+        want = old_rect_cover(b, rects)
+        assert covered(b, rects) == want
+        if b.cx + b.w / 2 < 0.95 and b.cy + b.h / 2 < 0.95:
+            assert covered(b, [*rects, far_poly]) == want
+
+
+def test_polygon_cover_is_exact_on_known_shapes():
+    assert covered(BOX, [TRI]) == 0.5                                               # 대각선 반
+    assert covered(BOX, [((0.0, 0.0), (1.0, 0.0), (1.0, 1.0))]) == 0.5             # 박스를 대각선으로 가른다
+    assert covered(BOX, [TRI, TRI]) == 0.5                                          # 겹친 것을 두 번 세지 않는다
+    assert covered(BOX, [TRI, ((0.75, 0.25), (0.75, 0.75), (0.25, 0.75))]) == 1.0   # 두 삼각형이 박스를 채운다
+    # 삼각형 ∪ 왼쪽 절반 — 0.125 + 0.125 − 겹침 0.09375(왼쪽 절반 안의 x+y≤1) = 0.15625, 박스 0.25 의 0.625
+    assert covered(BOX, [TRI, (0.25, 0.25, 0.5, 0.75)]) == 0.625
+    square = ((0.25, 0.25), (0.5, 0.25), (0.5, 0.75), (0.25, 0.75))                 # 네모난 다각형 = 같은 사각형
+    assert covered(BOX, [square]) == covered(BOX, [(0.25, 0.25, 0.5, 0.75)]) == 0.5
+    assert covered(BOX, [((0.6, 0.8), (0.9, 0.8), (0.9, 0.9))]) == 0.0              # 박스 밖
+    # 바깥 사각형은 박스를 덮지만 모양은 박스를 비켜 간다(대각선 띠의 빈 모서리) — 0 이어야 한다
+    assert covered(Box(0, 0.2, 0.8, 0.2, 0.2), [((0.0, 0.0), (0.2, 0.0), (1.0, 0.8), (1.0, 1.0))]) == 0.0
+
+
+def test_polygon_cover_matches_a_sampled_reference():
+    rng = random.Random(7)
+    from helpers import random_poly
+    worst = 0.0
+    for case in range(150):
+        b = Box(0, 0.3 + 0.4 * rng.random(), 0.3 + 0.4 * rng.random(), 0.1 + 0.4 * rng.random(),
+                0.1 + 0.4 * rng.random())
+        ms = []
+        for _ in range(rng.choice([1, 2, 3, 5])):
+            if rng.random() < 0.7:
+                ms.append(random_poly(rng, simple=case % 3 != 0, cx=b.cx, cy=b.cy))
+            else:
+                x1, x2 = sorted((rng.random(), rng.random()))
+                y1, y2 = sorted((rng.random(), rng.random()))
+                ms.append((x1, y1, x2, y2))
+        worst = max(worst, abs(covered(b, ms) - sampled_cover(b, ms)))
+    assert worst < 0.01                                 # 400×400 표본의 오차 안 — 근사 없이 잰 값이다
+
+
+def test_self_crossing_polygon_uses_even_odd():
+    """꼬인 다각형(8자) — 두 날개는 칠하고, 두 번 감싼 곳이 없으니 홀짝 규칙과 그냥 채우기가 같다. 오각별은 가운데가 빈다."""
+    bowtie = ((0.25, 0.25), (0.75, 0.75), (0.75, 0.25), (0.25, 0.75))             # 좌우 날개
+    assert covered(BOX, [bowtie]) == 0.5
+    import math
+    star = tuple((0.5 + 0.25 * math.cos(math.pi / 2 + k * 4 * math.pi / 5),
+                  0.5 + 0.25 * math.sin(math.pi / 2 + k * 4 * math.pi / 5)) for k in range(5))
+    center = Box(0, 0.5, 0.5, 0.02, 0.02)
+    assert covered(center, [star]) == 0.0               # 가운데 오각형은 두 번 감싸여 빈다
+    assert sampled_cover(BOX, [star]) == pytest.approx(covered(BOX, [star]), abs=0.01)
+
+
+def test_drops_and_split_boxes_with_polygons():
+    big = Box(2, 0.5, 0.5, 0.5, 0.5)
+    small = Box(2, 0.3, 0.3, 0.05, 0.05)                # 삼각형의 왼쪽 위 꼭짓점 둘레 — 다 덮인다
+    beside = Box(2, 0.7, 0.7, 0.05, 0.05)               # 삼각형 바깥(대각선 아래)
+    assert drops(big, [TRI]) and drops(small, [TRI]) and not drops(beside, [TRI])
+    keep, drop = split_boxes([big, small, beside], [TRI])
+    assert keep == [beside] and drop == [big, small]
+
+
+def test_clean_polygons():
+    assert clean([TRI]) == [TRI]
+    assert clean([[[0.25, 0.25], [0.75, 0.25], [0.25, 0.75]]]) == [TRI]           # JSON 의 리스트도 받는다
+    # 0~1 로 자르고, 잇달아 같은 점(더블클릭)과 닫는 점(첫 점과 같은 끝)을 뺀다 — 순서는 그대로
+    messy = [(-0.5, 0.25), (0.75, 0.25), (0.75, 0.25), (0.25, 1.5), (0.0, 0.25)]
+    assert clean([messy]) == [((0.0, 0.25), (0.75, 0.25), (0.25, 1.0))]
+    assert clean([((0.1, 0.1), (0.2, 0.2), (0.3, 0.3))]) == []                     # 한 줄로 늘어섰다
+    assert clean([((0.1, 0.1), (0.2, 0.1))]) == []                                 # 점이 둘
+    assert clean([((0.1, 0.1), (0.1 + 5e-5, 0.3), (0.1, 0.5))]) == []              # 너무 좁다(MIN_SIDE)
+    assert clean([((0.1, float("nan")), (0.5, 0.1), (0.5, 0.5))]) == []
+    assert clean([((0.1, 0.1), "x", (0.5, 0.5))]) == []
+    mixed = [RECT := (0.1, 0.1, 0.2, 0.2), TRI, (0.3, 0.3, 0.2, 0.4)]
+    assert clean(mixed) == [RECT, TRI, (0.2, 0.3, 0.3, 0.4)]                       # 섞여도 순서 그대로
+
+
+def test_same_place_for_polygons():
+    assert same_rect(TRI, [list(p) for p in TRI])
+    nudged = ((0.25 + 5e-8, 0.25), (0.75, 0.25 - 5e-8), (0.25, 0.75))
+    assert same_rect(TRI, nudged)                       # 이력 반올림(5e-8 까지) 안
+    assert not same_rect(TRI, ((0.25 + 1e-7, 0.25), (0.75, 0.25), (0.25, 0.75)))
+    assert not same_rect(TRI, TRI[1:] + TRI[:1])        # 같은 모양을 다른 점에서 시작 — 다른 영역으로 본다
+    assert not same_rect(TRI, TRI[:2])
+    square = ((0.25, 0.25), (0.5, 0.25), (0.5, 0.75), (0.25, 0.75))
+    assert not same_rect(square, (0.25, 0.25, 0.5, 0.75)) and not same_rect((0.25, 0.25, 0.5, 0.75), square)
+    assert same_rects([RECT_A := (0.0, 0.0, 0.1, 0.1), TRI], [list(RECT_A), [list(p) for p in TRI]])
+    assert merge([TRI], [[list(p) for p in TRI], RECT_A]) == [TRI, RECT_A]
+    assert subtract([RECT_A, TRI, square], [nudged]) == [RECT_A, square]
+    assert has_rect([square, TRI], nudged)
+
+
+def test_rows_and_wire_keep_polygons_exactly():
+    pts = ((1 / 3, 1 / 7), (2 / 3, 1 / 7), (0.5, 5 / 7))
+    row = masks.row_values(pts)
+    assert row[:4] == (1 / 3, 1 / 7, 2 / 3, 5 / 7)     # 바깥 사각형 — poly 를 모르는 옛 코드는 이것을 읽는다
+    assert masks.from_row(*row) == pts                  # JSON 이 끝자리까지 그대로 돌아온다
+    assert masks.row_values((0.1, 0.2, 0.3, 0.4)) == (0.1, 0.2, 0.3, 0.4, None)
+    assert masks.from_row(0.1, 0.2, 0.3, 0.4, None) == (0.1, 0.2, 0.3, 0.4)
+    assert masks.to_wire(pts) == [list(p) for p in pts] and masks.as_mask(masks.to_wire(pts)) == pts
+    assert masks.bbox(pts) == (1 / 3, 1 / 7, 2 / 3, 5 / 7)
+
+
+def test_paint_polygon_by_pixel_centers():
+    """픽셀 중심이 다각형 안이면 칠한다 — 대각선 위의 중심(경계)은 칠하지 않는다. 사각형 칠하기는 그대로다."""
+    img = Image.new("RGB", (10, 10), (200, 10, 10))
+    out = paint(img, [((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))])
+    gray = {(x, y) for x in range(10) for y in range(10) if out.getpixel((x, y)) == (GRAY, GRAY, GRAY)}
+    assert gray == {(x, y) for x in range(10) for y in range(10) if x + y < 9}    # 중심 (x+.5, y+.5) 가 x+y<1 쪽
+    assert img.getpixel((0, 0)) == (200, 10, 10)        # 받은 그림은 그대로
+    both = paint(img, [((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)), (0.5, 0.5, 1.0, 1.0)])
+    assert both.getpixel((9, 9)) == (GRAY, GRAY, GRAY) and both.getpixel((9, 0)) == (200, 10, 10)
+
+
+def test_painted_share_follows_the_cover():
+    """칠한 픽셀의 몫이 덮는 몫(covered)과 거의 같다 — 학습 세트가 칠하는 자리와 박스를 빼는 판정이 같은 모양을 본다."""
+    import numpy as np
+    rng = random.Random(3)
+    from helpers import random_poly
+    w, h = 640, 360
+    for _ in range(40):
+        ms = [random_poly(rng, simple=rng.random() < 0.7) for _ in range(rng.choice([1, 2, 3]))]
+        arr = masks.paint_array(np.zeros((h, w), np.uint8), ms)
+        share = float((arr == GRAY).mean())
+        assert share == pytest.approx(covered(Box(0, 0.5, 0.5, 1.0, 1.0), ms), abs=0.01)
+
+
+def test_clip_poly():
+    tri = [(-1.0, -1.0), (5.0, -1.0), (5.0, 5.0)]
+    got = masks.clip_poly(tri, (0, 0, 4, 4))           # 같은 삼각형 — 시작 꼭짓점은 자르는 차례에 따라 다르다
+    (cut,) = clean([[(x / 4, y / 4) for x, y in got]])
+    assert sorted(cut) == [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]
+    inside = [(1.0, 1.0), (3.0, 1.0), (2.0, 3.0)]
+    assert masks.clip_poly(inside, (0, 0, 4, 4)) == inside
+    assert masks.clip_poly([(5.0, 5.0), (6.0, 5.0), (6.0, 6.0)], (0, 0, 4, 4)) == []

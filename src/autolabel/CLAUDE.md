@@ -6,8 +6,8 @@
 
 사용자 문서·단축키는 README '검수 UI 사용법'. 작업자가 알아야 할 것만:
 - **이 폴더를 고친 뒤에는 회귀 테스트를 돌릴 것**(2026-11-12, `tests/` — `.venv\Scripts\python.exe -m pytest`, 루트 CLAUDE.md
-  '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`MASK_MAX`·`MASK_SAME`
-  은 `tests/test_js_parity.py` 가 화면과 서버를 대조한다.
+  '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`maskSlabs`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`MASK_MAX`·
+  `MASK_SAME`·`MASK_MAX_PTS` 는 `tests/test_js_parity.py` 가 화면과 서버를 대조한다.
 - **편집은 0.6초 뒤 자동 저장된다**(`app.js` `markDirty`·`flushSave`) — UI 를 시험하면 실제 작업물이 바뀐다. 먼저
   `GET /api/images/{id}` 로 떠 두고 끝나면 `PUT /api/images/{id}/boxes` 로 되돌릴 것. 경합 시험은 **DB 복사본**(sqlite `backup()`)
   으로 띄운 서버에서 한다.
@@ -36,9 +36,9 @@
   - 파일을 바꾼 이미지(`store.replace_file` — VIRAT `--recrop` 은 source predict, `tools/crop_images.py` 는 crop)는 그 전 이력의
     박스가 옛 화면 좌표다. crop 은 서버가 그 전 이력으로 되돌리기를 막지만(`store.crop_entries`), VIRAT 자르기 이력은 가려내지 못한다.
     가릴 영역이 있는 이미지에 `masks=`(새 그림 기준으로 옮긴 영역)를 안 주면 `replace_file` 이 ValueError 를 낸다(아무것도 안 쓴다).
-- **가릴 영역 (2026-11-09, `src/autolabel/masks.py`)** — 라벨하기 애매한 물체를 검수 화면 `M` 모드로 덮는 사각형
-  (무엇을 덮는지는 docs/label-rules.md 한 곳에 적는다 — 기준을 바꾸면 거기와 화면 문구 `index.html`·`app.js` 를 볼 것).
-  DB `masks` 표(정규화 xyxy, EXIF 회전을 적용한 화면 기준)에만 있고 **원본 그림은 그대로**다. 학습 세트(`trainer.build_dataset`)와
+- **가릴 영역 (2026-11-09, `src/autolabel/masks.py`)** — 라벨하기 애매한 물체를 검수 화면 `M` 모드로 덮는 사각형·다각형(다각형은
+  11-19 — 아래 '다각형')(무엇을 덮는지는 docs/label-rules.md 한 곳에 적는다 — 기준을 바꾸면 거기와 화면 문구 `index.html`·`app.js` 를 볼 것).
+  DB `masks` 표(정규화 xyxy + 다각형 꼭짓점 `poly`, EXIF 회전을 적용한 화면 기준)에만 있고 **원본 그림은 그대로**다. 학습 세트(`trainer.build_dataset`)와
   이미지를 함께 내보내기(`export_yolo`)만 그 자리를 회색 114 로 칠한 JPEG 을 쓰고, 영역들의 합집합이 박스 넓이의 반 이상을 덮는
   박스는 그 라벨 파일에서만 뺀다(DB 박스는 그대로). **test 는 칠하지 않는다** — 서버가 test 이미지(분할 test·test 고정 카메라)에
   영역을 받지 않고(409, 지우기만 받는다) 학습 세트도 test 분할은 원본 그대로다. 원본을 직접 읽는 도구(test_baseline·
@@ -49,8 +49,47 @@
     그대로 둔다. 영역이 바뀐 저장은 박스가 그대로여도 이력에 남고(`box_history.masks_before·masks_after`, 박스만 바뀐 줄은 NULL),
     되돌리기는 그 줄에 영역이 있을 때만 영역도 되돌린다. 되돌리기(Ctrl+Z) 한 칸은 박스와 영역을 함께 쌓는다.
   - 가릴 영역 모드에서는 영역만 고르고 옮긴다(박스는 B). 덮는 몫은 `masks.covered` 와 `app.js` 의 `maskCover` 가 같은 식이다
-    (좌표 압축으로 합집합 — 영역마다 제 칸에 표시하고 표시된 칸을 줄·칸 순서로 더한다) — 고치면 둘 다. 화면은 그릴 때마다
+    (좌표 압축으로 합집합 — 영역마다 제 칸에 표시하고 표시된 칸을 줄·칸 순서로 더한다. 다각형이 걸린 박스는 세로 띠 — 아래
+    '다각형') — 고치면 둘 다. 화면은 그릴 때마다
     박스마다 부른다. 11-11 전의 '칸마다 모든 영역 견주기' 는 한 박스에 걸친 영역 수의 세제곱이라 되살리지 말 것.
+  - **다각형 (2026-11-19, 사용자 요청 — 대각선 모양을 덮으려면 작은 사각형을 여러 개 그려야 했다. 설계는 사용자와 정했다)**.
+    영역은 사각형 `(x1, y1, x2, y2)` 와 다각형 `((x, y), …)`(꼭짓점 3개 이상, 그린 순서) 두 꼴이고 `masks.is_poly`(첫 값이 점인가)
+    하나로 가른다. JSON(이력 `hist_lists`·템플릿 `mask_templates.rects`·API)도 같은 꼴 — 사각형 `[x1, y1, x2, y2]`, 다각형
+    `[[x, y], …]`(`masks.to_wire`·`as_mask`). **DB 는 `masks.poly` 열(꼭짓점 JSON, 반올림 안 함)이고 x1·y1·x2·y2 에는 바깥
+    사각형을 둔다**(`masks.row_values`·`from_row`, store 의 `_MASK_COLS`·`_read_masks`) — `Store` 가 DB 를 열 때 `ALTER TABLE ADD
+    COLUMN` 으로 더한다(사용자 결정 — 실제 DB 는 서버를 새 코드로 다시 켤 때). 옛 코드는 바깥 사각형만 읽고, 옛 코드로 그 장의
+    영역을 다시 저장하면 다각형이 바깥 사각형으로 바뀐다. **`masks` 를 SQL 로 바로 읽는 새 코드는 poly 도 읽을 것**(label_qa 는
+    열이 없는 옛 DB 를 NULL 로 읽는다. `runs/compare_1118_pretrain/make_extra.py` 는 다른 세션의 실험 스크립트라 바꾸지 않았다 —
+    다각형이 있는 DB 에 쓰면 다각형을 바깥 사각형으로 칠한다).
+    - **덮는 몫**: 다각형이 걸리지 않은 박스는 옛 좌표 압축 그대로(끝자리까지 같다 — `tests/test_masks.py` 가 옛 식을 옮겨 두고
+      견준다), 다각형이 하나라도 걸리면 세로 띠(`masks._slab_union` ↔ `app.js maskSlabs`, 연산 순서까지 같다): 띠 경계 = 박스·
+      사각형의 x, 꼭짓점 x, 변끼리·변과 가로선(박스·사각형 위아래)이 엇갈리는 x — 그 사이에서는 단면 길이가 직선이라 '가운데
+      단면 × 폭' 이 정확한 넓이다. 다각형의 안은 **홀짝 규칙**(칠하기·화면 그림 `fill("evenodd")`·고르기 `inPoly` 가 모두 같다).
+      **칠하기는 픽셀 중심이 안이면**(`masks.poly_pixels` — 줄마다 중심 높이에서 켜고 끄기). 사각형 칠하기(`pixel_rect`)는 그대로.
+    - **같은 자리**: 다각형끼리는 꼭짓점 수가 같고 순서대로 모든 좌표가 `SAME` 안(`same_rect`·`sameRect` — 이름은 사각형만 있던
+      때의 것), 사각형과 다각형은 늘 다르다. 그래서 템플릿 더하기·빼기·이력 되돌리기·묶음 되돌리기가 사각형과 같은 규칙으로 돈다.
+      화면은 다각형 꼭짓점을 받은 값 그대로 든다(사각형처럼 {cx, cy, w, h} 로 오가지 않는다 — cx·cy·w·h 는 바깥 사각형으로 따로
+      센다, `polyMask`).
+    - **한도**: 꼭짓점 100개(`masks.MAX_POINTS`·`app.js MASK_MAX_PTS` — 덮는 몫이 변 수의 제곱으로 는다. 서버는 받을 때 400,
+      `clean` 은 이것으로 버리지 않는다), 한 장 500개에 다각형도 하나. 11-19 실측(1920×1080, 박스 101개): 다각형 20개(꼭짓점 10)
+      얹어 화면 한 번 그리기 4.4ms·오른쪽 목록 2.6ms, 60개(꼭짓점 20) 30ms·24ms, Python `covered` 101박스 4ms·56ms.
+    - **화면 조작(사용자 결정)**: M 모드에서 끌면 사각형, 끌지 않고 누르면 다각형 첫 꼭짓점(빈 곳·이미지 안 — `polyStart`).
+      그리는 중인 것은 `S.poly`(이미지 픽셀 꼭짓점)에만 있고 닫을 때 `S.masks` 로 간다(되돌리기 한 칸·자동 저장). 닫기 = 첫 점 누르기·
+      마지막 점 한 번 더(4px 안)·Enter, Esc 버리기, Backspace·Del·Ctrl+Z·우클릭 마지막 점 지우기(`polyKey` 가 keydown 의 Ctrl+Z 보다
+      먼저 받는다). **그리는 동안 승인하지 않는다** — Space 는 `polyKey`, 승인 버튼은 `setStatus` 가 막는다(덮으려던 자리 없이 학습에
+      들어가지 않게). 다른 이미지(`loadImageNow`·`reloadCurrentBoxes`)·다른 모드(`setMode`)로 가면 버린다(`polyCancel`). 고르기는
+      다각형 **안쪽**만(`hitMask` — 바깥 사각형의 빈 모서리를 누르면 그 자리에 새 영역을 그릴 수 있게), 고른 다각형은 꼭짓점 네모
+      (끌기·우클릭 지우기 `deleteVertex`, 3개는 남김)와 변 가운데 동그라미(끌면 꼭짓점 더하기)를 받는다(`drag.mode` `vertex`).
+      옮기기는 처음 꼭짓점(`drag.p0`)에서 옮긴 만큼이다(끝자리 잡음이 쌓이지 않게). 한 줄로 늘어서거나 1px 아래로 줄어드는
+      다각형은 만들지도 끌지도 않는다(`polyTooSmall` — 서버 `clean` 보다 넉넉하게: 화면에 남은 것이 저장에서 조용히 빠지지 않게).
+    - **옛 서버와 섞일 때**: 서버를 다시 켜기 전에 페이지만 새로 고치면 새 app.js 가 옛 서버에 붙는다 — `/api/images/{id}` 의
+      `mask_poly` 가 참일 때만(`S.maskPoly`) 다각형을 시작하고 다각형 템플릿을 적용한다(옛 서버는 pts 를 몰라 422, 사각형 칸만
+      받으면 바깥 사각형으로 저장한다). 11-19 에 옛 코드 서버 + 새 화면으로 사각형 저장·다각형 거절을 확인했다. 거꾸로(옛 화면 + 새
+      서버)는 다각형을 숫자가 아닌 값으로 받아 그 영역을 손대 저장하면 422 로 막힌다(조용히 바뀌지 않는다) — 새로 고칠 것.
+    - 시험: `tests/test_masks.py`(덮는 몫·칠하기·자르기·같은 자리), `test_js_parity.py`(화면과 끝자리까지), `test_store.py`(정확한
+      저장·옛 DB 의 열 더하기·템플릿·되돌리기), `test_server.py`(API·검사·test 막기), `test_health_dataset.py`(진짜 학습 세트·내보내기의
+      칠한 픽셀과 라벨 수), `test_label_qa.py`. 도구: `tools/crop_images.py` 는 다각형을 남길 영역으로 잘라(`masks.clip_poly`) 옮기고,
+      `tools/mask_images.py` 는 사각형만 넣되 있던 다각형을 지키고 대조 그림에 칠한다.
   - **한 장 한도는 500개**(`masks.MAX_MASKS`·`app.js` 의 `MASK_MAX` — 같은 값, 11-11 에 50 → 500, 사용자 요청: 애매한 물체를
     하나씩 촘촘히 덮으려고). 실수로 수천 개가 들어오는 것만 막는다. 11-11 실측(2560×1440, 박스 95개 + 영역 500개): 화면 한 번
     그리기 2.4ms·오른쪽 목록 다시 그리기 5ms·저장 21ms·학습 세트 한 장 0.1초.
@@ -63,7 +102,7 @@
     되돌려야 해서다. 되돌리면 영역이 새로 생기는 장이 그새 test 가 됐으면 건너뛴다.
     **test 판정은 server 의 `mask_block` 한 곳에만 둔다** — store(`apply_mask_template(blocked=)`·`revert_batch(mask_blocked=)`)에는
     `mask_blocker()` 로 넘긴다(store 는 cameras.yaml 을 모른다). 넘기지 않으면 store 는 막지 않는다.
-    같은 자리 판정은 `masks.same_rect` — 네 좌표의 차가 모두 `SAME`(7.5e-8) 이하(2026-11-12 에 소수 7자리 반올림 키
+    같은 자리 판정은 `masks.same_rect` — 네 좌표의 차가 모두 `SAME`(7.5e-8) 이하(다각형은 꼭짓점마다 — 아래 '다각형')(2026-11-12 에 소수 7자리 반올림 키
     `mask_key` 에서 바꿨다: 픽셀에 딱 맞춘 2560·1280 폭 좌표가 반올림 경계에 걸려 화면을 한 번 오가면 다른 자리가 됐다 — 이유·
     수치는 masks.py 의 `SAME`). 더하기는 같은 자리를 건너뛰고(`masks.merge`), 빼기는 같은 자리만 뺀다(`masks.subtract`), 영역이
     '바뀌었나' 는 `same_rects`. 화면의 `sameRect`·`MASK_SAME` 이 같은 식이다 — 고치면 둘 다. 더하기는 test·화면 비율이 1% 넘게 다른 그림·한도(500개) 넘김을

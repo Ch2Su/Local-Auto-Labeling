@@ -113,9 +113,10 @@ def _names(rows: list[dict], extra=None) -> str:
 
 
 def _rects(snap: dict) -> dict[int, list]:
+    """{이미지 id: [영역, …]} — snap["masks"] 는 (이미지 id, 영역) 줄이다(영역은 masks.py 의 꼴: 사각형·다각형, 2026-11-19)."""
     out: dict[int, list] = {}
-    for image_id, x1, y1, x2, y2 in snap.get("masks", ()):
-        out.setdefault(image_id, []).append((x1, y1, x2, y2))
+    for image_id, m in snap.get("masks", ()):
+        out.setdefault(image_id, []).append(m)
     return out
 
 

@@ -20,9 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from .masks import MAX_MASKS
+from .masks import MAX_MASKS, as_mask, from_row, has_rect, is_poly, row_values, same_rects, to_wire
 from .masks import clean as clean_masks
-from .masks import has_rect, same_rects
 from .masks import merge as merge_masks
 from .masks import subtract as subtract_masks
 from .yolo_io import Box
@@ -132,22 +131,26 @@ CREATE TABLE IF NOT EXISTS image_tags (
 );
 CREATE INDEX IF NOT EXISTS idx_image_tags_tag ON image_tags(tag_id, image_id);
 
--- 가릴 영역 (2026-11-09, masks.py). 학습 세트를 만들 때만 회색(114)으로 칠할 사각형 — 원본 그림은 그대로 둔다.
+-- 가릴 영역 (2026-11-09, masks.py). 학습 세트를 만들 때만 회색(114)으로 칠할 사각형·다각형 — 원본 그림은 그대로 둔다.
 -- 좌표는 박스와 같은 화면(EXIF 회전 적용) 기준 정규화 xyxy. 박스처럼 저장 때마다 통째로 바꾸고, 바뀌면
 -- box_history 의 masks_before·masks_after 에 전후를 남긴다(박스만 바뀐 이력은 NULL).
+-- poly (2026-11-19, 다각형): 꼭짓점 [[x, y], …] JSON — 이때 x1~y2 는 그 바깥 사각형이다. 사각형은 NULL.
+-- 이미 있는 DB 에는 Store 가 열 때 ALTER TABLE 로 더한다(아래 __init__ — 사용자 결정). 읽기·쓰기는 masks.from_row·row_values.
 CREATE TABLE IF NOT EXISTS masks (
     id       INTEGER PRIMARY KEY,
     image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
     x1       REAL    NOT NULL,
     y1       REAL    NOT NULL,
     x2       REAL    NOT NULL,
-    y2       REAL    NOT NULL
+    y2       REAL    NOT NULL,
+    poly     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_masks_image ON masks(image_id);
 
 -- 가릴 영역 템플릿 (2026-11-10, 사용자 요청). 고정 카메라 화면처럼 같은 자리를 여러 장에 덮을 때 이름(예: 카메라A_1)을
 -- 붙여 둔 영역 묶음. 적용하면 이미지의 masks 로 **복사**된다 — 템플릿을 고치거나 지워도 이미 적용한 이미지는 그대로다.
--- rects 는 masks 와 같은 화면 기준 정규화 xyxy 의 JSON. width·height 는 만든 이미지의 화면 크기 — 비율이 다른 그림에
+-- rects 는 masks 와 같은 화면 기준 정규화 좌표의 JSON 목록 — 사각형 [x1, y1, x2, y2], 다각형 [[x, y], …](2026-11-19,
+-- masks.to_wire). width·height 는 만든 이미지의 화면 크기 — 비율이 다른 그림에
 -- 잘못 적용하는 것을 막는 데 쓴다. id 는 AUTOINCREMENT(지운 번호가 새 템플릿에 붙지 않게 — 태그와 같은 이유).
 CREATE TABLE IF NOT EXISTS mask_templates (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,13 +195,26 @@ def _boxes_from_json(text: str) -> list[Box]:
 
 
 def _masks_json(rects) -> str:
-    """가릴 영역 목록의 이력 모양: [[x1, y1, x2, y2], ...] — 7자리로 반올림, 빈칸 없이(2026-11-11). 반올림으로 생기는 차
-    (5e-8 까지)는 masks.SAME 안이라, 이력에서 되읽은 영역은 원래 영역과 같은 자리로 본다(자릿수를 줄이면 SAME 도 볼 것)."""
-    return json.dumps([[round(float(v), 7) for v in r] for r in rects], separators=(",", ":"))
+    """가릴 영역 목록의 이력 모양: 사각형 [x1, y1, x2, y2], 다각형 [[x, y], …](2026-11-19)의 목록 — 7자리로 반올림, 빈칸
+    없이(2026-11-11). 반올림으로 생기는 차(5e-8 까지)는 masks.SAME 안이라, 이력에서 되읽은 영역은 원래 영역과 같은 자리로
+    본다(자릿수를 줄이면 SAME 도 볼 것)."""
+    return json.dumps([[[round(float(p[0]), 7), round(float(p[1]), 7)] for p in r] if is_poly(r)
+                       else [round(float(v), 7) for v in r] for r in rects], separators=(",", ":"))
 
 
-def _masks_from_json(text: str | None) -> list[list[float]] | None:
-    return None if text is None else [list(map(float, r)) for r in json.loads(text)]
+def _masks_from_json(text: str | None) -> list | None:
+    """이력의 영역 목록 → 화면·API 가 쓰는 JSON 꼴(사각형 [x1, y1, x2, y2], 다각형 [[x, y], …]). None 은 None."""
+    return None if text is None else [to_wire(as_mask(r)) for r in json.loads(text)]
+
+
+# masks 표를 읽는 열 — 행은 masks.from_row(*행) 으로 영역이 된다 (2026-11-19 다각형: poly 가 있으면 다각형)
+_MASK_COLS = "x1, y1, x2, y2, poly"
+
+
+def _read_masks(con: sqlite3.Connection, image_id: int) -> list:
+    """이 이미지의 가릴 영역 — 넣은 순서대로(masks.py 의 꼴: 사각형 튜플·다각형 점 튜플)."""
+    return [from_row(*r) for r in con.execute(
+        f"SELECT {_MASK_COLS} FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
 
 
 # 변경 이력의 목록 (2026-11-11 — 위 hist_lists). 새 줄은 '#id', 그 전 줄은 JSON 글자 그대로다.
@@ -406,6 +422,10 @@ class Store:
             for col in ("masks_before", "masks_after"):
                 if col not in hcols:
                     con.execute(f"ALTER TABLE box_history ADD COLUMN {col} TEXT")
+            # 가릴 영역의 다각형 꼭짓점 (2026-11-19, 사용자 결정 — 열 때 더한다). NULL = 사각형. 옛 코드는 이 열을 모르고
+            # x1~y2(바깥 사각형)만 읽는다 — 옛 코드로 그 장의 영역을 다시 저장하면 다각형이 바깥 사각형으로 바뀐다.
+            if "poly" not in {r["name"] for r in con.execute("PRAGMA table_info(masks)")}:
+                con.execute("ALTER TABLE masks ADD COLUMN poly TEXT")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -944,18 +964,17 @@ class Store:
 
     # ------------------------------------------------------------ 가릴 영역
 
-    def get_masks(self, image_id: int) -> list[tuple[float, float, float, float]]:
-        """이 이미지의 가릴 영역(정규화 xyxy) — 넣은 순서대로 (masks.py)."""
+    def get_masks(self, image_id: int) -> list:
+        """이 이미지의 가릴 영역 — 넣은 순서대로. 사각형은 정규화 xyxy 튜플, 다각형은 꼭짓점 튜플의 튜플 (masks.py)."""
         with self.connect() as con:
-            return [tuple(r) for r in con.execute(
-                "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
+            return _read_masks(con, image_id)
 
-    def masks_by_image(self) -> dict[int, list[tuple[float, float, float, float]]]:
+    def masks_by_image(self) -> dict[int, list]:
         """영역이 있는 이미지만 {id: [영역, ...]} — 학습 세트·내보내기가 한 번에 읽는다."""
         out: dict[int, list] = {}
         with self.connect() as con:
-            for r in con.execute("SELECT image_id, x1, y1, x2, y2 FROM masks ORDER BY image_id, id"):
-                out.setdefault(int(r["image_id"]), []).append((r["x1"], r["y1"], r["x2"], r["y2"]))
+            for r in con.execute(f"SELECT image_id, {_MASK_COLS} FROM masks ORDER BY image_id, id"):
+                out.setdefault(int(r["image_id"]), []).append(from_row(*tuple(r)[1:]))
         return out
 
     def set_masks(self, image_id: int, masks: list, *, expect: tuple[str, str] | None = None,
@@ -981,7 +1000,7 @@ class Store:
     @staticmethod
     def _template_row(r: sqlite3.Row) -> dict:
         out = dict(r)
-        out["rects"] = [list(map(float, x)) for x in json.loads(r["rects"])]
+        out["rects"] = [to_wire(as_mask(x)) for x in json.loads(r["rects"])]     # 사각형 [x1, y1, x2, y2]·다각형 [[x, y], …]
         return out
 
     def list_mask_templates(self) -> list[dict]:
@@ -1015,7 +1034,7 @@ class Store:
             if row and not overwrite:
                 raise TemplateExists(f"같은 이름의 템플릿이 있습니다: {name}")
             # 템플릿은 반올림하지 않는다 — 이력(_masks_json, 11-11 부터 7자리)과 달리 이미지에 그대로 복사될 값이다
-            vals = (json.dumps([[float(v) for v in r] for r in rects]), width, height, image_id, camera)
+            vals = (json.dumps([to_wire(r) for r in rects]), width, height, image_id, camera)
             if row:
                 con.execute("UPDATE mask_templates SET rects=?, width=?, height=?, image_id=?, camera=?,"
                             " updated_at=? WHERE id=?", (*vals, now, row["id"]))
@@ -1063,8 +1082,7 @@ class Store:
                 if mode == "add" and blocked is not None and blocked(dict(row)):
                     out["blocked"] += 1
                     continue
-                cur = [tuple(r) for r in con.execute(
-                    "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
+                cur = _read_masks(con, image_id)
                 new = merge_masks(cur, rects) if mode == "add" else subtract_masks(cur, rects)
                 if same_rects(new, cur):
                     out["unchanged"] += 1
@@ -1193,8 +1211,8 @@ class Store:
         """열린 트랜잭션 안에서 박스를 통째로 바꾸고 이력을 남긴다. 바뀌기 전 개수를 돌려준다.
 
         잠금(_write_lock)은 부르는 쪽이 쥐고 있어야 한다 — 이 안에서 다시 잡으면 멈춘다.
-        masks(정리된 정규화 xyxy 목록)를 주면 가릴 영역도 바꾼다. 영역이 바뀌었으면 박스가 그대로여도 이력을 남긴다
-        (masks_before·masks_after — 학습 라벨이 달라지는 사람의 손이다). 바뀌기 전이 비어 있어도 남긴다.
+        masks(정리된 영역 목록 — 사각형·다각형, masks.clean)를 주면 가릴 영역도 바꾼다. 영역이 바뀌었으면 박스가 그대로여도
+        이력을 남긴다(masks_before·masks_after — 학습 라벨이 달라지는 사람의 손이다). 바뀌기 전이 비어 있어도 남긴다.
         """
         old = con.execute(
             "SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id",
@@ -1204,8 +1222,7 @@ class Store:
         boxes_changed = bool(old) and not same
         old_m = None                          # 영역이 바뀔 때만 (바뀌기 전 영역 목록)
         if masks is not None:
-            cur = [tuple(r) for r in con.execute(
-                "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
+            cur = _read_masks(con, image_id)
             if not same_rects(cur, masks):
                 old_m = cur
         if boxes_changed or old_m is not None:
@@ -1227,8 +1244,8 @@ class Store:
             )
         if old_m is not None:
             con.execute("DELETE FROM masks WHERE image_id=?", (image_id,))
-            con.executemany("INSERT INTO masks(image_id, x1, y1, x2, y2) VALUES (?,?,?,?,?)",
-                            [(image_id, *map(float, r)) for r in masks])
+            con.executemany("INSERT INTO masks(image_id, x1, y1, x2, y2, poly) VALUES (?,?,?,?,?,?)",
+                            [(image_id, *row_values(r)) for r in masks])
         return len(old)
 
     # ------------------------------------------------------- 같은 자리 일괄 수정
@@ -1347,8 +1364,7 @@ class Store:
                     continue
                 masks_before = None             # None = 그 묶음에서 영역은 그대로였다 — 되돌릴 때도 건드리지 않는다
                 if r["masks_after"] is not None:
-                    cur_m = [tuple(m) for m in con.execute(
-                        "SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (r["image_id"],))]
+                    cur_m = _read_masks(con, r["image_id"])
                     if not same_rects(cur_m, _masks_from_json(_hist_text(bodies, r["masks_after"]))):
                         skipped += 1
                         continue
@@ -1508,8 +1524,9 @@ class Store:
             boxes = [tuple(r) for r in con.execute(
                 "SELECT b.image_id, b.cls, b.cx, b.cy, b.w, b.h FROM boxes b JOIN images i ON i.id = b.image_id"
                 f" WHERE {where} ORDER BY b.image_id, b.id")]
-            masks = [tuple(r) for r in con.execute(
-                "SELECT m.image_id, m.x1, m.y1, m.x2, m.y2 FROM masks m JOIN images i ON i.id = m.image_id"
+            # (이미지 id, 영역) — 영역은 masks.py 의 꼴(사각형 튜플·다각형 점 튜플, 2026-11-19)
+            masks = [(int(r[0]), from_row(*tuple(r)[1:])) for r in con.execute(
+                "SELECT m.image_id, m.x1, m.y1, m.x2, m.y2, m.poly FROM masks m JOIN images i ON i.id = m.image_id"
                 f" WHERE {where} ORDER BY m.image_id, m.id")]
             tag_rows: list[dict] = []
             untagged = 0

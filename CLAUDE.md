@@ -159,7 +159,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-17 에 380개·40초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-19 에 408개·47초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
@@ -440,7 +440,8 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
   가릴 영역이 있는 이미지는 `masks=` 를 줘야 한다. 이력의 박스·영역 목록은 11-11 부터 `hist_lists` 에 한 번만 두고
   `box_history` 는 `#id` 로 가리킨다 — 도구에서 before·after 를 SQL 로 바로 읽지 말고 `store.box_history`·`history_entry` 로.
 - **가릴 영역**은 DB `masks` 표에만 있고 학습 세트·이미지 내보내기만 칠한다. test 는 칠하지 않는다. 덮는 몫은 `masks.covered` 와
-  `app.js` 의 `maskCover` 가 같은 식이다 — 고치면 둘 다.
+  `app.js` 의 `maskCover` 가 같은 식이다 — 고치면 둘 다. **사각형과 다각형(11-19)** 이 있다 — 다각형은 `poly` 열의 꼭짓점
+  JSON(x1·y1·x2·y2 는 바깥 사각형)이라 **`masks` 를 SQL 로 바로 읽지 말고** `store.get_masks`·`masks_by_image`(행은 `masks.from_row`)로.
 - **영상 캡처 탭·카메라 등록/고치기/지우기/키 바꾸기(`capture.py`·`provenance.py`·`camera_rename.py`)·몇 장만 다른 카메라로
   옮기기(`camera_move.py`)·데이터 점검 보기(`health.py`)** 의 규칙은 src/autolabel/CLAUDE.md 에 있다(2026-11-17 에 여기의 요약을
   뺐다 — 같은 글이 거기에 더 자세히 있다). 늘 지킬 것만: 출처(카메라) 없이는 이미지를 넣지 않는다(분할이 카메라째다 — 모르면

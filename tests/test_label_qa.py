@@ -114,6 +114,24 @@ def test_a_database_from_before_masks_still_loads(tmp_path):
     assert label_qa.applied_rects(images, masks) == {}
 
 
+def test_polygon_masks_are_read_and_judged_by_their_shape(store, add_image, cfg):
+    """다각형 영역(2026-11-19) — DB 의 poly 열을 읽어 모양으로 판정한다(바깥 사각형으로 재면 덮이지 않은 박스까지 뺀다).
+    poly 열이 생기기 전의 DB(읽기 전용이라 열을 더하지 못한다)는 사각형으로 읽는다."""
+    tri = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))                                  # 왼쪽 위 절반(x+y≤1)
+    i = add_image("t.jpg", camera="cam-01", boxes=[box(CAR, 0.2, 0.2, 0.2, 0.2), box(CAR, 0.8, 0.8, 0.2, 0.2)],
+                  split="train")
+    store.set_masks(i, [tri, MASK])
+    _, images, gt, masks = label_qa.load_db(cfg.db)
+    assert masks[i] == [tri, MASK]
+    rects = label_qa.applied_rects(images, masks)
+    assert [r[1:3] for r in label_qa.unmasked_labels(gt[i], rects[i])] == [(0.8, 0.8)]     # 오른쪽 아래 차는 모양 밖
+    with store.connect() as con:
+        con.execute("ALTER TABLE masks DROP COLUMN poly")                       # 옛 DB 꼴
+    _, images, gt, old = label_qa.load_db(cfg.db)
+    assert old[i] == [(0.0, 0.0, 1.0, 1.0), MASK]                               # 다각형 행은 바깥 사각형으로 읽힌다
+    assert label_qa.unmasked_labels(gt[i], label_qa.applied_rects(images, old)[i]) == []   # 그렇게 재면 둘 다 빠진다
+
+
 # ---------------------------------------------------- 모델이 모르는 클래스 (2026-11-16)
 
 RESPONDER, CONE = CLASSES.index("responder"), CLASSES.index("cone")

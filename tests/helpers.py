@@ -46,6 +46,30 @@ def pixel_rects(width: int, height: int, n: int, seed: int = 11) -> list[tuple[f
     return out
 
 
+def random_poly(rng: random.Random, *, k: int | None = None, grid: tuple[int, int] | None = None,
+                simple: bool = True, cx: float | None = None, cy: float | None = None,
+                r: float | None = None) -> tuple[tuple[float, float], ...]:
+    """다각형 하나(정규화 꼭짓점, 그린 순서) — 가릴 영역 다각형(2026-11-19)의 시험 입력.
+
+    simple 이면 한 점 둘레로 각도 순서대로 찍어 변이 엇갈리지 않는 모양(오목할 수 있다), 아니면 아무 점이나 이어 꼬일 수
+    있는 모양. grid=(W, H) 면 꼭짓점이 픽셀에 딱 맞는다(화면에서 픽셀을 눌러 찍은 꼴). 점은 0~1 안이다."""
+    k = k or rng.randint(3, 9)
+    cx = rng.random() if cx is None else cx
+    cy = rng.random() if cy is None else cy
+    r = 0.05 + 0.4 * rng.random() if r is None else r
+    if simple:
+        import math
+        angles = sorted(rng.uniform(0, 2 * math.pi) for _ in range(k))
+        raw = [(cx + r * rng.uniform(0.3, 1.0) * math.cos(a), cy + r * rng.uniform(0.3, 1.0) * math.sin(a)) for a in angles]
+    else:
+        raw = [(cx + r * rng.uniform(-1, 1), cy + r * rng.uniform(-1, 1)) for _ in range(k)]
+    pts = [(min(1.0, max(0.0, x)), min(1.0, max(0.0, y))) for x, y in raw]
+    if grid:
+        w, h = grid
+        pts = [(round(x * w) / w, round(y * h) / h) for x, y in pts]
+    return tuple(pts)
+
+
 def screen_round_trip(r) -> tuple[float, float, float, float]:
     """화면이 영역을 {cx, cy, w, h} 로 들었다가 저장할 때 xyxy 로 되돌리는 계산 — app.js 의 maskFromXyxy·maskToXyxy 와 같은
     식이다(같은지는 test_js_parity.py 가 node 로 확인한다). 끝자리가 달라질 수 있다."""

@@ -272,6 +272,77 @@ def test_template_is_not_added_to_blocked_images_but_can_be_removed(store, add_i
     assert (store.get_masks(t), store.get_masks(n)) == ([], [RECT_A])
 
 
+POLY = ((0.1, 0.1), (0.4, 0.15), (0.2, 0.45))          # 다각형 영역 (2026-11-19)
+
+
+def test_polygon_masks_are_saved_exactly_and_recorded(store, add_image):
+    i = add_image("a.jpg", boxes=[box()])
+    store.set_boxes(i, [box()], masks=[RECT_A, POLY])
+    assert store.get_masks(i) == [RECT_A, POLY]
+    assert store.masks_by_image()[i] == [RECT_A, POLY]
+    with store.connect() as con:
+        rows = [tuple(r) for r in con.execute("SELECT x1, y1, x2, y2, poly FROM masks WHERE image_id=? ORDER BY id", (i,))]
+        old_read = [tuple(r) for r in con.execute("SELECT x1, y1, x2, y2 FROM masks WHERE image_id=? ORDER BY id", (i,))]
+    assert rows[0][4] is None and json.loads(rows[1][4]) == [list(p) for p in POLY]
+    assert old_read[1] == (0.1, 0.1, 0.4, 0.45)         # poly 를 모르는 옛 코드는 바깥 사각형을 읽는다(그 자리 둘레를 가린다)
+    (e,) = history(store, i)
+    assert (e["masks_before"], e["masks_after"]) == ([], [list(RECT_A), [list(p) for p in POLY]])
+
+    n = store.history_count(i)
+    store.set_boxes(i, [box()], masks=[list(RECT_A), [list(p) for p in POLY]])     # 화면이 보낸 같은 영역 — 바뀐 것이 없다
+    assert store.history_count(i) == n
+    moved = (POLY[0], (0.45, 0.15), POLY[2])                                        # 꼭짓점 하나를 옮겼다
+    store.set_boxes(i, [box()], masks=[RECT_A, moved])
+    assert store.history_count(i) == n + 1 and store.get_masks(i) == [RECT_A, moved]
+    assert history(store, i)[-1]["masks_before"][1] == [list(p) for p in POLY]
+
+
+def test_old_db_gets_the_poly_column_and_keeps_its_rects(cfg, store, add_image):
+    """다각형을 더하기 전(2026-11-19 전)의 DB — 새 코드가 열 때 poly 열을 더하고(사용자 결정), 있던 사각형은 그대로 읽힌다."""
+    from autolabel.store import Store
+
+    i = add_image("a.jpg", boxes=[box()])
+    with store.connect() as con:
+        con.execute("ALTER TABLE masks DROP COLUMN poly")
+        con.execute("INSERT INTO masks(image_id, x1, y1, x2, y2) VALUES (?,?,?,?,?)", (i, *RECT_A))   # 옛 코드의 쓰기
+    again = Store(cfg.db)
+    with again.connect() as con:
+        assert [r["name"] for r in con.execute("PRAGMA table_info(masks)")][-1] == "poly"
+    assert again.get_masks(i) == [RECT_A]
+    again.set_masks(i, [RECT_A, POLY])
+    assert again.get_masks(i) == [RECT_A, POLY]
+    Store(cfg.db)                                       # 이미 있는 열은 다시 더하지 않는다
+    assert again.get_masks(i) == [RECT_A, POLY]
+
+
+def test_polygon_templates_add_remove_and_revert(store, add_image):
+    i = add_image("a.jpg", boxes=[box()])
+    tid, _ = store.save_mask_template("p", [RECT_A, POLY], width=1280, height=720)
+    tpl = store.get_mask_template(tid)
+    assert tpl["rects"] == [list(RECT_A), [list(p) for p in POLY]]
+    out = store.apply_mask_template([i], tpl["rects"], mode="add", batch="t1")
+    assert out["changed"] == 1 and store.get_masks(i) == [RECT_A, POLY]
+    assert store.apply_mask_template([i], tpl["rects"], mode="add", batch="t2")["unchanged"] == 1   # 같은 자리는 건너뛴다
+    reviewed = [box(cx=0.3, conf=None, origin="human")]
+    store.set_boxes(i, reviewed)                        # 박스만 검수 — 영역은 묶음째 되돌릴 수 있다
+    assert store.revert_batch("t1") == (1, 0)
+    assert store.get_masks(i) == [] and keys(store.get_boxes(i)) == keys(reviewed)
+
+    store.set_boxes(i, reviewed, masks=[[list(p) for p in POLY], RECT_B])
+    out = store.apply_mask_template([i], [POLY, RECT_A], mode="remove", batch="t3")
+    assert out["changed"] == 1 and store.get_masks(i) == [RECT_B]     # 같은 자리의 다각형만 뺀다
+    assert store.revert_batch("t3") == (1, 0) and store.get_masks(i) == [POLY, RECT_B]
+
+
+def test_polygons_with_long_decimals_survive_the_rounded_history(store, add_image):
+    """이력은 7자리로 반올림한다 — 되읽은 다각형이 DB 의 다각형(반올림 전)과 같은 자리로 보여야 묶음째 되돌린다."""
+    poly = ((1 / 3, 1 / 7), (1326 / 2560, 100 / 1440), (1900 / 2560, 771 / 1440), (2 / 3, 5 / 7))
+    i = add_image("a.jpg", boxes=[box()])
+    assert store.apply_mask_template([i], [poly], mode="add", batch="t")["changed"] == 1
+    assert store.get_masks(i) == [poly]                 # DB 에는 반올림하지 않은 값
+    assert store.revert_batch("t") == (1, 0) and store.get_masks(i) == []
+
+
 def test_template_does_not_push_an_image_over_the_limit(store, add_image):
     i = add_image("a.jpg")
     side = 1 / 32

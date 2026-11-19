@@ -25,7 +25,7 @@ import pytest
 from autolabel import masks
 from autolabel.capture import frame_name, notime_name
 from autolabel.yolo_io import Box
-from helpers import WEB, pixel_rects, screen_round_trip
+from helpers import WEB, pixel_rects, random_poly, screen_round_trip
 
 W, H = 2560, 1440
 
@@ -114,6 +114,64 @@ def cover_cases() -> list[tuple[dict, list[list[float]]]]:
     return out
 
 
+def poly_cover_cases() -> list[tuple[dict, list]]:
+    """(박스, 영역 …) — 다각형이 걸린 박스(2026-11-19). 영역은 서버의 꼴(사각형 [x1, y1, x2, y2], 다각형 [[x, y], …]).
+    꼬이지 않은 다각형·꼬인 다각형·픽셀에 맞춘 다각형·사각형을 섞고, 박스 가장자리·사각형 위아래에 꼭짓점이나 가로 변이
+    딱 걸리는 모양(띠 경계가 겹치는 자리)도 넣는다."""
+    rng = random.Random(20261119)
+    out = []
+    for case in range(700):
+        b = {"cx": 0.2 + 0.6 * rng.random(), "cy": 0.2 + 0.6 * rng.random(),
+             "w": 0.02 + 0.4 * rng.random(), "h": 0.02 + 0.4 * rng.random()}
+        ms: list = []
+        for _ in range(rng.choice([1, 1, 2, 3, 5, 8])):
+            pick = rng.random()
+            if pick < 0.4:
+                ms.append([list(p) for p in random_poly(rng, cx=b["cx"] + rng.uniform(-0.2, 0.2),
+                                                         cy=b["cy"] + rng.uniform(-0.2, 0.2))])
+            elif pick < 0.55:
+                ms.append([list(p) for p in random_poly(rng, simple=False, cx=b["cx"], cy=b["cy"])])
+            elif pick < 0.75:
+                ms.append([list(p) for p in random_poly(rng, grid=(W, H), cx=b["cx"], cy=b["cy"])])
+            else:
+                x1, x2 = sorted((rng.random(), rng.random()))
+                y1, y2 = sorted((rng.random(), rng.random()))
+                if x2 > x1 and y2 > y1:
+                    ms.append([x1, y1, x2, y2])
+        out.append((b, ms))
+    # 꼭짓점·변이 박스 경계와 사각형 위아래에 딱 걸리는 모양
+    b = {"cx": 0.5, "cy": 0.5, "w": 0.5, "h": 0.5}                    # 박스 [0.25, 0.75]²
+    out += [
+        (b, [[[0.25, 0.25], [0.75, 0.25], [0.25, 0.75]]]),             # 박스의 정확히 반 — 대각선 아래 삼각형
+        (b, [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]),                   # 박스를 대각선으로 가르는 큰 삼각형
+        (b, [[0.25, 0.25, 0.5, 0.75], [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75]]]),   # 사각형과 다각형이 겹침
+        (b, [[[0.25, 0.5], [0.75, 0.5], [0.75, 0.6], [0.25, 0.6]]]),   # 가로 변이 사각형처럼 누운 다각형
+        (b, [[0.3, 0.5, 0.7, 0.6], [[0.25, 0.5], [0.75, 0.5], [0.5, 0.75]]]),        # 사각형 위 변과 같은 높이의 변
+        (b, [[[0.1, 0.1], [0.9, 0.1], [0.1, 0.9], [0.9, 0.9]]]),       # 8자(꼬인) — 홀짝 규칙
+        (b, [[[0.0, 0.0], [0.2, 0.0], [1.0, 0.8], [1.0, 1.0]]]),       # 대각선 띠
+        (b, [[[0.6, 0.6], [0.9, 0.6], [0.9, 0.9]]]),                   # 바깥 사각형만 박스에 걸리고 박스 밖
+    ]
+    return out
+
+
+def poly_same_pairs() -> list[tuple[list, list, float]]:
+    """다각형끼리의 '같은 자리' 쌍 (a, b, 한 좌표에 더한 값) — 꼭짓점 하나의 x 나 y 를 옮긴다. 점 수가 다른 것·사각형과
+    견주는 것도 넣는다(늘 다르다 — 그때 값은 nan)."""
+    rng = random.Random(29)
+    out = []
+    for i in range(200):
+        a = [list(p) for p in random_poly(rng, grid=(W, H) if i % 2 else None)]
+        for d in (*CLEAR_SAME, *CLEAR_DIFFERENT, *(rng.uniform(-2e-7, 2e-7) for _ in range(4))):
+            b = [list(p) for p in a]
+            b[rng.randrange(len(b))][rng.randrange(2)] += d
+            out.append((a, b, d))
+        out.append((a, a[:-1], float("nan")))                         # 점 하나가 빠졌다
+        out.append((a, list(masks.bbox(a)), float("nan")))             # 바깥 사각형과는 다르다
+    sq = [[0.1, 0.2], [0.4, 0.2], [0.4, 0.5], [0.1, 0.5]]
+    out.append((sq, [0.1, 0.2, 0.4, 0.5], float("nan")))               # 네모난 다각형도 사각형과는 다르다
+    return out
+
+
 def hand_drawn(rng: random.Random) -> list[float]:
     """손으로 그린 영역 꼴 — 화면 좌표가 픽셀 사이에 떨어진다."""
     x1, x2 = sorted(rng.uniform(0, W) for _ in range(2))
@@ -147,6 +205,7 @@ def template_cases() -> list[dict]:
     small = [list(r) for r in pixel_rects(1280, 720, 60, seed=17)]
     drawn = [hand_drawn(rng) for _ in range(40)]
     other = [hand_drawn(rng) for _ in range(5)]
+    polys = [[list(p) for p in random_poly(rng, grid=(W, H) if i % 2 else None)] for i in range(12)]
     return [
         {"saved": [], "rects": aligned},
         {"saved": [], "rects": small},
@@ -155,6 +214,9 @@ def template_cases() -> list[dict]:
         {"saved": [list(screen_round_trip(r)) for r in aligned[::2]] + other, "rects": aligned},
         {"saved": other, "rects": aligned[:10] + aligned[:10] + [[v + 1e-9 for v in aligned[0]]]},     # 템플릿 안에서 겹침
         {"saved": [list(r) for r in pixel_rects(W, H, 490, seed=19)], "rects": aligned[:20]},          # 한도를 넘는다
+        # 다각형이 섞인 템플릿 (2026-11-19) — 절반은 이미 들어 있다(사각형은 화면을 한 번 오간 값, 다각형은 그대로)
+        {"saved": [list(screen_round_trip(r)) for r in aligned[:5]] + polys[::2], "rects": aligned[:10] + polys},
+        {"saved": [], "rects": polys + polys[:3]},                                                     # 템플릿 안에서 겹침
     ]
 
 
@@ -193,32 +255,37 @@ def js(node, tmp_path_factory) -> dict:
     script = "\n".join([
         # applyMaskTemplate 이 쓰는 화면 상태·함수의 대역 — 이미지가 떠 있고 영역을 둘 수 있는 장이다
         "const S = { masks: [], cur: { id: 1, width: 2560, height: 1440 }, imgId: 1, maskBlock: null,",
-        "            masksTouched: false, msel: -1 };",
+        "            masksTouched: false, msel: -1, maskPoly: true };",
         "const toasts = [];",
         "const toast = (m) => { toasts.push(m); };",
         "const confirm = () => true, pushUndo = () => {}, markDirty = () => {}, refresh = () => {};",
         js_const(app, "maskFromXyxy"), js_const(app, "maskToXyxy"), js_const(app, "MASK_DROP"), js_const(app, "MASK_MAX"),
-        js_function(app, "maskCover"), js_const(app, "MASK_SAME"), js_const(app, "sameRect"),
-        js_function(app, "applyMaskTemplate"),
+        js_const(app, "MASK_MAX_PTS"), js_function(app, "ptsBox"), js_function(app, "polyMask"),
+        js_function(app, "maskFromWire"), js_function(app, "maskToWire"),
+        js_function(app, "maskCover"), js_function(app, "maskSlabs"), js_const(app, "MASK_SAME"),
+        js_function(app, "sameRect"), js_function(app, "applyMaskTemplate"),
         js_function(cap, "capName"), js_function(cap, "capNoTimeName"),
         'const input = JSON.parse(require("fs").readFileSync(process.argv[2], "utf8"));',
         "const apply = ({ saved, rects }) => {",
         "  const t = { name: 't', rects, width: 2560, height: 1440 };",
-        "  S.masks = saved.map(maskFromXyxy);                // 이미지를 열었다 (app.js loadImage)",
+        "  S.masks = saved.map(maskFromWire);                // 이미지를 열었다 (app.js loadImage)",
         "  applyMaskTemplate(t);",
         "  const once = S.masks.length;",
         "  applyMaskTemplate(t);                             // 한 번 더 눌렀다",
         "  const twice = S.masks.length;",
-        "  const sent = S.masks.map(maskToXyxy);             // 저장할 때 서버로 가는 값 (app.js flushSave)",
-        "  S.masks = sent.map(maskFromXyxy);                 // 저장한 뒤 다시 열었다",
+        "  const sent = S.masks.map(maskToWire);             // 저장할 때 서버로 가는 값 (app.js saveBoxes·maskToBody)",
+        "  S.masks = sent.map(maskFromWire);                 // 저장한 뒤 다시 열었다",
         "  applyMaskTemplate(t);",
         "  return { once, twice, reopened: S.masks.length, sent };",
         "};",
         "const out = {",
-        "  consts: { MASK_DROP, MASK_MAX, MASK_SAME },",
+        "  consts: { MASK_DROP, MASK_MAX, MASK_SAME, MASK_MAX_PTS },",
         "  cover_same: input.cover.map(([b, rects]) => maskCover(b, rects.map(maskFromXyxy))),",
         "  screen_xyxy: input.cover.map(([b, rects]) => rects.map((r) => maskToXyxy(maskFromXyxy(r)))),",
+        "  pcover: input.pcover.map(([b, ms]) => maskCover(b, ms.map(maskFromWire))),",
+        "  pscreen: input.pcover.map(([b, ms]) => ms.map((w) => maskToWire(maskFromWire(w)))),",
         "  same: input.pairs.map(([a, b]) => sameRect(a, b)),",
+        "  psame: input.ppairs.map(([a, b]) => sameRect(a, b)),",
         "  pixel: input.pixel.map((r) => { const back = maskToXyxy(maskFromXyxy(r));",
         "    return { back, same: sameRect(r, back) }; }),",
         "  apply: input.apply.map(apply),",
@@ -231,7 +298,9 @@ def js(node, tmp_path_factory) -> dict:
     (d / "run.js").write_text(script, encoding="utf-8")
     data = {
         "cover": cover_cases(),
+        "pcover": poly_cover_cases(),
         "pairs": [[a, b] for a, b, _ in same_place_pairs()],
+        "ppairs": [[a, b] for a, b, _ in poly_same_pairs()],
         "pixel": pixel_rects(W, H, 2000) + pixel_rects(1280, 720, 2000),
         "apply": template_cases(),
         "notime": notime_cases(),
@@ -254,8 +323,38 @@ def test_web_scripts_parse(node):
 
 
 def test_constants_match(js):
-    """app.js 의 MASK_MAX·MASK_DROP·MASK_SAME 은 masks.MAX_MASKS·DROP·SAME 과 같은 값이어야 한다."""
-    assert js["consts"] == {"MASK_DROP": masks.DROP, "MASK_MAX": masks.MAX_MASKS, "MASK_SAME": masks.SAME}
+    """app.js 의 MASK_MAX·MASK_DROP·MASK_SAME·MASK_MAX_PTS 는 masks.MAX_MASKS·DROP·SAME·MAX_POINTS 와 같은 값이어야 한다."""
+    assert js["consts"] == {"MASK_DROP": masks.DROP, "MASK_MAX": masks.MAX_MASKS, "MASK_SAME": masks.SAME,
+                            "MASK_MAX_PTS": masks.MAX_POINTS}
+
+
+def test_polygon_cover_is_the_same_formula(js):
+    """다각형이 걸린 박스(2026-11-19) — masks.covered(_slab_union) ↔ app.js maskCover(maskSlabs) 가 끝자리까지 같다. 다각형은
+    화면이 받은 꼭짓점을 그대로 들고 있어(사각형처럼 {cx, cy, w, h} 로 오가지 않는다) 서버로 다시 가는 값도 처음과 같다."""
+    cases = poly_cover_cases()
+    assert len(js["pcover"]) == len(cases) > 700
+    hidden = part = 0
+    for (b, ms), screen, got in zip(cases, js["pscreen"], js["pcover"]):
+        for w, back in zip(ms, screen):
+            if masks.is_poly(w):
+                assert back == w                                  # 다각형은 화면을 오가도 끝자리까지 그대로
+        want = masks.covered(Box(0, b["cx"], b["cy"], b["w"], b["h"]), [masks.as_mask(w) for w in screen])
+        assert got == want, (b, ms)
+        hidden += want >= masks.DROP
+        part += 0.01 <= want < masks.DROP
+    assert hidden > 50 and part > 50                              # 빠지는 박스·일부만 가려지는 박스가 둘 다 넉넉하다
+
+
+def test_same_place_for_polygons_is_the_same_rule(js):
+    """다각형의 '같은 자리' — 꼭짓점 수가 같고 순서대로 모든 좌표가 SAME 안. 사각형과 다각형은 늘 다르다. 화면과 서버가 같다."""
+    cases = poly_same_pairs()
+    assert len(js["psame"]) == len(cases)
+    for (a, b, d), got in zip(cases, js["psame"]):
+        assert got == masks.same_rect(a, b), (a, b, d)
+        if d in CLEAR_SAME:
+            assert got is True, (a, d)
+        if d in CLEAR_DIFFERENT or d != d:                        # nan — 점 수가 다르거나 사각형과 견줌
+            assert got is False, (a, b)
 
 
 def test_mask_cover_is_the_same_formula(js):
@@ -326,12 +425,12 @@ def test_applying_a_template_twice_adds_nothing(js):
     for case, got in zip(cases, js["apply"]):
         want = masks.merge(case["saved"], case["rects"])
         if len(want) > masks.MAX_MASKS:
-            want = [tuple(r) for r in case["saved"]]            # 화면은 통째로 거절한다(서버의 여러 장 적용은 그 장을 건너뛴다)
+            want = [masks.as_mask(r) for r in case["saved"]]    # 화면은 통째로 거절한다(서버의 여러 장 적용은 그 장을 건너뛴다)
         assert got["once"] == len(want), (len(case["saved"]), len(case["rects"]))
         assert got["twice"] == got["reopened"] == got["once"]
-        assert masks.same_rects([tuple(r) for r in got["sent"]], want)          # 순서까지 같다
+        assert masks.same_rects([masks.as_mask(r) for r in got["sent"]], want)  # 순서까지 같다
     added = [got["once"] - len(case["saved"]) for case, got in zip(cases, js["apply"])]
-    assert added == [120, 60, 40, 60, 10, 0]
+    assert added == [120, 60, 40, 60, 10, 0, 5 + 6, 12]          # 다각형 템플릿: 사각형 5 + 아직 없는 다각형 6, 겹친 3개는 한 번만
 
 
 def test_notime_frame_name_is_the_same(js):

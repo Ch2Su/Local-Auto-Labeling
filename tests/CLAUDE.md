@@ -4,9 +4,13 @@
 줄이느라). 이 파일은 `tests/` 아래 파일을 다룰 때만 읽힌다. 돌리는 법·node 찾기·'버그를 고치면 테스트로 남긴다'·`cfg`
 규칙은 루트에 남겼다. 테스트를 더하면 여기와 README '회귀 테스트' 표에 적을 것.
 
-- `tests/test_js_parity.py` 가 '고치면 둘 다' 인 식(`maskCover`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`capName`·
-  `MASK_MAX`·`MASK_DROP`·`MASK_SAME`)을 node 로 돌려 Python 과 견주고, 화면 스크립트(app·gallery·capture·health)의 문법도 본다. JS 선언을 글자로
+- `tests/test_js_parity.py` 가 '고치면 둘 다' 인 식(`maskCover`·`maskSlabs`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`capName`·
+  `MASK_MAX`·`MASK_DROP`·`MASK_SAME`·`MASK_MAX_PTS`)을 node 로 돌려 Python 과 견주고, 화면 스크립트(app·gallery·capture·health)의 문법도 본다. JS 선언을 글자로
   떼므로(맨 왼쪽 `function 이름(` … 맨 왼쪽 `}`, 한 줄 `const`) 그 모양을 바꾸면 테스트의 규칙도 맞춘다. 짝이 새로 생기면 거기에 더할 것.
+  다각형 영역(2026-11-19)은 꼬이지 않은·꼬인·픽셀에 맞춘 다각형과 사각형을 섞은 708건을 끝자리까지 견준다(`poly_cover_cases`,
+  다각형 입력은 `helpers.random_poly`) — 화면 쪽은 `ptsBox`·`polyMask`·`maskFromWire`·`maskToWire` 를 함께 뗀다.
+- **다각형이 없는 박스의 덮는 몫이 그대로인지**는 `tests/test_masks.py` 의 `old_rect_cover`(다각형 전의 식을 옮겨 둔 것)로 본다 —
+  사각형 식을 고치면 그 함수도 함께 고칠 것(그대로 두면 '옛 값과 같다' 가 틀린 기준이 된다).
 - `tests/test_js_nav.py`(11-12)는 같은 규칙으로 app.js 의 이미지 넘기기(`step`·`imageLoading`·`openImage`·`loadImage`·
   `loadImageNow`)를 떼어 `tests/nav_harness.js` 에서 **그대로** 돌린다 — 키 반복·서버 응답·사진 도착만 가짜 시계로 일으키고,
   이 함수들이 부르는 그 밖의 화면 함수는 아무것도 안 하는 대역이 받는다. ↑·↓ 를 누르고 있으면 계속 넘어가는지(src/autolabel/CLAUDE.md)
