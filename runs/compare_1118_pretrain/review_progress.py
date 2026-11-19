@@ -80,7 +80,9 @@ def main() -> int:
     rows = con.execute("SELECT id, image_id, at, source, batch FROM box_history WHERE id > ? ORDER BY id", (h0,)).fetchall()
     is_sam = lambda r: (r["batch"] or "").startswith("SAM 3.1")  # noqa: E731
     sam_rows = [r for r in rows if is_sam(r)]
-    sam_last = max((r["id"] for r in sam_rows), default=h0)
+    # 기준은 이미지마다 '그 이미지에 닿은 마지막 SAM 묶음' 이다 — 전체에서 마지막 묶음으로 잡으면, 사람이 고친 뒤에 다른
+    # 프레임에만 들어간 묶음(11-20 의 C)이 생겼을 때 사람이 고친 뒤의 상태가 기준이 돼 고친 것이 0 으로 나온다.
+    sam_last_by = {r["image_id"]: r["id"] for r in sam_rows}
     user_rows = [r for r in rows if not is_sam(r)]
     print(f"\n처음 뒤 이력 {len(rows)}줄 — SAM 3.1 묶음 {len(sam_rows)}줄, 그 밖 {len(user_rows)}줄")
     by_hour = Counter((r["at"][:13], r["source"]) for r in user_rows)
@@ -91,7 +93,7 @@ def main() -> int:
         print("  사용자 쪽 묶음:", dict(batches))
     touched = {r["image_id"] for r in user_rows}
     sam_imgs = {r["image_id"] for r in sam_rows}
-    before_sam_on_sam_imgs = sum(1 for r in user_rows if r["id"] < sam_last and r["image_id"] in sam_imgs)
+    before_sam_on_sam_imgs = sum(1 for r in user_rows if r["id"] < sam_last_by.get(r["image_id"], 0))
     print(f"  손댄 이미지 {len(touched)}장 · SAM 후보 프레임에 SAM 전 손댄 줄 {before_sam_on_sam_imgs}")
 
     hist_cache: dict[int, list] = {}
@@ -130,7 +132,7 @@ def main() -> int:
     issues = []
     detail = []
     for i in approved_new + wip:
-        ref_hid = sam_last if i in sam_imgs else h0
+        ref_hid = sam_last_by.get(i, h0)
         ref = state_at(i, ref_hid)
         cur = boxes_now(i)
         pairs, gone, new = match(ref, cur)
