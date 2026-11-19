@@ -50,11 +50,14 @@ def run_one(arm: str, fold: int, epochs: int, imgsz: int, batch: int, seed: int 
                "FZ11": str(cc.REPO / "models" / "best_y26m_8cls.pt"), "FZ23": str(cc.REPO / "models" / "best_y26m_8cls.pt"),
                # FZ11X1·FZ11X2 = FZ11 과 같은데 학습 쪽에만 옛 데이터의 responder·cone 이미지를 더한다(make_extra.py —
                # X1 = 두 클래스 박스가 든 옛 이미지 전부, X2 = 그중 카메라가 적힌 프레임만). 검증 목록은 그대로다.
-               "FZ11X1": str(cc.REPO / "models" / "best_y26m_8cls.pt"), "FZ11X2": str(cc.REPO / "models" / "best_y26m_8cls.pt")}
+               "FZ11X1": str(cc.REPO / "models" / "best_y26m_8cls.pt"), "FZ11X2": str(cc.REPO / "models" / "best_y26m_8cls.pt"),
+               # FZ11R·FZ11U = FZ11 과 같은데 학습 쪽에만 검수 사본에서 사용자가 승인한 프레임을 더한다(make_review39.py —
+               # R = 사용자가 검수한 라벨·가릴 영역, U = 같은 프레임의 검수 전 라벨(보관 DB)). 검증 목록은 그대로다.
+               "FZ11R": str(cc.REPO / "models" / "best_y26m_8cls.pt"), "FZ11U": str(cc.REPO / "models" / "best_y26m_8cls.pt")}
     # Ultralytics 의 freeze=N 은 층 0..N-1 의 파라미터를 고정하고 그 층들의 BatchNorm 통계도 멈춘다(trainer._model_train).
     # 11 = backbone(층 0-10)만 얼림, 23 = backbone·neck(층 0-22)을 얼려 Detect(층 23)만 학습
-    freeze = {"FZ11": 11, "FZ23": 23, "FZ11X1": 11, "FZ11X2": 11}
-    extra = {"FZ11X1": "X1", "FZ11X2": "X2"}
+    freeze = {"FZ11": 11, "FZ23": 23, "FZ11X1": 11, "FZ11X2": 11, "FZ11R": 11, "FZ11U": 11}
+    extra = {"FZ11X1": "X1", "FZ11X2": "X2", "FZ11R": "R39", "FZ11U": "U39"}
     runs = cc.ROOT / "runs"
     tag = f"e{epochs}"
     name = f"{arm}_f{fold}_{tag}" + (f"_s{seed}" if seed else "")

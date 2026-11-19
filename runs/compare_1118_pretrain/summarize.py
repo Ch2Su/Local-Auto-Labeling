@@ -12,7 +12,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 NAMES = ["car", "truck", "pickup", "bus", "person", "responder", "cone", "scooter", "bicycle", "motorcycle"]
 ARMS = [("A", 0), ("A", 1), ("B", 0), ("C", 0), ("O", 0), ("OM", 0), ("P2N", 0), ("P2S", 0), ("P2S", 1),
-        ("F", 0), ("FZ11", 0), ("FZ23", 0), ("FZ11X2", 0), ("FZ11X1", 0)]
+        ("F", 0), ("FZ11", 0), ("FZ11", 1), ("FZ11", 2), ("FZ23", 0), ("FZ11X2", 0), ("FZ11X1", 0),
+        ("FZ11R", 0), ("FZ11R", 1), ("FZ11R", 2), ("FZ11U", 0), ("FZ11U", 1), ("FZ11U", 2)]
 BINS = ("<8", "8-16", "16-32", "32+")
 
 
@@ -45,7 +46,7 @@ def main() -> int:
     print(f"## 3묶음 합계 ({epochs} epoch 일정, 마지막 가중치 last.pt, 640, conf 0.25)")
     print("| 갈래 | seed | mAP50-95 묶음별 | 평균 | 찾음 | 클래스까지 | 헛 박스 | best.pt 평균 mAP | 실행당 초(중앙값) |")
     print("|---|---|---|---|---|---|---|---|---|")
-    per_class, curves = {}, {}
+    per_class, curves, agg = {}, {}, {}
     for arm, seed in ARMS:
         rs = sorted([r for r in res if r["arm"] == arm and r.get("seed", 0) == seed], key=lambda r: r["fold"])
         if len(rs) != 3:
@@ -59,6 +60,8 @@ def main() -> int:
         print(f"| {arm} | {seed} | {' · '.join(f'{m:.3f}' for m in maps)} | {sum(maps) / 3:.3f} | {sum(f.values())} | "
               f"{sum(k.values())} | {x} | {sum(bmaps) / 3:.3f} | {secs[1]:.0f} |")
         per_class[(arm, seed)] = (t, f, k)
+        agg.setdefault(arm, []).append({"map": sum(maps) / 3, "found": sum(f.values()), "klass": sum(k.values()), "false": x,
+                                        "resp_found": f.get("responder", 0), "resp": k.get("responder", 0), "cone": k.get("cone", 0)})
         cv = [curve(r["name"]) for r in rs]
         if all(len(c) >= epochs for c in cv):
             curves[(arm, seed)] = [sum(c[e - 1] for c in cv) / 3 for e in marks] + \
@@ -72,6 +75,18 @@ def main() -> int:
     print("|---|---|" + "---|" * len(NAMES))
     for (arm, seed), (t, f, k) in per_class.items():
         print(f"| {arm} | {seed} | " + " | ".join(f"{f.get(n, 0)}/{k.get(n, 0)}" for n in NAMES) + " |")
+    multi = {a: vs for a, vs in agg.items() if len(vs) >= 2}
+    if multi:
+        print("\n## seed 를 바꿔 돌린 갈래 — seed 평균 (가장 낮은 값–높은 값)")
+        print("| 갈래 | seed 수 | mAP50-95 | 찾음 | 클래스까지 | 헛 박스 | responder 찾음 | responder 클래스까지 | cone 클래스까지 |")
+        print("|---|---|---|---|---|---|---|---|---|")
+        for a, vs in multi.items():
+            def cell(key, nd=1):
+                v = [x[key] for x in vs]
+                lo, hi = (f"{min(v):.3f}", f"{max(v):.3f}") if nd == 3 else (f"{min(v):g}", f"{max(v):g}")
+                return f"{sum(v) / len(v):.{nd}f} ({lo}–{hi})"
+            print(f"| {a} | {len(vs)} | {cell('map', 3)} | {cell('found')} | {cell('klass')} | {cell('false')} | "
+                  f"{cell('resp_found')} | {cell('resp')} | {cell('cone')} |")
     print("\n## 검증 mAP50-95 곡선 (3묶음 평균)")
     print("| 갈래 | seed | " + " | ".join(f"{e} epoch" for e in marks) + " | 묶음별 최댓값의 평균 | 최댓값이 나온 epoch |")
     print("|---|---|" + "---|" * (len(marks) + 2))
