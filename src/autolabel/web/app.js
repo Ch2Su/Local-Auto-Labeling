@@ -717,7 +717,8 @@ function renderMode() {
   el.title = S.ctrl
     ? "Ctrl 을 누르고 있는 동안 임시로 바뀐 상태입니다"
     : eff === "mask"
-      ? "가릴 영역 — 끌면 사각형, 누르기만 하면 다각형 꼭짓점(첫 점·마지막 점 한 번 더·Enter 로 닫기, Esc 버리기, Backspace 한 점 지우기)"
+      ? "가릴 영역 — 끌면 사각형, 누르기만 하면 다각형 꼭짓점(첫 점·마지막 점 한 번 더·Enter 로 닫기, Esc 버리기, Backspace 한 점 지우기,"
+        + " 그리는 동안 W·A·S·D 를 누르고 있으면 화면 이동 — Shift 와 함께면 빠르게)"
       : "B = 새 박스, C = SAM 클릭, M = 가릴 영역, D = 화면 끌기 (Ctrl 을 누르면 잠시 화면 끌기로)";
 }
 
@@ -958,9 +959,11 @@ canvas.addEventListener("mousedown", (e) => {
 });
 
 window.addEventListener("mousemove", (e) => {
-  // 다각형을 그리는 중이면 마지막 점에서 커서까지 점선이 따라온다 (2026-11-19)
+  // 다각형을 그리는 중이면 마지막 점에서 커서까지 점선이 따라온다 (2026-11-19). 커서의 화면 자리(sp)도 둔다 — W·A·S·D 로
+  // 화면만 옮기면 커서 밑의 이미지 자리가 바뀌므로 panBy 가 cur 를 다시 센다 (2026-11-20)
   if (S.poly && S.cur && S.poly.id === S.cur.id) {
-    S.poly.cur = clampImg(toImage(...mousePos(e)));
+    S.poly.sp = mousePos(e);
+    S.poly.cur = clampImg(toImage(...S.poly.sp));
     if (!drag || drag.mode === "poly") draw();
   }
   if (!drag || !S.cur) return;
@@ -1267,7 +1270,7 @@ function polyStart(ix, iy) {
   S.poly = { id: S.cur.id, pts: [clampImg([ix, iy])], cur: null };
   selectMask(-1);
   renderMode();
-  toast("다각형 — 누르는 곳마다 꼭짓점 · 첫 점·Enter 로 닫기 · Esc 버리기 · Backspace 한 점 지우기");
+  toast("다각형 — 누르는 곳마다 꼭짓점 · 첫 점·Enter 로 닫기 · Esc 버리기 · Backspace 한 점 지우기 · W·A·S·D 화면 이동");
 }
 
 /** 그리는 중의 누르기 (화면 좌표) — 첫 점이면 닫고, 마지막 점을 한 번 더 누르면 닫고, 아니면 꼭짓점을 더한다. */
@@ -1362,6 +1365,96 @@ function deleteVertex(mi, vi) {
   S.masksTouched = true;
   markDirty();
   refresh();
+}
+
+/* ───────────── 다각형을 그리는 중의 화면 이동 — W·A·S·D (2026-11-20, 사용자 요청) ─────────────
+ * 크게 확대해 넓은 자리를 다각형으로 덮을 때, 꼭짓점을 찍는 마우스는 그대로 두고 화면만 옮기려고. 누르고 있는 동안 그쪽을
+ * 보러 간다(W 위·A 왼쪽·S 아래·D 오른쪽 — 이미지는 반대로 움직인다). Shift 를 함께 누르면 PAN_FAST 배. 그리던 다각형·확대는
+ * 그대로이고, 마지막 점에서 커서까지의 점선도 커서를 따라온다(S.poly.sp — 커서의 화면 자리).
+ * - 그리는 중이 아니면 W·A·S·D 는 원래 뜻 그대로다(W 비CCTV·A 예측 받기·S 건너뛰기·D 화면 끌기 모드). 그리는 동안에는 그 뜻으로
+ *   새지 않는다 — 전에는 W 가 도메인을 바꾸고, S 가 건너뛰기를 묻거나 다음 장으로 넘어가고, D 가 모드를 바꿔 그리던 다각형을 버렸다.
+ * - 그리는 동안 누르기 시작한 키는 **뗄 때까지** 여기서 받는다 — 누른 채 다각형을 닫아도 그 뒤의 반복 입력이 도메인·모드를 바꾸지
+ *   않게(닫은 뒤에는 움직이지 않고 받아 버리기만 한다). 창이 포커스를 잃으면(blur) 다 놓는다 — 뗀 것을 받지 못하니까.
+ * - 키는 자리(e.code)로 본다 — 한글 입력 상태여도 같다. Ctrl·Alt·Cmd 와 함께면 받지 않는다(Ctrl 은 누르는 동안 화면 끌기).
+ * - 이미지 가장자리가 화면 가운데를 넘어가게는 옮기지 않는다(오래 눌러 이미지를 잃지 않게 — 이미 넘어가 있으면 더 멀어지지만
+ *   않는다). 끄는 화면 끌기(가운데 버튼·Ctrl)와 겹치면 끌기의 출발점도 같이 옮겨 둘이 다투지 않는다. */
+const PAN_DIR = { KeyW: [0, 1], KeyA: [1, 0], KeyS: [0, -1], KeyD: [-1, 0] };   // 키 자리 → 이미지가 움직이는 쪽(화면 x, y)
+// e.code 가 비었을 때(가상 키보드 등) 글자로 — 한글 입력 상태의 자모까지 (keydown 의 switch 와 같다)
+const PAN_KEY = { w: "KeyW", "ㅈ": "KeyW", "ㅉ": "KeyW", a: "KeyA", "ㅁ": "KeyA", s: "KeyS", "ㄴ": "KeyS", d: "KeyD", "ㅇ": "KeyD" };
+const PAN_SPEED = 1.0;      // 1초에 화면(캔버스) 짧은 변의 몇 배만큼 옮기나
+const PAN_FAST = 2.5;       // Shift 를 함께 누르면 이만큼 빠르게
+const PAN = { keys: new Set(), fast: false, t: 0, raf: 0 };     // 누르고 있는 키 자리·Shift·지난 프레임 시각·requestAnimationFrame 번호
+
+/** W·A·S·D 의 자리(KeyW …), 아니면 null. */
+function panCode(e) {
+  if (e.code) return PAN_DIR[e.code] ? e.code : null;
+  return PAN_KEY[String(e.key || "").toLowerCase()] || null;
+}
+
+/** keydown — 받았으면 true(keydown 이 더 보지 않는다). 그리는 중에 누른 W·A·S·D 는 화면 이동을 시작하고, 누르고 있는 키의
+ *  반복 입력은 그리기가 끝났어도 뗄 때까지 받는다. */
+function panKeyDown(e) {
+  PAN.fast = !!e.shiftKey;
+  const code = panCode(e);
+  if (!code) return false;
+  if (!PAN.keys.has(code)) {
+    if (!S.poly || !S.cur || S.poly.id !== S.cur.id || e.ctrlKey || e.metaKey || e.altKey) return false;
+    PAN.keys.add(code);
+  }
+  if (!PAN.raf) { PAN.t = performance.now(); PAN.raf = requestAnimationFrame(panFrame); }
+  return true;
+}
+
+/** keyup — 뗀 키를 놓는다. 다 떼면 선다. */
+function panKeyUp(e) {
+  PAN.fast = !!e.shiftKey;
+  const code = panCode(e);
+  if (code) PAN.keys.delete(code);
+  if (!PAN.keys.size) panStop();
+}
+
+/** 다 놓고 선다 — 다 뗐거나 창이 포커스를 잃었다. */
+function panStop() {
+  PAN.keys.clear();
+  if (PAN.raf) cancelAnimationFrame(PAN.raf);
+  PAN.raf = 0;
+}
+
+/** 한 프레임 — 누르고 있는 키 쪽으로, 지난 프레임 뒤로 흐른 시간만큼 옮긴다. 다각형을 다 그렸으면(닫음·버림·다른 이미지)
+ *  움직이지 않고 키를 뗄 때까지 기다린다. 맞은편 두 키(A+D)는 서로 지운다. 대각선도 빠르기는 같다. */
+function panFrame(now) {
+  // 한 프레임에 0.1초까지만 — 화면이 잠깐 멈췄다 돌아와도 한 번에 크게 뛰지 않게(그리기가 느려 초당 10장 아래로 떨어지면 그만큼 느려진다)
+  const dt = Math.min(0.1, Math.max(0, (now - PAN.t) / 1000));
+  PAN.t = now;
+  PAN.raf = PAN.keys.size ? requestAnimationFrame(panFrame) : 0;
+  if (!PAN.raf || !S.poly || !S.cur || S.poly.id !== S.cur.id) return;
+  let dx = 0, dy = 0;
+  for (const k of PAN.keys) { dx += PAN_DIR[k][0]; dy += PAN_DIR[k][1]; }
+  const len = Math.hypot(dx, dy);
+  if (!len) return;
+  const v = PAN_SPEED * Math.min(canvas.clientWidth, canvas.clientHeight) * (PAN.fast ? PAN_FAST : 1) * dt / len;
+  panBy(dx * v, dy * v);
+}
+
+/** 화면을 (dx, dy) 화면 px 만큼 옮긴다 — 이미지 가장자리가 화면 가운데를 넘어가게는 옮기지 않는다(이미 넘어가 있으면 더
+ *  멀어지지만 않게). 끄는 화면 끌기가 있으면 그 출발점도, 커서까지의 점선도 함께 옮긴다. */
+function panBy(dx, dy) {
+  const v = S.view, cw = canvas.clientWidth, ch = canvas.clientHeight;
+  const mx = panClamp(v.ox, dx, cw / 2 - S.cur.width * v.scale, cw / 2) - v.ox;
+  const my = panClamp(v.oy, dy, ch / 2 - S.cur.height * v.scale, ch / 2) - v.oy;
+  if (!mx && !my) return;
+  v.ox += mx;
+  v.oy += my;
+  if (drag && drag.mode === "pan") { drag.ox += mx; drag.oy += my; }
+  if (S.poly && S.poly.sp) S.poly.cur = clampImg(toImage(...S.poly.sp));
+  draw();
+}
+
+/** 한 축의 오프셋 o 를 d 만큼 — [lo, hi] 밖으로는 나가지 않고, 이미 밖이면 더 멀어지지만 않는다. */
+function panClamp(o, d, lo, hi) {
+  if (d > 0) return o >= hi ? o : Math.min(o + d, hi);
+  if (d < 0) return o <= lo ? o : Math.max(o + d, lo);
+  return o;
 }
 
 function markDirty() {
@@ -4381,7 +4474,8 @@ $("#new-class").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("#btn-add-class").click();
 });
 
-window.addEventListener("keydown", (e) => {
+/** 라벨링 화면의 keydown (2026-11-20 에 이름을 붙였다 — tests/test_js_pan.py 가 글자로 떼어 그대로 돌린다). */
+function onKeydown(e) {
   // 대화상자가 떠 있는 동안에는 Esc 말고는 아무것도 하지 않는다 — Space 가 뒤에서
   // 승인을 눌러 버리면 안 된다.
   if (modalOpen()) {
@@ -4400,6 +4494,8 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "Control") return;
   }
 
+  // 다각형을 그리는 중의 W·A·S·D 는 화면 이동 (2026-11-20) — 누르고 있는 키의 반복은 다 그린 뒤에도 뗄 때까지 여기서 받는다
+  if (panKeyDown(e)) { e.preventDefault(); return; }
   // 다각형을 그리는 중 (2026-11-19) — Enter 닫기·Esc 버리기·Backspace/Del/Ctrl+Z 마지막 점 지우기, Space 는 승인하지 않는다
   if (S.poly && polyKey(e)) { e.preventDefault(); return; }
 
@@ -4448,15 +4544,18 @@ window.addEventListener("keydown", (e) => {
     default:
       if (/^[1-9]$/.test(e.key)) { e.preventDefault(); setClass(Number(e.key) - 1); }
   }
-});
+}
+window.addEventListener("keydown", onKeydown);
 
 window.addEventListener("keyup", (e) => {
+  panKeyUp(e);
   if (e.key === "Control" || !e.ctrlKey) {
     if (S.ctrl) { S.ctrl = false; renderMode(); }
   }
 });
-// 창 밖으로 포커스가 나가면 Ctrl 이 눌린 채로 남는 것을 막는다.
+// 창 밖으로 포커스가 나가면 Ctrl 이 눌린 채로 남는 것을 막는다. W·A·S·D 화면 이동도 놓는다(뗀 것을 받지 못한다).
 window.addEventListener("blur", () => {
+  panStop();
   if (S.ctrl) { S.ctrl = false; renderMode(); }
 });
 

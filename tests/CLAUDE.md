@@ -34,11 +34,18 @@
   `SAME`(7.5e-8) 이하. 11-12 에 테스트로 찾아 고쳤다: 소수 7자리 반올림 키는 픽셀에 딱 맞춘 좌표(2560·1280 폭)가 반올림 경계에
   자주 걸려, 화면이 영역을 {cx, cy, w, h} 로 들었다 되돌리는 끝자리 잡음만으로 다른 자리가 됐다(같은 템플릿을 두 번 더하면 겹쳐
   들어가고 빼기가 남겼다 — 손으로 그린 영역은 0건). 이유·수치는 `masks.py` 의 `SAME`. 좌표를 견주는 새 코드에서도 반올림 키를 만들지 말 것.
+- `tests/test_js_pan.py`(11-20)는 같은 규칙으로 app.js 의 라벨링 keydown 처리기(`onKeydown`)와 다각형을 그리는 중의 W·A·S·D 화면
+  이동(`panCode`·`panKeyDown`·`panKeyUp`·`panStop`·`panFrame`·`panBy`·`panClamp`, 상수 `PAN_DIR`·`PAN_KEY`·`PAN_SPEED`·`PAN_FAST`·`PAN`)과
+  `polyKey`·`clampImg`·`toImage` 를 `tests/pan_harness.js` 에서 **그대로** 돌린다 — 시계·프레임(60fps)·키 입력(500ms 뒤 33ms 마다
+  반복)만 가짜다. keyup 은 `panKeyUp`, blur 는 `panStop` 으로 보낸다(app.js 의 keyup·blur 처리기는 이름 없는 함수라 떼지 않는다 —
+  연결은 브라우저로만 봤다). 대조로 onKeydown 에서 `PAN_LINE`(W·A·S·D 를 받는 줄)을 뺀 꼴도 돌려, 그리는 중의 W·A·S·D 가 도메인·
+  예측 받기·건너뛰기·화면 끌기 모드로 새는 것을 이 모의가 실제로 가르는지 본다. 이름이나 그 줄을 바꾸면 `PARTS`·`CONSTS`·
+  `PAN_LINE` 도 맞춘다.
 - `tests/test_tiling.py`(11-17)는 타일 추론의 합치기(`tiling.merge_cross`)를 검출 배열만으로 본다 — 차량 클래스끼리는 클래스가
   달라도 겹치면 하나만 남고, 사람과 탈것·덜 겹친 차는 남는가. 모델·GPU 를 쓰지 않는다.
 - `tests/test_eval_test.py`(11-15)는 `wsl/eval_test.py` 의 `at_conf`(놓침·헛 박스)가 conf 0.25·IoU 0.45 로 세어지는지 본다 —
   Ultralytics 8.4.212 의 검증기는 혼동 행렬을 val 의 conf 0.001·IoU 0.5 로 세서, 같은 119장에서 헛 박스가 에러 없이 20 → 988 이
   됐다(mAP 는 8.4.142 와 같았다 — docs/experiments.md '새 풀 프레임 데이터'). **Ultralytics 를 올리면 이 테스트부터 볼 것.** val 에
   `conf=0.25` 를 넘겨 고치지 말 것(mAP 까지 0.25 위에서만 센다) — 혼동 행렬이 받는 값만 바꾼다(`pin_confusion_thresholds`).
-- `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작,
+- `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.
