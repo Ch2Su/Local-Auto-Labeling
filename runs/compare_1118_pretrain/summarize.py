@@ -12,7 +12,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 NAMES = ["car", "truck", "pickup", "bus", "person", "responder", "cone", "scooter", "bicycle", "motorcycle"]
 ARMS = [("A", 0), ("A", 1), ("B", 0), ("C", 0), ("O", 0), ("OM", 0), ("P2N", 0), ("P2S", 0), ("P2S", 1),
-        ("F", 0), ("FZ11", 0), ("FZ23", 0)]
+        ("F", 0), ("FZ11", 0), ("FZ23", 0), ("FZ11X2", 0), ("FZ11X1", 0)]
 BINS = ("<8", "8-16", "16-32", "32+")
 
 
