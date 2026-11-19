@@ -40,7 +40,7 @@
   반복)만 가짜다. keyup 은 `panKeyUp`, blur 는 `panStop` 으로 보낸다(app.js 의 keyup·blur 처리기는 이름 없는 함수라 떼지 않는다 —
   연결은 브라우저로만 봤다). 대조로 onKeydown 에서 `PAN_LINE`(W·A·S·D 를 받는 줄)을 뺀 꼴도 돌려, 그리는 중의 W·A·S·D 가 도메인·
   예측 받기·건너뛰기·화면 끌기 모드로 새는 것을 이 모의가 실제로 가르는지 본다. 이름이나 그 줄을 바꾸면 `PARTS`·`CONSTS`·
-  `PAN_LINE` 도 맞춘다.
+  `PAN_LINE` 도 맞춘다. 그리는 동안 Q·E·T 를 막는 것(`polyKey`)도 여기서 본다 — 그리는 중이 아닐 때 원래 뜻으로 가는 대조와 함께.
 - `tests/test_tiling.py`(11-17)는 타일 추론의 합치기(`tiling.merge_cross`)를 검출 배열만으로 본다 — 차량 클래스끼리는 클래스가
   달라도 겹치면 하나만 남고, 사람과 탈것·덜 겹친 차는 남는가. 모델·GPU 를 쓰지 않는다.
 - `tests/test_eval_test.py`(11-15)는 `wsl/eval_test.py` 의 `at_conf`(놓침·헛 박스)가 conf 0.25·IoU 0.45 로 세어지는지 본다 —

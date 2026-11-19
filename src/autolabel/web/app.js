@@ -1341,6 +1341,15 @@ function polyKey(e) {
   if (k === "Escape") { polyCancel(); return true; }
   if (k === "Backspace" || k === "Delete") { polyBackspace(); return true; }
   if (k === " ") { toast("그리던 다각형이 있습니다 — Enter 로 닫거나 Esc 로 버린 뒤 승인하세요"); return true; }
+  // Q·E(도메인)·T(태그)는 정하고 다음 장으로 넘어가 그리던 다각형을 버린다 — W·A·S·D 로 화면을 옮기는 손 바로 옆이라 잘못 누르기
+  // 쉬워 그리는 동안은 막는다 (2026-11-20 사용자 결정, 키만 — 버튼은 그대로). 글자는 keydown 의 switch 와 같다(자모·Shift 쌍자음)
+  const DOMAIN = "도메인을 정하세요", TAG = "태그를 붙이세요";
+  const after = { q: DOMAIN, "ㅂ": DOMAIN, "ㅃ": DOMAIN, e: DOMAIN, "ㄷ": DOMAIN, "ㄸ": DOMAIN, t: TAG, "ㅅ": TAG, "ㅆ": TAG };
+  const low = String(k || "").toLowerCase();
+  if (Object.hasOwn(after, low)) {
+    if (!e.repeat) toast(`그리던 다각형이 있습니다 — Enter 로 닫거나 Esc 로 버린 뒤 ${after[low]}`);
+    return true;
+  }
   return false;
 }
 

@@ -2,7 +2,8 @@
 
 크게 확대해 넓은 자리를 다각형으로 덮을 때 꼭짓점을 찍는 마우스는 그대로 두고 화면만 옮기려고, 그리는 동안 W·A·S·D 를
 누르고 있으면 그쪽을 보러 간다(이미지는 반대로 움직인다 — W 면 위쪽이 보인다). 고치기 전에는 그리는 동안의 W 가 도메인을
-비CCTV 로 바꾸고, S 가 건너뛰기를 묻거나 다음 장으로 넘어가고, D 가 화면 끌기 모드로 바꿔 그리던 다각형을 버렸다.
+비CCTV 로 바꾸고, S 가 건너뛰기를 묻거나 다음 장으로 넘어가고, D 가 화면 끌기 모드로 바꿔 그리던 다각형을 버렸다. 같은 날
+사용자 결정으로 그 손 바로 옆의 Q·E(도메인)·T(태그)도 그리는 동안은 막는다(정하고 다음 장으로 가 다각형을 버리므로).
 
 `tests/pan_harness.js` 가 app.js 의 keydown 처리기(`onKeydown`)와 화면 이동 함수들을 **그대로** 돌리고, 시계·프레임(60fps)·키
 입력만 가짜로 일으킨다(브라우저는 띄우지 않는다 — 그림이 실제로 그려지는지와 keyup·blur 처리기의 연결은 보지 못한다). 함수는
@@ -52,8 +53,8 @@ def hold(t, key, ms, *, code=None, shift=False, up=True):
     return evs
 
 
-def tap(t, key):
-    return hold(t, key, 60)
+def tap(t, key, code=None, shift=False):
+    return hold(t, key, 60, code=code, shift=shift)
 
 
 def mark(t, name):
@@ -100,6 +101,11 @@ SCENARIOS = {
     "follow_cursor": {"mouse": [900, 300], "events": hold(0, "d", 500)},
     "drag_pan": {"dragPan": True, "events": hold(0, "d", 500)},
     "stall": {"noFrames": [200, 700], "events": hold(0, "d", 1000)},
+    # Q·E(도메인)·T(태그) — 한글 입력 상태의 자모와 Shift(쌍자음·대문자)까지
+    "qet_drawing": {"events": tap(0, "q", "KeyQ") + tap(100, "e", "KeyE") + tap(200, "t", "KeyT") + tap(300, "ㅂ", "KeyQ")
+                    + tap(400, "ㄸ", "KeyE", shift=True) + tap(500, "ㅅ", "KeyT") + tap(600, "Q", "KeyQ", shift=True)},
+    "qet_held": {"events": hold(0, "e", 1000, code="KeyE")},
+    "qet_not_drawing": {"drawing": False, "events": tap(0, "q", "KeyQ") + tap(100, "e", "KeyE") + tap(200, "t", "KeyT")},
 }
 
 
@@ -257,6 +263,25 @@ def test_mouse_pan_drag_moves_along(pan):
     assert got["drag"]["ox"] - BASE["ox"] == pytest.approx(got["ox"] - BASE["ox"], abs=1e-9)
     assert got["drag"]["oy"] == BASE["oy"]
     assert got["ox"] < BASE["ox"]
+
+
+def test_q_e_t_are_held_back_while_drawing(pan):
+    """그리는 동안 Q·E(도메인)·T(태그)는 막는다 — 정하고 다음 장으로 넘어가 그리던 다각형을 버리는데, W·A·S·D 로 화면을 옮기는 손
+    바로 옆이라 잘못 누르기 쉽다(2026-11-20 사용자 결정). 알림만 띄우고 다각형·화면은 그대로, 누르고 있어도 알림은 한 번."""
+    got = pan["qet_drawing"]
+    domain = "그리던 다각형이 있습니다 — Enter 로 닫거나 Esc 로 버린 뒤 도메인을 정하세요"
+    tag = "그리던 다각형이 있습니다 — Enter 로 닫거나 Esc 로 버린 뒤 태그를 붙이세요"
+    assert got["calls"] == [["toast", m] for m in (domain, domain, tag, domain, domain, tag, domain)]
+    assert got["prevented"] == got["keydowns"] == 7
+    assert got["poly"]["n"] == 2 and (got["ox"], got["oy"]) == (BASE["ox"], BASE["oy"])
+    held = pan["qet_held"]
+    assert held["calls"] == [["toast", domain]]
+    assert held["prevented"] == held["keydowns"] == 1 + len(range(REPEAT_DELAY, 1000, REPEAT))
+
+
+def test_q_e_t_keep_their_meaning_when_not_drawing(pan):
+    """그리는 중이 아니면 Q·E·T 는 원래 뜻 그대로다 — 대조로, 위 테스트가 막은 것이 그리는 중이라서인지 본다."""
+    assert pan["qet_not_drawing"]["calls"] == [["setDomain", "cctv"], ["setDomain", "drone"], ["tagAndNext"]]
 
 
 def test_a_stalled_tab_does_not_jump(pan):
