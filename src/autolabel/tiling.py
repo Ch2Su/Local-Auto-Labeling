@@ -15,6 +15,11 @@
   (person–motorcycle·bicycle)은 실제로 겹치는 정상 라벨이라 묶지 않는다 — `VEHICLES` 에 든 이름끼리만 본다. 남는 쪽의
   클래스가 맞다는 보장은 없다(겹침만 없앤다). 위 측정(11-03)은 이 규칙이 없던 때의 것이고, 측정 도구에서는
   `test_tiles.py --class-iou` 를 줄 때만 운영 지표(conf 0.25 쪽)에 건다 — mAP 쪽은 낮은 신뢰도의 다른 클래스 추측도 세므로 걸지 않는다.
+- **통째 자동 라벨링도 같은 차량 규칙으로 정리한다 (2026-11-20 사용자 결정 — `cross_class_keep`, `predict.class_iou`).** 새 풀
+  프레임 평가 175장에서 통째도 같은 차에 car·responder 처럼 클래스만 다른 박스를 겹쳐 냈다(운영 가중치 중복 42개 → 정리하면
+  10개, 찾음·클래스까지 그대로 — docs/experiments.md '타일 모드로 중복이 얼마나 주는지'). 줄인 몫은 전부 이 클래스를 넘는
+  병합이라(그 측정에서 같은 클래스 NMS 는 아무것도 지우지 않았다), 통째에는 차량 규칙만 걸고 모델이 낸 같은 클래스 박스는
+  그대로 둔다. 예측 비교(P)·label_qa 는 걸지 않는다(모델이 낸 그대로 견준다).
 - 그 측정(옛 CCTV test 793장, visible-3)에서 통째 대비 F1 같음(0.890), 재현율 +1.8pt, FP +22%, mAP50-95 +0.035, GPU 추론
   시간 약 2배(긴 변 800px 넘는 이미지만). 이득은 대부분 아주 작은(640 환산 16px 미만) 객체에서 나오고, 늘어난 FP 는 라벨
   누락보다 진짜 오검출(신호등·기둥·도로 글씨 등)이 많았다 — 그래서 기본 자동 라벨링은 통째 그대로이고 이것은 고르는 선택지다.
@@ -36,6 +41,8 @@ MIN_SIDE = 800       # 긴 변이 이 값 이하인 이미지에는 타일을 �
 
 # config.yaml 의 predict.tiles 가 없을 때의 값 — 측정에서 고른 조합
 DEFAULTS = {"grid": 2, "overlap": 0.2, "edge_px": 3, "min_side": MIN_SIDE, "cross_iou": 0.3, "class_iou": 0.6}
+# config.yaml 의 predict.class_iou 가 없을 때 — 통째 자동 라벨링의 차량 겹침 정리(2026-11-20, cross_class_keep)
+PLAIN_CLASS_IOU = 0.6
 
 # 클래스가 달라도 같은 물체일 수 있는 묶음 — 차량 판정(car·pickup·truck·bus·responder)은 모델이 자주 헷갈린다.
 # 사람·자전거·오토바이·킥보드·라바콘은 넣지 않는다(탄 사람과 탈것은 실제로 겹친다).
@@ -139,6 +146,48 @@ def merge_cross(d: np.ndarray, iou_same: float, iou_cross: float, max_det: int, 
             break
         removed[i + 1:] |= conflict[i, i + 1:]
     return d[keep]
+
+
+def cross_class_keep(xyxy, conf, cls, group: frozenset[int], iou_class: float) -> np.ndarray:
+    """통째 추론(성분 하나)의 검출에서 남길 것 — 원래 순서의 bool 배열 (2026-11-20, 통째 자동 라벨링).
+
+    `group`(차량 클래스 번호 — vehicle_ids) 안에서 **클래스가 다른** 두 박스의 IoU 가 iou_class 이상이면 신뢰도 높은 쪽만
+    남긴다. merge_cross(group=, iou_class=)의 차량 규칙과 같은 순서다: 신뢰도 내림차순(같으면 앞의 것이 먼저)으로 남기고,
+    지워진 박스는 다른 박스를 지우지 못한다. 같은 클래스끼리와 묶음 밖 클래스(사람·탈것 등)는 건드리지 않는다 — 같은 클래스
+    NMS 는 모델이 낸 그대로 둔다(merge_cross 와 다른 점). group 이 비었거나 iou_class 가 0 이면 전부 남긴다.
+    입력은 numpy 로 바꿀 수 있는 것(좌표는 픽셀이든 정규화든 같은 단위면 된다)."""
+    xyxy = np.asarray(xyxy, np.float32).reshape(-1, 4)
+    n = len(xyxy)
+    keep = np.ones(n, bool)
+    if n < 2 or not group or iou_class <= 0:
+        return keep
+    cls = np.asarray(cls).reshape(-1).astype(int)
+    in_group = np.isin(cls, list(group))
+    if in_group.sum() < 2:
+        return keep
+    import torch
+    from torchvision.ops import box_iou
+
+    order = np.argsort(-np.asarray(conf, np.float32).reshape(-1), kind="stable")
+    b, c, g = xyxy[order], cls[order], in_group[order]
+    iou = box_iou(torch.from_numpy(np.ascontiguousarray(b)), torch.from_numpy(np.ascontiguousarray(b))).numpy()
+    conflict = (iou >= iou_class) & (c[:, None] != c[None, :]) & g[:, None] & g[None, :]
+    removed = np.zeros(n, bool)
+    for i in range(n):
+        if not removed[i]:
+            removed[i + 1:] |= conflict[i, i + 1:]
+    keep[order[removed]] = False
+    return keep
+
+
+def plain_class_iou(cfg) -> float:
+    """config.yaml 의 predict.class_iou(없으면 PLAIN_CLASS_IOU) — 통째 자동 라벨링의 차량 겹침 정리. 0 이면 끔.
+    타일 모드는 이것이 아니라 predict.tiles.class_iou(settings)를 쓴다."""
+    raw = cfg.get("predict.class_iou")
+    value = PLAIN_CLASS_IOU if raw is None else float(raw)
+    if not 0 <= value <= 1:
+        raise ValueError(f"predict.class_iou 는 0(끔)~1 이어야 합니다: {value}")
+    return value
 
 
 def settings(cfg) -> dict:

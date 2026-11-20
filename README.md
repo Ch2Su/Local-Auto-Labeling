@@ -265,7 +265,10 @@ responder(출동 차량)·cone(라바콘)은 2026-11-09 에 붙였고 판정은 
 .venv\Scripts\python.exe labeler.py label
 ```
 
-미라벨 이미지에 자동 라벨을 붙입니다 (`검수 대기` 상태로).
+미라벨 이미지에 자동 라벨을 붙입니다 (`검수 대기` 상태로). 차량 클래스(car·truck·bus·pickup·responder)끼리는 클래스가
+달라도 IoU 0.6 이상 겹치면 신뢰도 높은 박스 하나만 남깁니다(2026-11-20 — 같은 차에 car 와 responder 박스가 겹쳐 나오던 것.
+새 풀 프레임 175장에서 운영 가중치의 겹친 박스가 42개 → 10개, 찾은 수는 그대로였습니다. `config.yaml` 의 `predict.class_iou`,
+0 이면 끔). 남는 박스의 클래스가 맞다는 보장은 없습니다 — 검수할 때 클래스를 볼 것. 예측 비교(`P`)는 모델이 낸 그대로 보여 줍니다.
 
 **`label --all` 은 조심하세요.** 이미 검수 대기인 이미지까지 다시 추론해 **그 라벨을 모델 예측으로
 덮어씁니다.** 검수 대기 중인 VIRAT 프레임(`tools/import_virat.py` 가 넣은 것, 2026-11-07)은 모델이 못 찾은
@@ -1097,6 +1100,7 @@ CCTV = 그 밖의 seed). 뜻이 바뀌었으므로 `cctv`·`drone`·`noncctv`·`
 | `predict.imgsz` | 자동 라벨링 해상도. 가중치와 짝이 맞아야 합니다 (s 는 640, n 은 960 이 최선이었음 — m 은 640 으로만 학습·평가) |
 | `train.overrides` | Ultralytics `train()` 인자를 그대로 전달 (손실 가중치·증강 등). |
 | `predict.conf` | 이 신뢰도 미만 예측은 버립니다. 낮추면 검출은 늘고 오검출도 늘어납니다. |
+| `predict.class_iou` | 0.6(2026-11-20) — 보통(통째) 자동 라벨링에서도 차량 클래스(car·truck·bus·pickup·responder)끼리는 클래스가 달라도 이만큼 겹치면 신뢰도 높은 박스 하나만 남깁니다(같은 차에 car 와 responder 박스가 겹쳐 나오던 것). 같은 클래스끼리는 건드리지 않습니다. 0 이면 끔. 타일 모드는 아래 `predict.tiles` 의 `class_iou` 를 따로 씁니다 |
 | `predict.tiles` | 타일 추론(`자동 라벨링 (타일)`·`label --tiles` 에서만) — 조각 수 `grid` 2, 겹침 0.2, 이 긴 변(`min_side` 800px)을 넘는 이미지만, 조각↔통째 중복 지우기 `cross_iou` 0.3. 2026-11-03 측정에서 고른 값입니다. `class_iou` 0.6(2026-11-17) — 차량 클래스(car·truck·bus·pickup·responder)끼리는 클래스가 달라도 이만큼 겹치면 신뢰도 높은 쪽만 남깁니다(같은 차에 car 와 truck 박스가 겹쳐 나오던 것, 0 이면 끔) |
 | `review.low_band` / `high_band` | 검수 우선순위 계산 구간. |
 
@@ -1148,8 +1152,9 @@ pytest 는 기본 설치에 없어서 처음 한 번만 깝니다.
 | `test_js_capture.py` | 영상 캡처 화면이 영상을 넣거나 닫은 뒤(`capture.js` 의 `capReset`) 없어진 세션에 요청을 보내지 않는가. 카메라를 고르는 칸(영상의 카메라·고칠 것·지우기 목록)에 키 옆 장소가 나오는가, 긴 장소는 가운데가 줄고 고른 카메라의 고정 분할·시간대가 안내에 나오는가 |
 | `test_capture_commit.py` | 영상 캡처의 넣기(`capture.py` 의 `commit`) — 고른 프레임만 옮기고 같은 이름은 덮지 않는가, **넣는 도중 서버가 꺼지면** 다시 켰을 때 그렇게 알리고 남은 프레임을 다시 넣을 수 있는가 |
 | `test_label_qa.py` | `tools/label_qa.py` 가 가릴 영역이 덮은 라벨·예측을 견주지 않는가(`--keep-masked` 면 견줌, test 분할은 그대로) — 모델 없이 써 둔 예측 파일로 |
+| `test_predictor.py` | 보통(통째) 자동 라벨링(`AutoLabeler.run`)이 같은 차에 클래스만 다르게 겹친 차량 박스를 하나만 저장하고, 같은 클래스 겹침·사람은 그대로 두는가. `predict.class_iou` 0 이면 모델이 낸 그대로, 틀린 값이면 모델을 돌리기 전에 멈추는가. 가짜 모델(Ultralytics `Boxes`)로 DB 저장까지 봅니다 |
 | `test_promote.py` | 학습이 끝났을 때 운영 가중치 바꾸기 — 끝까지 간 학습만 올리고(직전 것은 `best.prev.pt`), **중단한 학습은 `models/` 를 건드리지 않는가**. Windows·WSL 학습이 같은 규칙인가. 마지막 epoch 에서 멈춘 학습은 끝난 학습으로 올리는가, 운영 가중치가 없을 때는 멈춘 학습도 올리는가, CLI 요약의 가중치 줄 |
-| `test_tiling.py` | 타일 추론의 합치기(`tiling.merge_cross`) — 차량 클래스끼리는 클래스가 달라도 겹치면 신뢰도 높은 쪽 하나만 남고, 사람과 탈것·덜 겹친 차는 둘 다 남는가. 모델·GPU 없이 검출 배열만으로 봅니다 |
+| `test_tiling.py` | 타일 추론의 합치기(`tiling.merge_cross`) — 차량 클래스끼리는 클래스가 달라도 겹치면 신뢰도 높은 쪽 하나만 남고, 사람과 탈것·덜 겹친 차는 둘 다 남는가. 통째 자동 라벨링의 같은 정리(`tiling.cross_class_keep`)가 같은 클래스는 건드리지 않고 차량 규칙만 타일 쪽과 같은가(무작위 검출 400벌로 견줌). 모델·GPU 없이 검출 배열만으로 봅니다 |
 | `test_eval_test.py` | pod·WSL 평가 스크립트(`wsl/eval_test.py`)가 놓침·헛 박스를 Ultralytics 버전과 상관없이 conf 0.25·IoU 0.45 로 세는가 — 8.4.212 는 그냥 두면 conf 0.001 로 셉니다. Ultralytics 의 혼동 행렬 클래스만 씁니다(모델·GPU 없이) |
 
 테스트가 보지 않는 것: 브라우저 화면 조작, 실제 학습·추론, WSL·Runpod 스크립트(위 `eval_test.py` 의 문턱 고정만 봅니다),

@@ -183,6 +183,11 @@ predict:
   conf: 0.25           # 이 신뢰도 미만 예측은 버림
   iou: 0.6             # NMS IoU
   max_det: 100
+  class_iou: 0.6       # 통째 자동 라벨링도(2026-11-20 사용자 결정) 차량 클래스(car·truck·bus·pickup·responder)끼리는 클래스가
+                       # 달라도 이 IoU 이상 겹치면 신뢰도 높은 쪽만 남긴다 — 같은 차에 car·responder 처럼 클래스만 다른 박스가
+                       # 겹쳐 나왔다(새 풀 프레임 평가 175장, 운영 가중치: 중복 42 → 10, 찾음·클래스까지 그대로 — docs/experiments.md
+                       # '타일 모드로 중복이 얼마나 주는지'). 같은 클래스끼리는 건드리지 않는다. 0 이면 끔. 타일 모드는 아래
+                       # tiles.class_iou 를 따로 쓰고, 예측 비교(P)·label_qa 는 걸지 않는다(모델이 낸 그대로 견준다).
   # 타일 추론 (2026-11-10) — 웹 UI '모델 → 자동 라벨링 (타일)' 과 `labeler.py label --tiles` 에서만 쓴다(보통 자동
   # 라벨링·예측 비교 P 는 통째 그대로). 통째 추론에 더해 긴 변이 min_side 를 넘는 이미지는 grid×grid 조각(겹침 overlap)으로도
   # 추론하고, 조각 안쪽 경계에 닿아 잘린 박스는 버린 뒤, 조각↔통째 사이에만 cross_iou 로 겹친 것을 지운다(src/autolabel/tiling.py).

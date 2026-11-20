@@ -35,8 +35,10 @@ ARMS = ("FZ11", "FZ11R", "FZ11U")
 ARM_NAME = {"FZ11": "기준", "FZ11R": "R(검수 라벨)", "FZ11U": "U(검수 전 라벨)", "operating": "운영 8클래스"}
 OPERATING = cc.REPO / "models" / "best_y26m_8cls.pt"   # --arms operating — 지금 자동 라벨링 가중치(responder·cone 모름, seed 하나)
 SEEDS = (0, 1, 2)
-MODES = ("P", "PN", "PC", "T0", "T")
-MODE_NAME = {"P": "통째", "PN": "통째+같은 클래스 NMS", "PC": "통째+차량 병합", "T0": "타일(병합 없음)", "T": "타일(운영)"}
+MODES = ("P", "PN", "PC", "PV", "T0", "T")
+MODE_NAME = {"P": "통째", "PN": "통째+같은 클래스 NMS", "PC": "통째+차량 병합", "PV": "통째(운영 — 차량 정리)",
+             "T0": "타일(병합 없음)", "T": "타일(운영)"}
+# PV(11-20 에 더함) = 통째 자동 라벨링이 실제로 하는 정리 — tiling.cross_class_keep(predict.class_iou). PC 와 같아야 한다.
 VEH = set(tiling.VEHICLES)                 # car truck bus pickup responder
 CAR4 = VEH - {"responder"}
 MAXDET = 300
@@ -50,9 +52,11 @@ def settings():
     class Cfg:
         @staticmethod
         def get(key):
-            return raw.get("tiles") if key == "predict.tiles" else None
+            return raw.get(key.split(".", 1)[1]) if key in ("predict.tiles", "predict.class_iou") else None
 
-    return tiling.settings(Cfg()), float(raw["conf"]), float(raw["iou"]), int(raw["imgsz"])
+    s = tiling.settings(Cfg())
+    s_plain = tiling.plain_class_iou(Cfg()) if hasattr(tiling, "plain_class_iou") else 0.0
+    return s, float(raw["conf"]), float(raw["iou"]), int(raw["imgsz"]), s_plain
 
 
 def weights(arm: str, fold: int, seed: int) -> Path:
@@ -180,7 +184,7 @@ def main() -> int:
     from ultralytics import YOLO
     from ultralytics.utils.patches import imread
 
-    s, conf, iou, imgsz = settings()
+    s, conf, iou, imgsz, plain_ciou = settings()
     if conf != cc.CONF:
         raise SystemExit(f"config 의 predict.conf {conf} 가 평가의 {cc.CONF} 와 다르다")
     plain_imgsz = args.plain_imgsz or imgsz
@@ -223,6 +227,7 @@ def main() -> int:
                     outs = {"P": dP,
                             "PN": tiling.merge_cross(dP, iou, s["cross_iou"], MAXDET, conf),
                             "PC": tiling.merge_cross(dP, iou, s["cross_iou"], MAXDET, conf, group=vids, iou_class=s["class_iou"]),
+                            "PV": dP[tiling.cross_class_keep(dP[:, :4], dP[:, 4], dP[:, 5], vids, plain_ciou)],
                             "T0": dT0, "T": dT}
                     for m, dd in outs.items():
                         k = tally(fold_t[m], gts, dd[:, :4].astype(float), dd[:, 4], [names[int(c)] for c in dd[:, 5]],
@@ -282,6 +287,9 @@ def main() -> int:
         for m in ("P", "T"):
             print(row(arm, m, [f"size_found:{b}" for b in cc.SIZE_BINS]))
     print(f"\n정답: {tot['total']}개 (responder {tot['total:responder']}) · 이미지 {tot['images']}장")
+    same = [(a, sd) for a in arms for sd in arm_seeds[a] if tallies[(a, sd, "PC")] == tallies[(a, sd, "PV")]]
+    print(f"운영 코드의 통째 정리(PV, class_iou {plain_ciou})가 통째+차량 병합(PC)과 센 수까지 같은 세트: "
+          f"{len(same)} / {sum(len(arm_seeds[a]) for a in arms)}")
     bad = sum(t["dup_unhit"] for t in tallies.values())
     if bad:
         print(f"[경고] 짝 없는데 IoU ≥ 0.5 인 정답이 비어 있던 예측 {bad}개 — 짝짓기를 볼 것")

@@ -42,7 +42,12 @@
   예측 받기·건너뛰기·화면 끌기 모드로 새는 것을 이 모의가 실제로 가르는지 본다. 이름이나 그 줄을 바꾸면 `PARTS`·`CONSTS`·
   `PAN_LINE` 도 맞춘다. 그리는 동안 Q·E·T 를 막는 것(`polyKey`)도 여기서 본다 — 그리는 중이 아닐 때 원래 뜻으로 가는 대조와 함께.
 - `tests/test_tiling.py`(11-17)는 타일 추론의 합치기(`tiling.merge_cross`)를 검출 배열만으로 본다 — 차량 클래스끼리는 클래스가
-  달라도 겹치면 하나만 남고, 사람과 탈것·덜 겹친 차는 남는가. 모델·GPU 를 쓰지 않는다.
+  달라도 겹치면 하나만 남고, 사람과 탈것·덜 겹친 차는 남는가. 모델·GPU 를 쓰지 않는다. 11-20 부터 통째 자동 라벨링의 같은 정리
+  (`cross_class_keep`·`plain_class_iou`)도 본다 — 같은 클래스는 건드리지 않고, 차량 규칙은 merge_cross 에 같은 클래스가 겹칠 수
+  없는 문턱(1.1)을 준 것과 무작위 400벌에서 남는 것이 같아야 한다(지워지는 박스가 수백 개인 표본이다 — 표본을 바꾸면 그 수를 볼 것).
+- `tests/test_predictor.py`(11-20)는 `AutoLabeler.run`(통째)을 가짜 모델로 돌려 DB 에 저장된 박스를 본다 — 모델은 정해 둔 검출을
+  Ultralytics 의 `Boxes` 로 돌려준다(`.xyxy`·`.xywhn`·`.cls`·`.conf` 를 진짜와 같게). `labeler._model` 에 넣어 YOLO 를 올리지 않고,
+  run 이 파일이 있는지만 보므로 빈 파일을 둔다. 2026-11-20 에 정리를 뺀 꼴로 돌려 실패하는 것을 봤다.
 - `tests/test_eval_test.py`(11-15)는 `wsl/eval_test.py` 의 `at_conf`(놓침·헛 박스)가 conf 0.25·IoU 0.45 로 세어지는지 본다 —
   Ultralytics 8.4.212 의 검증기는 혼동 행렬을 val 의 conf 0.001·IoU 0.5 로 세서, 같은 119장에서 헛 박스가 에러 없이 20 → 988 이
   됐다(mAP 는 8.4.142 와 같았다 — docs/experiments.md '새 풀 프레임 데이터'). **Ultralytics 를 올리면 이 테스트부터 볼 것.** val 에

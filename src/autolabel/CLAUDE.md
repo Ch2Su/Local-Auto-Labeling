@@ -149,7 +149,17 @@
   **차량 클래스끼리는 클래스가 달라도 `class_iou`(0.6) 이상 겹치면 신뢰도 높은 쪽만 남긴다 (11-17 사용자 요청,
   `merge_cross(group=, iou_class=)`·`tiling.VEHICLES`)** — 클래스별 NMS 라 통째 car·타일 truck 인 같은 차가 둘 다 남았다(실측은
   docs/experiments.md '타일 추론'). 사람·자전거·오토바이·킥보드·라바콘은 묶지 않는다(탄 사람과 탈것은 실제로 겹친다) — 차량
-  클래스를 더하면 `VEHICLES` 에 넣을 것. `class_iou: 0` 이면 끈다. 보통(통째) 자동 라벨링에는 걸지 않았다. `tests/test_tiling.py`.
+  클래스를 더하면 `VEHICLES` 에 넣을 것. `class_iou: 0` 이면 끈다. `tests/test_tiling.py`.
+  **보통(통째) 자동 라벨링도 11-20 부터 같은 차량 규칙으로 정리한다**(사용자 결정 — 새 풀 프레임 평가 175장에서 통째도 같은 차에
+  car·responder 처럼 클래스만 다른 박스를 겹쳐 냈다: 운영 가중치 중복 42 → 10, 찾음·클래스까지 그대로, docs/experiments.md
+  '타일 모드로 중복이 얼마나 주는지'). 설정은 `predict.class_iou`(0.6, 없으면 `tiling.PLAIN_CLASS_IOU`, 0 이면 끔 —
+  `tiling.plain_class_iou`), 함수는 `tiling.cross_class_keep`: **같은 클래스 NMS 는 하지 않고**(모델이 낸 그대로) 클래스를 넘는
+  차량 겹침만 merge_cross 와 같은 순서로 지운다(무작위 400벌로 견주는 테스트가 있다). `AutoLabeler.run` 의 통째 경로가 xyxy(픽셀)로
+  표를 받아 xywhn 행을 거르고, 뺀 수는 `PredictReport.merged`(요약 줄 '겹친 차량 박스 N개'). 타일 모드는 그대로 detect 안에서
+  `predict.tiles.class_iou` 로 하고 그 수는 세지 않는다. **예측 비교(P)·label_qa 는 걸지 않는다**(모델이 낸 그대로 견준다 —
+  P 의 `LiveDetector` 머리말). `model_version` 에는 표시를 붙이지 않았다(11-20 이후 통째로 라벨링한 이미지는 정리된 것).
+  `tests/test_predictor.py`(가짜 모델로 저장까지). 그날 DB 사본(승인 175장, 운영 가중치)으로 끝까지 돌려 보니 끈 쪽 1,743개 중
+  52개만 빠졌고 그 수가 `merged` 와 같았으며, 클래스가 다른 차량 박스 쌍(IoU ≥ 0.6)이 55 → 0(`runs/compare_1118_pretrain/plain_merge_check.py`).
 - **영상 캡처 탭 (2026-11-10, 사용자 요청 — `capture.py`·`web/capture.js`, 사용법은 README '영상 캡처')** — 라벨링·이미지 보기와
   같은 페이지의 세 번째 보기(`setView('capture')`·`body.view-capture`). 영상을 올려(`POST /api/capture/upload` — multipart 가
   아니라 **본문 그대로** `request.stream()` 을 8MB 씩 쓴다, `size` 와 다르면·끊기면(ClientDisconnect) 지운다) 서버가 OpenCV 로
