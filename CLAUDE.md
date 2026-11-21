@@ -34,14 +34,6 @@
 
 ## 환경 (이미 구성됨)
 
-| | |
-|---|---|
-| Python | 3.14.3 (`.venv`) |
-| PyTorch | 2.14.0+cu130 |
-| Ultralytics | 8.4.142 |
-| GPU | RTX 5060 Laptop 8GB, sm_120 (Blackwell) |
-| OS | Windows 11 |
-
 `python` 은 반드시 `.venv\Scripts\python.exe` 를 쓴다 — 시스템 Python 에는 아무것도 없다. Python 3.14 + sm_120 이라
 **PyTorch 는 cu130 인덱스에서만** 받는다. `requirements.txt` 가 `+cu130` 까지 고정해서(11-01) CPU 빌드로 조용히 바뀌는 대신
 'No matching distribution' 으로 멈춘다. 다시 깔 때는 아래를 돌린다(CPU 빌드가 깔렸어도 이것으로 바뀐다 — `==2.14.0` 만
@@ -72,9 +64,7 @@
 
 ## git
 
-**2026-10-02 에 저장소로 만들었다**(브랜치 `main`, `core.autocrlf=false` — 파일을 바이트 그대로 둔다). 담는 것은 코드·설정·
-문서와 `runs/` 의 텍스트 기록(results.csv·args.yaml·`test_baseline/history.jsonl`·스크립트)뿐이다. `data/`·`models/`·
-`weights/`·`export/`·`.venv`·`graft/`·그림·로그·tar 는 `.gitignore` 로 뺐다 — **데이터와 DB 는 git 이 아니라 백업으로 지킨다.**
+**2026-10-02 에 저장소로 만들었다**(브랜치 `main`, `core.autocrlf=false` — 파일을 바이트 그대로 둔다). **데이터와 DB 는 git 이 아니라 백업으로 지킨다**(빼는 것은 `.gitignore`).
 - **원격은 GitHub `Ch2Su/Local-Auto-Labeling` — public 이다(11-02).** **push 하는 순간 누구나 본다** — 올리기 전에 담긴
   내용을 볼 것. **올린 커밋은 다시 쓰지 말 것**(amend·rebase 뒤 force push 금지 — 칠판이 커밋을 해시로 가리킨다). 11-02 에
   커밋 메일을 감추느라 이력을 한 번 다시 쓴 것(사용자 결정)만 예외다. 그 옛 이력은 로컬 `refs/archive/pre-noreply/main` 에
@@ -221,10 +211,6 @@ width/height 는 회전 전 원시 크기다**(`labeler.py check` 도 원시 크
 **2026-11-10 에 이미지를 전부 비우고 처음부터 다시 모은다**(사용자 결정 — 가릴 영역 `M` 이 생겨, CCTV 화면을 잘라 낸 크롭·
 스크린샷 대신 풀 해상도 캡처를 통째로 쓰고 필요 없는 곳은 덮으려고).
 
-```text
-승인 0 / 검수 대기 0 / 박스 0 / 클래스 10개 / 태그 0 · DB 행 0 · 새 이미지 id 는 8,032 부터      (2026-11-10 16:30)
-```
-
 - **옛 데이터는 `E:\local_auto_labeling_archive\20261110\` 에 있다**(같은 디스크로 옮겼다 — 담긴 것·되살리기는 그 폴더의
   `ARCHIVE_INFO.txt`). 이미지 5,931장(legacy 시드·VIRAT·ROAD PLUS 프레임)과 비우기 직전 DB·작업별 DB 사본·하루 사본·분석
   결과, ROAD PLUS 구간 영상(`videos/` — **C: 에 없는 유일한 사본**)이다. 이미지와 DB 는 C: 백업 세 폴더에도 있다(아래).
@@ -250,9 +236,8 @@ width/height 는 회전 전 원시 크기다**(`labeler.py check` 도 원시 크
   따로 볼 것. **기존 이미지는 움직이지 않는다** — 새 이미지만 자기 묶음을 따르거나 계층화로 들어가고, 두 분할의 묶음을 이어
   붙이는 새 이미지가 나오면 옮기지 않고 `[알림] … 두 분할에 걸칩니다` 만 띄운다(`moved` 는 reset 이 아니면 0 이어야 한다).
 - **손으로 옮길 때는 val·test → train 방향만** — 반대면 학습한 이미지가 평가셋에 들어간다.
-- 이름 계열은 자릿수·이미지 크기가 같아야 한 계열이다(09-24). 묶을 때 로보플로(`_jpg.rf.<해시>`, 두 번 내보낸 `_png_png.rf.<해시>` 까지 전부)·tidy(`__<sha1 8자>`·`_2`) 꼬리표는 떼고 보고,
-  dHash 는 EXIF 회전을 적용해 잰다. 영문 `Screenshot …` 도 30초 스크린샷 규칙을 탄다. **이름 계열은 카메라 안에서만 잇는다**
-  (다른 카메라끼리는 dHash 로만). 누수는 `labeler.py split --leak` 으로 다시 잰다.
+- **이름 계열은 카메라 안에서만 잇는다**(다른 카메라끼리는 dHash 로만 — 묶는 규칙의 나머지는 `grouping.py` 머리말). 누수는
+  `labeler.py split --leak` 으로 다시 잰다.
 - 두 분할에 걸친 묶음은 알림으로 뜨고 기존 배정은 고정이라 옮기지 않는다(11-05). 계층화는 섞인 묶음을 다수결 분할로 센다(비중이
   조금 어긋남 — 고치지 않았다). 누수를 없애려면 분할 재배정(사용자 결정).
 - `train.test_ratio`(또는 val_ratio)를 0 으로 바꿔 이미 배정된 분할이 비율에서 빠지면, reset 이 아닌 한 **아무것도 쓰기 전에
@@ -262,20 +247,16 @@ width/height 는 회전 전 원시 크기다**(`labeler.py check` 도 원시 크
 README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 스캔·학습·`prune`·정리 버튼을 쓰지 말 것** — 스캔은 시드를 검수
 전 라벨로 다시 넣고(그래서 DB 의 절반 넘게 '파일 없음' 이면 멈춘다, `scan --force` 로 강행), 웹 UI 의 정리(tidy)는 뒤이어
 `prune` 을 돌려 '파일 없음' 행을 **검수 상태·라벨째 지운다**(절반 넘게 없을 때만 멈추니, 일부만 되살린 상태면 그만큼 지운다).
-- 11-10 에 비운 뒤로 여기에는 `cameras.yaml`·`classes.txt`·`labeling.db`·`unlabeled/`(새로 넣는 사진)만 있다. 출처 없이 모인 옛
-  수집분 `legacy/`(로보플로 시드 seed1·seed2 와 11-03 전 정리분)·`labeled/`·`videos/`·`backups/`·`labeling.db.bak_*`·분석 폴더는
-  보관 폴더로 옮겼다(위 '현재 데이터 상태'). **새 수집은 전부 출처(카메라)를 밝힌다.**
+- **새 수집은 전부 출처(카메라)를 밝힌다.**
 - 시드: `seed_coco: data/visible/seed`(지금은 없다 — 없으면 시드 없이 돈다)는 하위 폴더까지 COCO 주석 json 을 **전부** 찾아
   (`coco_io.find_annotation_files`) 검수 없이 승인으로 넣으니, 검토 전 데이터나 json 사본을 그 아래에 두지 말 것(회차마다
   `seedN/` 에 `coco/*.json` + `images/`). 시드 사진을 휴지통 비우기로 지우면 json 에 이름이 남아 scan 이 알리니
   `tools/prune_seed_json.py` 로 뺀다.
 - **출처 기록 (11-03, [docs/provenance.md](docs/provenance.md))** — 새 수집분은 `unlabeled/<카메라키>/…` 에 두고 카메라를
   `data/visible/cameras.yaml`(실제 장소 — git 에 넣지 말 것)에 먼저 등록한다. 등록 안 된 폴더가 있으면 scan 이 아무것도 넣지
-  않고 멈춘다. 들어온 이미지는 `source='collected'`·`images.camera`·`captured_at`(파일 이름 → EXIF, 못 찾으면 NULL), tidy 는
-  `labeled/images/<카메라>/` 로 옮긴다. 분할은 **카메라째 한 묶음**이고 `cameras.yaml` 의 `split:` 으로 고정할 수 있다
+  않고 멈춘다. 분할은 **카메라째 한 묶음**이고 `cameras.yaml` 의 `split:` 으로 고정할 수 있다
   (고정이 다른 카메라가 dHash 로 이어지면 분할이 멈춘다). split 보고의 `카메라별:` 줄로 어디로 갔는지 볼 것.
-  검수 UI 는 카메라 필터·카메라·촬영 시각을 보여 주고, `test_baseline.py --domains` 는 `collected`·`cam:<키>`·`kind:`·`mount:` 를
-  잰다. `cctv`·`drone`·`noncctv` 는 `images.domain`, 비어 있으면 카메라 등록으로 짐작한다(설치 drone → 드론, kind cctv → CCTV, phone → 비CCTV, 그 밖은 `undomain`).
+  `test_baseline.py --domains` 의 `cctv`·`drone`·`noncctv` 는 `images.domain`, 비어 있으면 카메라 등록으로 짐작한다(설치 drone → 드론, kind cctv → CCTV, phone → 비CCTV, 그 밖은 `undomain`).
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개 — 켤 때, 켜 둔 채 날이 바뀌면 그날 첫 변경 요청 앞에서).
@@ -311,9 +292,7 @@ docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운�
 때는 드라이런으로 torch 를 안 건드리는지 먼저 볼 것** — PyPI 의 torch 가 cu130 빌드를 덮어쓸 수 있다. 되돌릴 기준은
 `~/yolo_final_freeze_before_upgrade.txt`(09-11 업그레이드 전 freeze).
 
-버튼(`wsl_train.py`)은 DB 로 `data/visible/dataset` 을 만들고 → `sync_dataset.sh` 로 WSL 에 복사(`--delete`) → `train_wsl.py`
-를 돌리며 로그를 중계하고 → 끝나면 `promote_weights()` 로 `models/best.pt` 를 바꾼다. [중단] 은 WSL 쪽 `STOP` 파일을 만든다.
-설정은 `config.yaml` 의 `wsl:`.
+버튼의 흐름(데이터셋 → 복사 → 학습 → 승격)·[중단] 은 `wsl_train.py` 머리말, 설정은 `config.yaml` 의 `wsl:`.
 - **WSL 버튼은 Windows 학습 버튼과 같은 인자로 학습한다**(`trainer.train_args(cfg)` → `train_wsl.py --bare --hyp KEY=VALUE`,
   `--dry-run` 으로 확인). `train_wsl.py` 는 Windows 프로젝트 코드를 import 하지 않는다. `wsl.exe` 가 명령줄을 bash 로 넘기므로
   값은 영숫자와 `_ . + - =` 만 넘긴다(`wsl_train.hyp_tokens`).
@@ -321,9 +300,8 @@ docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운�
   복사한다. 프로젝트를 늘리면 WSL 데이터셋 폴더를 **반드시 다르게** 둘 것(`--delete` 동기화가 서로 덮는다).
 - **서버를 죽여도 WSL 학습은 계속 돈다** — 그때는 STOP 파일을 직접 만든다. `--stop-at N` 은 N epoch 을 마치면 정지 파일처럼
   멈춘다(lr 스케줄은 그대로, `--resume` 으로 잇는다).
-- [중단] 을 누른 뒤에는 학습이 끝날 때까지 STOP 이 없으면 0.5초마다 다시 만든다(11-05 — train_wsl.py 는 시작할 때 STOP 을 지워
-  시작 직후의 중단이 씹혔다. 그 동작은 그대로 둔다). 'WSL 이어하기' 는 train_wsl.py 가 쓸 수 있는 resume.pt·last.pt 만 띄우고,
-  `--resume` 은 results.csv 를 체크포인트 epoch 까지 자른다(원본 `.csv.bak`).
+- 'WSL 이어하기' 는 train_wsl.py 가 쓸 수 있는 resume.pt·last.pt 만 띄우고, `--resume` 은 results.csv 를 체크포인트 epoch
+  까지 자른다(원본 `.csv.bak`).
 - 비교 학습은 `runs/compare_0918/run_compare.sh`(결과는 `runs_cmp/` — 'WSL 이어하기' 가 집어 가지 않게). **순서 스크립트를
   `pkill` 하지 말 것**(학습도 같이 죽는다) — 멈출 때는 `touch ~/new_env/yolo/runs_cmp/HALT ~/new_env/yolo/runs_cmp/STOP`. 도는
   동안 웹 UI 로 학습을 시작하지 말 것.
@@ -334,13 +312,7 @@ docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운�
   는 본 학습과 이 값이 다르다. **epoch 수가 다른 학습끼리 같은 epoch 의 mAP 를 견주지 말 것**(`cos_lr` 이 총 epoch 에 묶인다).
 - 8GB 에서 들어가는 최대치(`wsl/probe_vram.py`): s 640 b20 / s 960 b8 / s 1280 b4 / m 640 b10 / m 960 b4 / l 640 b8 / x 640 b5.
   WSL 도 넘치면 OOM 없이 느려진다(함정 9).
-
-```bash
-bash /mnt/e/local_auto_labeling/wsl/sync_dataset.sh        # data/visible/dataset -> ~/datasets/visible
-~/miniconda3/envs/yolo_final/bin/python /mnt/e/local_auto_labeling/wsl/train_wsl.py
-touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
-~/miniconda3/envs/yolo_final/bin/python /mnt/e/local_auto_labeling/wsl/train_wsl.py --resume
-```
+- 손으로 돌리는 명령(동기화·학습·STOP·`--resume`)은 `wsl/train_wsl.py` 머리말에 있다.
 
 ---
 
@@ -377,15 +349,10 @@ touch ~/new_env/yolo/runs_wsl/STOP                          # 정상 중단
      워커가 먼저 죽기 때문이다. epoch 하나만 잃는다).
    - 스냅샷은 **사람이 멈춘 때만** 남기고, 끝난 학습(조기 종료·완주, strip 된 `last.pt`)은 이어하기 대상에서 뺀다. 이어하기는
      **이 설정의 데이터셋으로 돈 학습만** 고른다(`trainer.uses_dataset`).
-   - **사람이 멈춘 학습은 운영 가중치를 바꾸지 않는다 (11-16 사용자 결정 — 그 전에는 멈출 때마다 바뀌었다).**
-     규칙은 `trainer.promote_if_finished` **한 곳**이다(11-17 — `_finish()`·`wsl_train.train()` 이 함께 부른다): 끝까지 간
-     학습(조기 종료 포함)만 올리고 이전 것을 `best.prev.pt` 로 남긴다. 멈춘 학습은 로그 끝에 그 학습의 best.pt 경로를
-     찍는다(결과의 `run_best`·`promoted` — CLI 요약의 가중치 줄과 화면 토스트가 읽는다) — 쓰려면 손으로 복사한다.
-     **예외 둘 (11-17 리뷰):** 운영 가중치가 아직 없으면 멈춘 학습도 올린다(지킬 것이 없고, 안 올리면 자동 라벨링이
-     사전학습 COCO 가중치로 돈다). **마지막 epoch 에서 멈춘 것은 끝난 학습으로 친다**(`_snapshot` 이 `stopped` 를 내린다 —
-     이어 붙일 것이 없어 스냅샷이 안 남는데 멈춘 학습으로 두면 승격도 이어하기도 안 됐다. `trainer.py`·`train_wsl.py`
-     둘 다, WSL 의 `--stop-at N` 도 N 이 총 epoch 이상이면 그렇다). `tests/test_promote.py`. `tools/finetune.py --promote`
-     는 원래부터 멈춘 학습을 올리지 않았다(그쪽은 따로 적혀 있다).
+   - **사람이 멈춘 학습은 운영 가중치를 바꾸지 않는다 (11-16 사용자 결정).** 끝까지 간 학습(조기 종료 포함)만 올리고 이전
+     것을 `best.prev.pt` 로 남긴다. 멈춘 학습은 로그 끝에 그 학습의 best.pt 경로를 찍는다 — 쓰려면 손으로 복사한다. 규칙은
+     `trainer.promote_if_finished` 한 곳이고, 예외 둘(운영 가중치가 없을 때·마지막 epoch 에서 멈춘 때)은 그 머리말에 있다
+     (`tests/test_promote.py`).
    - 끝난 학습의 `epochN.pt` 는 지워도 되지만(`best.pt`·`last.pt`·그래프·`results.csv` 만 남긴다) **지우기 전에 물을 것.** WSL
      안에서 지워도 `E:\WSL\Ubuntu\ext4.vhdx` 는 저절로 줄지 않는다.
 9. **Windows 는 VRAM 이 모자라도 OOM 을 내지 않고 공유 메모리로 넘겨 조용히 느려진다**(배치당 1.3초 → 45초, 사람이 PC 를 쓸
