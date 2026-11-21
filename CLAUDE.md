@@ -278,7 +278,7 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
   잰다. `cctv`·`drone`·`noncctv` 는 `images.domain`, 비어 있으면 카메라 등록으로 짐작한다(설치 drone → 드론, kind cctv → CCTV, phone → 비CCTV, 그 밖은 `undomain`).
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
-- `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 **켤 때** 하루 한 번 사본을 남긴다(최근 14개 — 켜 둔 채 날을 넘기면 새로 안 뜬다).
+- `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개 — 켤 때, 켜 둔 채 날이 바뀌면 그날 첫 변경 요청 앞에서).
   `classes.txt` 는 DB 옆이다. `thumbs/`(11-04)는 이미지 보기 썸네일 캐시 — 지워도 되고 백업하지 않는다. `capture/`(11-10)는
   영상 캡처 탭의 임시 세션(올린 영상 사본·뽑은 프레임 — 넣거나 닫으면 서버가 지운다)이라 백업하지 않는다(수 GB 일 수 있다).
   `autocapture/`(11-12)는 `tools/auto_capture.py` 의 처리 기록 `videos.jsonl`(지우면 처리한 영상을 다시 올린다)·후보 프레임별

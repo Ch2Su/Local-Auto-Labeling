@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import pytest
 
@@ -447,3 +448,17 @@ def test_reverts_do_not_push_bulk_batches_out_of_the_list(store, add_image):
     assert all(r["first_id"] > rows[-1]["first_id"] or r is rows[-1] for r in rows)
     assert [r["batch"] for r in store.batches(limit=30) if r["source"] == "bulk"] == [f"b{k}" for k in range(7, -1, -1)]
     assert store.batches(limit=0) == [r for r in store.batches(limit=30) if r["source"] != "bulk"][:5]
+
+
+def test_backup_daily_once_a_day_keeps_latest(store):
+    """하루 사본 — 그날 것이 있으면 건너뛰고, 이 함수가 만든 사본만 최근 keep 개 남긴다(2026-11-21 부터 now 를 받는다)."""
+    d = store.db_path.parent / "backups"
+    d.mkdir()
+    (d / "labeling_camrename_20261101_000000.db").write_bytes(b"")     # 카메라 키 바꾸기 전 사본 — 지우지 않는다
+    for day in (17, 18, 19, 20):
+        assert store.backup_daily(3, now=datetime(2026, 11, day, 9, 0, 0)) is not None
+        assert store.backup_daily(3, now=datetime(2026, 11, day, 23, 0, 0)) is None      # 같은 날 두 번째
+    assert sorted(p.name for p in d.glob("*.db")) == [
+        "labeling_20261118_090000.db", "labeling_20261119_090000.db", "labeling_20261120_090000.db",
+        "labeling_camrename_20261101_000000.db"]
+    assert store.backup_daily(0, now=datetime(2026, 11, 21, 9, 0, 0)) is None

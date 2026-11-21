@@ -5,6 +5,11 @@ TestClient 는 `base_url="http://127.0.0.1:7860"` 이어야 한다(기본 testse
 
 from __future__ import annotations
 
+import sqlite3
+import threading
+import time
+from datetime import datetime
+
 import pytest
 
 from helpers import CLASSES, box, keys
@@ -274,3 +279,141 @@ def test_error_responses_are_never_cached_under_a_project_tab(cfg, store, add_im
     with TestClient(app, base_url=ORIGIN) as c:
         r = c.get(f"/p/t/api/images/{gone}/thumb?s=256")
         assert (r.status_code, r.headers["cache-control"]) == (410, "no-store")
+
+
+# ----------------------------------------------------------------- 하루 사본 (2026-11-21)
+
+class _Clock(datetime):
+    """naive now() 만 바꾸는 시계 — UTC 기록(now(timezone.utc))은 진짜 시각 그대로."""
+    t = datetime(2026, 11, 19, 9, 59, 2)
+
+    @classmethod
+    def now(cls, tz=None):
+        return datetime.now(tz) if tz is not None else cls.t
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """server·store 의 '지금' 을 갈아 날짜를 넘긴다. store 쪽도 갈아 두어, 고치기 전 코드(켤 때만 뜨던)로 돌려도 켤 때의
+    사본 이름은 같고 '날이 바뀐 뒤 첫 변경' 에서만 갈린다."""
+    from autolabel import server
+    from autolabel import store as store_mod
+
+    monkeypatch.setattr(_Clock, "t", datetime(2026, 11, 19, 9, 59, 2))
+    monkeypatch.setattr(server, "datetime", _Clock)
+    monkeypatch.setattr(store_mod, "datetime", _Clock)
+    return _Clock
+
+
+def backups(cfg) -> list[str]:
+    d = cfg.db.parent / "backups"
+    return sorted(p.name for p in d.glob("*.db")) if d.exists() else []
+
+
+def n_boxes(db, image_id: int) -> int:
+    con = sqlite3.connect(db)
+    try:
+        return con.execute("SELECT COUNT(*) FROM boxes WHERE image_id=?", (image_id,)).fetchone()[0]
+    finally:
+        con.close()
+
+
+def test_daily_backup_on_first_write_after_midnight(cfg, store, add_image, clock):
+    """2026-11-21 — 하루 사본을 켤 때만 떠서, 자정을 넘겨 켜 둔 검수 서버는 다시 켤 때까지 새 사본이 없었다
+    (검수 사본의 11-20 작업이 그랬다)."""
+    from fastapi.testclient import TestClient
+
+    from autolabel.server import create_app
+
+    cfg.raw["backup"]["keep"] = 14
+    i = add_image("a.jpg", status="pending", boxes=[box()])
+    app = create_app(cfg, label="시험", bind_host="127.0.0.1")
+    day1, day2 = "labeling_20261119_095902.db", "labeling_20261120_001000.db"
+    assert backups(cfg) == [day1]                                           # 켤 때
+    with TestClient(app, base_url=ORIGIN) as c:
+        clock.t = datetime(2026, 11, 19, 23, 59, 59)
+        assert c.put(f"/api/images/{i}/boxes", json={"boxes": [ONE]}).status_code == 200
+        assert backups(cfg) == [day1]                                       # 같은 날
+        clock.t = datetime(2026, 11, 20, 0, 10, 0)
+        assert c.get("/api/state").status_code == 200
+        assert backups(cfg) == [day1]                                       # 읽기만 해서는 뜨지 않는다
+        r = c.put(f"/api/images/{i}/boxes", json={"boxes": [ONE, {**ONE, "cx": 0.75}]})
+        assert r.status_code == 200
+        assert backups(cfg) == [day1, day2]
+        assert n_boxes(cfg.db.parent / "backups" / day2, i) == 1            # 그날 첫 변경 앞의 상태(박스 1 → 2)
+        clock.t = datetime(2026, 11, 20, 9, 0, 0)
+        assert c.put(f"/api/images/{i}/boxes", json={"boxes": [ONE]}).status_code == 200
+        assert backups(cfg) == [day1, day2]                                 # 그날은 한 번만
+
+
+def test_daily_backup_under_a_project_tab(cfg, store, add_image, clock):
+    """프로젝트 탭(`/p/<이름>/`)으로 띄운 서버에서도 — 평소 `labeler.py review` 가 이 꼴이다(프로젝트 앱마다 제 DB)."""
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from autolabel.server import create_multi_app
+
+    cfg.raw["backup"]["keep"] = 14
+    i = add_image("a.jpg", status="pending")
+    app = create_multi_app([SimpleNamespace(name="t", title="시험", cfg=cfg)], bind_host="127.0.0.1")
+    with TestClient(app, base_url=ORIGIN) as c:
+        clock.t = datetime(2026, 11, 20, 0, 10, 0)
+        assert c.get("/api/projects").status_code == 200
+        assert c.put(f"/p/t/api/images/{i}/boxes", json={"boxes": [ONE]}).status_code == 200
+    assert backups(cfg) == ["labeling_20261119_095902.db", "labeling_20261120_001000.db"]
+
+
+def test_daily_backup_off_when_keep_zero(clock, client, cfg, add_image):
+    i = add_image("a.jpg", status="pending")
+    clock.t = datetime(2026, 11, 20, 0, 10, 0)
+    assert client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE]}).status_code == 200
+    assert not (cfg.db.parent / "backups").exists()
+
+
+def test_daily_backup_failure_does_not_block_saving(cfg, store, add_image, clock, monkeypatch, capsys):
+    """사본을 못 떠도 저장은 되고, 그날은 다시 시도하지 않는다(디스크가 찼을 때 저장마다 뜨려 들지 않게)."""
+    from fastapi.testclient import TestClient
+
+    from autolabel import store as store_mod
+    from autolabel.server import create_app
+
+    cfg.raw["backup"]["keep"] = 14
+    i = add_image("a.jpg", status="pending")
+    app = create_app(cfg, label="시험", bind_host="127.0.0.1")
+    tried = []
+
+    def full(self, keep=14, now=None):
+        tried.append(now)
+        raise OSError("디스크가 가득 찼다")
+
+    monkeypatch.setattr(store_mod.Store, "backup_daily", full)
+    with TestClient(app, base_url=ORIGIN) as c:
+        clock.t = datetime(2026, 11, 20, 0, 10, 0)
+        for cx in (0.25, 0.5, 0.75):
+            assert c.put(f"/api/images/{i}/boxes", json={"boxes": [{**ONE, "cx": cx}]}).status_code == 200
+    assert tried == [datetime(2026, 11, 20, 0, 10, 0)]
+    assert "DB 백업 실패" in capsys.readouterr().out
+    assert store.get_boxes(i)[0].cx == pytest.approx(0.75)
+
+
+def test_daily_backup_once_under_concurrent_writes(store, clock, monkeypatch):
+    """날이 바뀐 직후 요청이 몰려도(자동 저장·썸네일) 사본은 하나다 — 늦게 온 요청은 앞의 것을 기다렸다 지나간다."""
+    from autolabel import store as store_mod
+    from autolabel.server import _DailyBackup
+
+    made = []
+
+    def slow(self, keep=14, now=None):
+        time.sleep(0.05)
+        made.append(now)
+
+    monkeypatch.setattr(store_mod.Store, "backup_daily", slow)
+    daily = _DailyBackup(store, 14, "시험")
+    clock.t = datetime(2026, 11, 20, 0, 10, 0)
+    threads = [threading.Thread(target=daily.run) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert made == [datetime(2026, 11, 20, 0, 10, 0)] and not daily.due()

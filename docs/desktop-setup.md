@@ -306,8 +306,8 @@ Start-Service sshd; Set-Service -Name sshd -StartupType Automatic
 
 집 PC 가 본진이 되면 **그곳에만 있는 데이터**가 생긴다 — 새로 모은 사진·검수한 라벨(`labeling.db`)이다.
 
-- 검수 서버가 **켤 때** 하루 한 번 `data/visible/backups/` 에 DB 사본을 남기고 최근 14개를 두지만(켜 둔 채 날을 넘기면 다시 켤 때까지
-  새로 뜨지 않는다) **같은 디스크**라 SSD 가 죽으면 같이 간다.
+- 검수 서버가 하루 한 번(켤 때, 켜 둔 채 날이 바뀌면 그날 첫 변경 앞에서) `data/visible/backups/` 에 DB 사본을 남기고 최근 14개를
+  두지만 **같은 디스크**라 SSD 가 죽으면 같이 간다.
 - **주 1회 정도 다른 디스크(노트북 또는 외장)로 뜬다** — 명령은 `docs/backup.md` 의 robocopy(`$src` = `C:\local_auto_labeling`)와 sqlite `backup()` 으로 DB 를 뜨는 것. 새 날짜 폴더를 만들 때 이전 것을 지울지는 그때 정한다.
 - 학습 결과 중 지킬 가중치는 `models\best_<이름>.pt` 로 Windows 쪽에 복사해 둔다(WSL 의 `ext4.vhdx` 는 한 파일이라 같이 백업하기 어렵다).
 

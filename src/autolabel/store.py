@@ -1481,18 +1481,19 @@ class Store:
             out.append(dict(r))
         return out
 
-    def backup_daily(self, keep: int = 14) -> Path | None:
-        """하루 한 번 DB 를 `<DB 폴더>/backups/` 로 떠 둔다. 오늘 것이 있으면 건너뛴다.
+    def backup_daily(self, keep: int = 14, now: datetime | None = None) -> Path | None:
+        """하루 한 번 DB 를 `<DB 폴더>/backups/` 로 떠 둔다. 그날 것이 있으면 건너뛴다.
 
-        검수 서버를 켤 때 부른다. sqlite 의 backup() 이라 다른 서버가 쓰는 중이어도
-        일관된 사본이 나온다. **가장 최근 `keep` 개만 남기고 그보다 오래된 사본은 지운다**
+        검수 서버가 켤 때와, 켜 둔 채 날이 바뀐 뒤 첫 변경 요청 앞에서 부른다(server._DailyBackup, 2026-11-21 — 전에는
+        켤 때만). now 는 그 '지금'(없으면 지금 시각)으로, 날짜와 파일 이름을 정한다. sqlite 의 backup() 이라 다른 서버가
+        쓰는 중이어도 일관된 사본이 나온다. **가장 최근 `keep` 개만 남기고 그보다 오래된 사본은 지운다**
         (이 함수가 만든 `backups/<DB 이름>_날짜_시각.db` 만 대상이다). keep=0 이면 끈다.
         """
         if keep <= 0 or not self.db_path.exists():
             return None
         d = self.db_path.parent / "backups"
         stem = self.db_path.stem
-        now = datetime.now()
+        now = now or datetime.now()
         if any(d.glob(f"{stem}_{now:%Y%m%d}_*.db")):
             return None
         d.mkdir(exist_ok=True)

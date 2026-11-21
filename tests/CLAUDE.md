@@ -48,6 +48,11 @@
 - `tests/test_predictor.py`(11-20)는 `AutoLabeler.run`(통째)을 가짜 모델로 돌려 DB 에 저장된 박스를 본다 — 모델은 정해 둔 검출을
   Ultralytics 의 `Boxes` 로 돌려준다(`.xyxy`·`.xywhn`·`.cls`·`.conf` 를 진짜와 같게). `labeler._model` 에 넣어 YOLO 를 올리지 않고,
   run 이 파일이 있는지만 보므로 빈 파일을 둔다. 2026-11-20 에 정리를 뺀 꼴로 돌려 실패하는 것을 봤다.
+- `tests/test_server.py` 의 하루 사본(11-21)은 `server.datetime`·`store.datetime` 을 naive `now()` 만 바꾸는 가짜 시계(`_Clock` —
+  UTC 기록은 진짜 시각)로 갈아 날짜를 넘긴다: 켤 때·같은 날·읽기 요청·날이 바뀐 뒤 첫 변경(사본이 그 변경 **앞**의 상태인지 박스 수로)·
+  keep 0·사본을 못 떠도 저장되고 그날은 다시 안 함·동시 요청에 하나만(`_DailyBackup` 을 스레드 여덟로)·프로젝트 탭(`create_multi_app`)으로
+  띄운 서버. store 쪽 시계도 갈아 두어
+  고치기 전 코드(켤 때만 뜨던)로 돌리면 '날이 바뀐 뒤 첫 변경' 에서만 실패한다 — 2026-11-21 에 그렇게 실패하는 것을 봤다.
 - `tests/test_eval_test.py`(11-15)는 `wsl/eval_test.py` 의 `at_conf`(놓침·헛 박스)가 conf 0.25·IoU 0.45 로 세어지는지 본다 —
   Ultralytics 8.4.212 의 검증기는 혼동 행렬을 val 의 conf 0.001·IoU 0.5 로 세서, 같은 119장에서 헛 박스가 에러 없이 20 → 988 이
   됐다(mAP 는 8.4.142 와 같았다 — docs/experiments.md '새 풀 프레임 데이터'). **Ultralytics 를 올리면 이 테스트부터 볼 것.** val 에

@@ -403,6 +403,55 @@ class _RequestGuard:
         await self.app(scope, receive, send)
 
 
+class _DailyBackup:
+    """DB 하루 사본(store.backup_daily)을 언제 뜰지 (2026-11-21).
+
+    켤 때 한 번 뜨고, 켜 둔 채 날이 바뀌면 그날 첫 변경 요청(GET·HEAD·OPTIONS 가 아닌 것 — _BackupOnWrite) 앞에서 한 번
+    더 뜬다. 전에는 켤 때만 떠서, 자정을 넘겨 켜 둔 검수 서버는 다시 켤 때까지 새 사본이 없었다(검수 사본의 11-20 작업 —
+    docs/next.md 6번). 변경 요청 앞이면 충분하다 — 그 전까지 DB 는 어제 끝 상태 그대로다(자정을 넘겨 도는 자동 라벨링
+    작업이 쓰는 몫만 다음 변경 요청 때의 사본에 섞인다). 동시에 들어온 요청에도 하나만 뜨게 잠근다. 실패해도 검수는
+    되어야 하므로 알리기만 하고 그날은 다시 시도하지 않는다(디스크가 찼을 때 저장마다 사본을 뜨려 들지 않게).
+    """
+
+    def __init__(self, store: Store, keep: int, label: str) -> None:
+        self.store, self.keep, self.label = store, keep, label
+        self.day = None                         # 마지막으로 사본을 확인한 날 (date)
+        self.lock = threading.Lock()
+
+    def due(self) -> bool:
+        return self.keep > 0 and datetime.now().date() != self.day
+
+    def run(self, why: str = "") -> Path | None:
+        if self.keep <= 0:
+            return None
+        with self.lock:
+            now = datetime.now()
+            if now.date() == self.day:          # 같이 기다리던 요청 — 앞의 것이 이미 떴다
+                return None
+            self.day = now.date()
+            try:
+                made = self.store.backup_daily(self.keep, now=now)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{self.label}] DB 백업 실패 (검수는 계속됩니다): {exc}")
+                return None
+        if made:
+            print(f"[{self.label}] DB 백업{why}: {made}")
+        return made
+
+
+class _BackupOnWrite:
+    """변경 요청 앞에서, 하루 사본이 밀렸으면(_DailyBackup.due) 먼저 뜬다. 하루에 한 요청만 기다린다 — 그 밖에는 날짜
+    비교 하나다. 프로젝트 앱마다 건다(탭 서버에서도 프로젝트마다 제 DB 를 뜬다). _RequestGuard 가 막은 요청은 오지 않는다."""
+
+    def __init__(self, app, daily: _DailyBackup) -> None:
+        self.app, self.daily = app, daily
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and scope["method"] not in _SAFE_METHODS and self.daily.due():
+            await run_in_threadpool(self.daily.run, " (날이 바뀜)")
+        await self.app(scope, receive, send)
+
+
 def _json_finite(v):
     """JSON 에 넣을 수 없는 수(NaN·±Infinity)를 글자로 바꾼다 — 422 응답의 detail.input 용."""
     if isinstance(v, float) and not math.isfinite(v):
@@ -455,14 +504,16 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             if m is not None:
                 m.release()
 
-    # 서버를 켤 때 하루 한 번 DB 사본을 남긴다 (<DB 폴더>/backups/, 최근 backup.keep 개).
-    # 실패해도 검수는 되어야 하므로 알리기만 한다.
+    # DB 하루 사본 (<DB 폴더>/backups/, 최근 backup.keep 개) — 켤 때, 그리고 켜 둔 채 날이 바뀌면 그날 첫 변경 요청
+    # 앞에서(_DailyBackup·_BackupOnWrite, 2026-11-21). 실패해도 검수는 되어야 하므로 알리기만 한다.
     try:
-        made = store.backup_daily(int(cfg.get("backup.keep", 14)))
-        if made:
-            print(f"[{label}] DB 백업: {made}")
-    except Exception as exc:  # noqa: BLE001
-        print(f"[{label}] DB 백업 실패 (검수는 계속됩니다): {exc}")
+        keep = int(cfg.get("backup.keep", 14))
+    except (TypeError, ValueError) as exc:
+        print(f"[{label}] DB 백업 실패 (검수는 계속됩니다): backup.keep — {exc}")
+        keep = 0
+    daily = _DailyBackup(store, keep, label)
+    daily.run()
+    app.add_middleware(_BackupOnWrite, daily=daily)
 
     def score_of(boxes: list[Box]) -> float:
         """박스 목록의 검수 우선순위(uncertainty). 같은 자리 일괄 수정·되돌리기도 이것으로 다시 매긴다 (2026-11-05)."""
