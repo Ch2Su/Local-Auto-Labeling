@@ -32,8 +32,10 @@
   프로젝트도 Roboflow 가 남에게 라이선스하는 데이터셋에 넣을 수 있고, 올리는 사람이 권리를 보증해야 한다). 학습 세트 묶음을
   pod 로 보낼 때 섞이지 않게 볼 것.
 - **Claude 는 AI Hub 그림(`ah-*` 원본·크롭·대조 시트)을 열지 않는다 (11-23 사용자 결정 '열지 마세요').** Read 로 연 그림은 대화와
-  함께 모델 서버로 나간다 — 보조 작업(Agent)이 여는 것, 그 그림이 뜬 검수 화면의 화면 캡처, `tools/label_qa_claude.py`(크롭을
-  Claude API 로 보낸다)도 같은 길이다. 수치·코드로 확인하고, 눈으로 볼 것은 시트를 만들어 **경로만 알려** 사용자가 보게 한다.
+  함께 모델 서버로 나간다 — 보조 작업(Agent)이 여는 것, 그 그림이 뜬 검수 화면의 화면 캡처도 같은 길이다. 수치·코드로
+  확인하고, 눈으로 볼 것은 시트를 만들어 **경로만 알려** 사용자가 보게 한다. 저장소에서 그림을 인터넷으로 보내는 코드는
+  `tools/label_qa_claude.py`(크롭을 Claude API 로) 하나이고(11-23 에 찾아봄) 그날부터 그 그림을 건너뛴다(`local_only`) — 그런
+  도구를 새로 만들면 같은 규칙을 넣을 것.
 
 키는 환경 변수에만 둔다 — **`RUNPOD_API_KEY` 같은 키 값을 읽거나 출력하지 말 것.**
 
@@ -160,7 +162,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-22 에 468개·52초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-23 에 476개·59초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).

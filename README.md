@@ -1116,7 +1116,7 @@ ltrb 거리의 L1 손실에 곱해집니다. 0 으로 두면 에러 없이 학�
 ## 회귀 테스트
 
 `tests/` 에 자동 테스트가 있습니다(2026-11-12). 코드를 고친 뒤 돌리면, 전에 고친 버그와 문서에 적어 둔 규칙이 다시 깨졌는지
-1분 안에 알려 줍니다(2026-11-20 에 428개·46초쯤). **실제 데이터는 건드리지 않습니다** — DB·설정·카메라 등록 파일을 임시 폴더에
+1분 안에 알려 줍니다(2026-11-23 에 476개·59초쯤). **실제 데이터는 건드리지 않습니다** — DB·설정·카메라 등록 파일을 임시 폴더에
 만들어 쓰고, GPU·모델·학습은 쓰지 않습니다.
 
 화면 코드(JS)를 돌리는 테스트(`test_js_*.py`)는 node 가 필요합니다. 차례로 찾습니다 — 환경 변수 `NODE_BIN`, PATH 의 `node`,
@@ -1159,9 +1159,11 @@ pytest 는 기본 설치에 없어서 처음 한 번만 깝니다.
 | `test_tiling.py` | 타일 추론의 합치기(`tiling.merge_cross`) — 차량 클래스끼리는 클래스가 달라도 겹치면 신뢰도 높은 쪽 하나만 남고, 사람과 탈것·덜 겹친 차는 둘 다 남는가. 통째 자동 라벨링의 같은 정리(`tiling.cross_class_keep`)가 같은 클래스는 건드리지 않고 차량 규칙만 타일 쪽과 같은가(무작위 검출 400벌로 견줌). 모델·GPU 없이 검출 배열만으로 봅니다 |
 | `test_eval_test.py` | pod·WSL 평가 스크립트(`wsl/eval_test.py`)가 놓침·헛 박스를 Ultralytics 버전과 상관없이 conf 0.25·IoU 0.45 로 세는가 — 8.4.212 는 그냥 두면 conf 0.001 로 셉니다. Ultralytics 의 혼동 행렬 클래스만 씁니다(모델·GPU 없이) |
 | `test_import_aihub_pm.py` | AI Hub 개인형 이동장치 프레임 넣기(`tools/import_aihub_pm.py`) — 탄 사람 + 탈것을 한 박스로 그린 AI Hub 박스를 그대로 넣지 않고 단서로만 쓰는가(모델이 못 찾은 탈것·탄 사람의 후보 자리, 클래스 고치기), 틀린 줄(NaN·화면 밖·같은 물체에 또 하나) 버리기, 같은 카메라 자리의 주간·야간 프레임을 한 장만 고르는가, 넣은 파일·카메라 등록·검수 대기 행과 실패했을 때 되돌리기. 작은 가짜 데이터와 가짜 모델로 끝까지 돌립니다 |
+| `test_label_qa_claude.py` | 후보 크롭을 Claude API 로 보내는 `tools/label_qa_claude.py` 가 **밖으로 보내면 안 되는 그림(AI Hub — 출처 `aihub_pm` 이거나 카메라 `ah-NNNN`)을 싣지 않는가** — 후보·대조군 어디에도, `--dry-run` 의 크롭에도, 전에 남긴 `items.json` 의 항목에도. API 는 부르지 않습니다(가짜 `anthropic` 모듈이 요청에 실린 그림의 색을 받아 적습니다) |
 
 테스트가 보지 않는 것: 브라우저 화면 조작, 실제 학습·추론, WSL·Runpod 스크립트(위 `eval_test.py` 의 문턱 고정만 봅니다),
-`tools/` 의 도구 대부분(위 표에 나온 `label_qa.py`·`build_subset_dataset.py`·`import_aihub_pm.py`·자동 고르기만 봅니다).
+`tools/` 의 도구 대부분(위 표에 나온 `label_qa.py`·`build_subset_dataset.py`·`import_aihub_pm.py`·자동 고르기와,
+`label_qa_claude.py` 가 보내면 안 되는 그림을 빼는 것만 봅니다).
 `tools/test_baseline.py`·`test_tiles.py` 는 이름만 `test_` 인 측정 도구입니다(`pytest.ini` 가 `tests/` 만 모읍니다).
 
 버그를 고치면 그 버그를 다시 내는 입력을 테스트로 남깁니다.
@@ -1224,7 +1226,7 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
   scheduled_stop.py    정해진 시각에 학습 정상 중단
   test_baseline.py     지금 라벨로 test 점수를 다시 잰다 (DB 읽기 전용)
   label_qa.py          라벨과 모델 예측이 어긋나는 곳을 뽑는다 (DB 읽기 전용)
-  label_qa_claude.py   위 후보를 Claude API 로 거르는 파일럿 (API 키와 anthropic 패키지 필요)
+  label_qa_claude.py   위 후보를 Claude API 로 거르는 파일럿 (API 키와 anthropic 패키지 필요, AI Hub 그림 ah-* 은 보내지 않음)
   test_tiles.py        타일로 잘라 추론한 것과 통째 추론을 test 로 비교한다 (DB 읽기 전용)
   extract_frames.py    영상에서 프레임을 뽑아 unlabeled/<카메라>/ 로 (docs/provenance.md — 눈으로 골라 넣으려면
                        검수 UI 의 '영상 캡처' 탭. 뽑는 방식·이름은 같다)

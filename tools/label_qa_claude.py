@@ -24,6 +24,12 @@ missing 후보는 '모델은 확신하는데 라벨이 없는 곳'이다. 눈으
 
 **`ANTHROPIC_BASE_URL` 을 따르지 않는다.** Claude Code 안에서 실행하면 이 변수가 앱 쪽
 주소로 잡혀 있어, SDK 기본 동작대로면 API 키가 그쪽으로 간다. `--base-url` 로만 바꾼다.
+
+**밖으로 보내면 안 되는 그림은 뺀다 (2026-11-23).** 이 도구는 그림을 PC 밖(Claude API)으로 보낸다.
+AI Hub 에서 받은 그림(source `aihub_pm`, 카메라 `ah-NNNN`)은 약관이 승인 없는 제3자 제공을 막고
+국외 반출에 합의를 요구해서(docs/provenance.md '공개 데이터셋') 사용자가 'Claude 는 AI Hub 그림을
+열지 않는다' 고 정했다. 그래서 그 그림의 후보는 건너뛰고 대조군으로도 쓰지 않는다 — `--dry-run` 도
+그 크롭을 만들지 않는다. 끄는 옵션은 없다(`local_only`). 그 후보는 사람이 직접 본다.
 """
 
 from __future__ import annotations
@@ -35,6 +41,7 @@ import io
 import json
 import os
 import random
+import re
 import sqlite3
 import sys
 import threading
@@ -57,6 +64,17 @@ PRICES = {
 VERDICTS = ["missing", "already_labeled", "depiction", "not_object", "unsure"]
 CROP = 512
 SIDE_BUCKETS = [(0, 32, "<32px"), (32, 64, "32-64px"), (64, 10**9, ">=64px")]
+
+# 밖으로 보내면 안 되는 그림 (머리말 — 2026-11-23 사용자 결정). 넣는 도구 `tools/import_aihub_pm.py` 의 `SOURCE`·`KEY_RE` 와
+# 같아야 한다(tests/test_label_qa_claude.py 가 견준다). 출처와 카메라 키 **어느 쪽이든** 걸리면 뺀다 — 몇 장만 다른 카메라로
+# 옮기면 키는 바뀌고 출처는 남는다.
+LOCAL_ONLY_SOURCES = frozenset({"aihub_pm"})
+LOCAL_ONLY_CAMERA = re.compile(r"^ah-\d{4,}$")
+
+
+def local_only(source: str | None, camera: str | None) -> bool:
+    """이 그림을 PC 밖으로 보내면 안 되는가."""
+    return (source or "") in LOCAL_ONLY_SOURCES or bool(LOCAL_ONLY_CAMERA.match(camera or ""))
 
 SYSTEM_TMPL = """You audit bounding-box labels of an object-detection dataset. Most images are CCTV or street scenes; some are photos and video frames.
 Label classes: {classes}.
@@ -160,13 +178,23 @@ def iou(a, b) -> float:
 
 
 def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
-    """후보 + 대조군. 박스는 원본 픽셀 xyxy. hide_gt 는 초록으로 그리지 않을 라벨 번호."""
+    """후보 + 대조군. 박스는 원본 픽셀 xyxy. hide_gt 는 초록으로 그리지 않을 라벨 번호.
+
+    돌려주는 것: (items, images, gt, held). held 는 밖으로 보내면 안 되는 승인 이미지의 id 들이다(`local_only`) — 그 그림은
+    images·gt 에 **넣지 않는다**(그릴 수도, 대조군으로 뽑힐 수도 없게). 그 그림의 후보는 items 에서도 뺀다.
+    """
     con = sqlite3.connect(f"file:{cfg.db.as_posix()}?mode=ro", uri=True)
     names = dict(con.execute("SELECT idx, name FROM classes"))
     set_classes([names[i] for i in sorted(names)])
     images = {}
-    for iid, path, w, h, split in con.execute(
-            "SELECT id, path, width, height, split FROM images WHERE status='approved'"):
+    held = set()
+    cols = {r[1] for r in con.execute("PRAGMA table_info(images)")}
+    camera_col = "camera" if "camera" in cols else "NULL"     # 카메라 열이 생기기(11-03) 전의 DB — 출처로만 가른다
+    for iid, path, w, h, split, source, camera in con.execute(
+            f"SELECT id, path, width, height, split, source, {camera_col} FROM images WHERE status='approved'"):
+        if local_only(source, camera):
+            held.add(iid)
+            continue
         # 픽셀 좌표는 EXIF 회전을 적용한 화면 기준이다 — label_qa 의 후보 박스가 그렇다.
         # DB 의 width/height 는 회전 전 크기라 회전 사진(정사각 아닌 4장)에서 어긋난다.
         if Path(path).exists():
@@ -176,18 +204,27 @@ def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
     for iid, c, cx, cy, w, h in con.execute(
             "SELECT b.image_id, b.cls, b.cx, b.cy, b.w, b.h FROM boxes b "
             "JOIN images i ON i.id = b.image_id WHERE i.status='approved' ORDER BY b.id"):
-        im = images[iid]
+        im = images.get(iid)
+        if im is None:              # 밖으로 보내지 않는 그림의 라벨
+            continue
         gt[iid].append((names[c], [(cx - w / 2) * im["W"], (cy - h / 2) * im["H"],
                                    (cx + w / 2) * im["W"], (cy + h / 2) * im["H"]]))
     con.close()
 
-    cands = [r for r in csv.DictReader(open(qa_dir / "candidates.csv", encoding="utf-8-sig"))
-             if r["kind"] == "missing"]
+    listed = [r for r in csv.DictReader(open(qa_dir / "candidates.csv", encoding="utf-8-sig"))
+              if r["kind"] == "missing"]
+    cands = [r for r in listed if int(r["image_id"]) not in held]
+    if len(cands) < len(listed):
+        kept = {r["image_id"] for r in listed} - {r["image_id"] for r in cands}
+        print(f"  [알림] 밖으로 보내지 않는 그림(AI Hub `ah-*`) {len(kept)}장의 후보 {len(listed) - len(cands)}건은 "
+              "뺍니다 — 이 후보는 사람이 직접 봅니다.")
     if not cands and n_controls:    # 대조군 크기·신뢰도를 후보에서 빌리므로 만들 수 없다 (11-05 — rng.choice 가 IndexError)
-        print(f"  [알림] {qa_dir / 'candidates.csv'} 에 missing 후보가 없습니다(--dup-only 결과?) — 대조군도 만들지 않습니다.")
+        print(f"  [알림] {qa_dir / 'candidates.csv'} 에 보낼 missing 후보가 없습니다(--dup-only 결과?) — 대조군도 만들지 않습니다.")
         n_controls = 0
     items = []
-    for n, r in enumerate(cands):
+    for n, r in enumerate(listed):  # 번호는 candidates.csv 의 missing 줄 순서 — 빼는 그림이 있어도 같은 후보는 같은 키다
+        if int(r["image_id"]) in held:
+            continue
         items.append({"key": f"cand{n:04d}", "group": "candidate", "image_id": int(r["image_id"]),
                       "box": [float(v) for v in r["pred_box"].split()], "cls": r["pred_cls"],
                       "conf": float(r["conf"]), "hide_gt": None, "split": r["split"]})
@@ -245,7 +282,7 @@ def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
     for it in items:
         b = it["box"]
         it["side_px"] = round(min(b[2] - b[0], b[3] - b[1]), 1)
-    return items, images, gt
+    return items, images, gt, held
 
 
 def render(item, images, gt):
@@ -391,11 +428,16 @@ def main():
     items_file = out / "items.json"
     if items_file.exists():     # 다시 돌려도 같은 대조군을 쓴다
         items = json.loads(items_file.read_text(encoding="utf-8"))
-        _, images, gt = build_items(cfg, qa_dir, 0, args.seed)
+        _, images, gt, held = build_items(cfg, qa_dir, 0, args.seed)
     else:
-        items, images, gt = build_items(cfg, qa_dir, args.controls, args.seed)
+        items, images, gt, held = build_items(cfg, qa_dir, args.controls, args.seed)
         if items:               # 빈 목록을 남기면 다음 실행도 그것을 읽는다
             items_file.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    # 밖으로 보내면 안 되는 그림의 항목 — 새로 만든 목록에는 없고, 이 규칙(11-23) 전에 남긴 items.json 에는 있을 수 있다.
+    kept = Counter(it["group"] for it in items if it["image_id"] in held)
+    if kept:
+        items = [it for it in items if it["image_id"] not in held]
+        print(f"[알림] 밖으로 보내지 않는 그림(AI Hub `ah-*`)의 항목 {sum(kept.values())}건을 뺍니다: {dict(kept)}")
     # 지금 DB 에 승인 이미지가 없거나 파일이 없는 항목은 그릴 수 없다 — 그 뒤 지우거나 내린 이미지다 (11-05: 09-18 items.json
     # 446건 중 123건이 그래서 render 가 KeyError 로 죽었다). items.json 은 그대로 두고 이번 실행에서만 뺀다.
     def drawable(it) -> bool:
@@ -407,7 +449,8 @@ def main():
         items = [it for it in items if drawable(it)]
         print(f"[알림] 지금 DB 에 승인 이미지(또는 그 파일)가 없는 항목 {sum(gone.values())}건을 뺍니다: {dict(gone)}")
     if not items:
-        sys.exit(f"거를 항목이 없습니다 ({qa_dir}) — missing 후보가 없거나(--dup-only 결과?) 모두 지금 DB 에 없는 이미지입니다.")
+        sys.exit(f"거를 항목이 없습니다 ({qa_dir}) — missing 후보가 없거나(--dup-only 결과?), 모두 지금 DB 에 없는 이미지이거나, "
+                 "밖으로 보내지 않는 그림의 후보뿐입니다.")
     print(f"결과 폴더 {out}")
     print(f"항목 {len(items)}: " + ", ".join(f"{k} {v}" for k, v in Counter(it['group'] for it in items).items()))
 
