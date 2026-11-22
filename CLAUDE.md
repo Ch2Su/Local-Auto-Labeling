@@ -27,6 +27,8 @@
   test 점수를 쓸 수 없게 된다.
 - 보관 폴더 `E:\local_auto_labeling_archive\` 를 지우거나 옮기는 일 — 11-10 에 비운 옛 데이터가 있고, ROAD PLUS 구간 영상
   (`videos/`)은 거기가 유일한 사본이다.
+- **AI Hub 에서 받은 그림(카메라 `ah-*`, 11-22)을 밖으로 올리는 일**(Runpod pod·Roboflow·git) — AI Hub 약관이 승인 없는 제3자
+  제공을 막고 국외 반출에 합의를 요구한다(docs/provenance.md '공개 데이터셋'). 학습 세트 묶음을 pod 로 보낼 때 섞이지 않게 볼 것.
 
 키는 환경 변수에만 둔다 — **`RUNPOD_API_KEY` 같은 키 값을 읽거나 출력하지 말 것.**
 
@@ -141,15 +143,15 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 
 도구마다 하는 일·옵션·조심할 것은 [tools/CLAUDE.md](tools/CLAUDE.md) 의 표에 있다(2026-11-17 에 이 파일에서 옮겼다 — `tools/` 의
 파일을 다룰 때는 저절로 읽힌다). **도구를 돌리기만 할 때도 먼저 그 표에서 그 도구의 줄을 읽을 것.** 있는 도구:
-`test_baseline`·`label_qa`·`label_qa_claude`·`merge_class`·`import_o365`·`import_virat`·`import_roadplus`·`ovd_propose`·`import_proposals`·`crop_images`·`mask_images`·`finetune`·`probe_scale`·`extract_frames`·`auto_capture`·`legacy_groups`·`domain_review`·`prune_seed_json`·`build_subset_dataset`·`scheduled_stop`. 늘 지킬 것:
-- **VIRAT·Objects365 를 넣은 뒤 `labeler.py label --all` 금지**(넣어 둔 박스를 예측으로 덮는다).
+`test_baseline`·`label_qa`·`label_qa_claude`·`merge_class`·`import_o365`·`import_virat`·`import_aihub_pm`·`import_roadplus`·`ovd_propose`·`import_proposals`·`crop_images`·`mask_images`·`finetune`·`probe_scale`·`extract_frames`·`auto_capture`·`legacy_groups`·`domain_review`·`prune_seed_json`·`build_subset_dataset`·`scheduled_stop`. 늘 지킬 것:
+- **VIRAT·Objects365·AI Hub(`import_aihub_pm`)를 넣은 뒤 `labeler.py label --all` 금지**(넣어 둔 박스를 예측으로 덮는다).
 - 그림 파일을 바꾸는 도구(`crop_images`·`import_virat --recrop`)를 돌린 뒤에는 검수 화면을 새로 고칠 것.
 - `import_proposals --apply` 는 승인 이미지를 검수 대기로 돌린다. `mask_images` 는 test 이미지에서 멈춘다.
 
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-20 에 428개·46초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-22 에 468개·52초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
@@ -220,6 +222,10 @@ width/height 는 회전 전 원시 크기다**(`labeler.py check` 도 원시 크
   (`runs/test_baseline/history.jsonl`, docs/experiments.md)는 새 test 와 견주지 않는다.
 - 운영 가중치(`models/best.pt` — 아래 '가중치')는 그대로 두고 새 이미지의 자동 라벨링에 쓴다. responder·cone 은 모르니 그 둘은
   OWLv2 후보(`tools/ovd_propose.py` → `tools/import_proposals.py`)나 손으로 채운다.
+- **11-22 에 AI Hub '개인형 이동장치 안전 데이터' 100장을 검수 대기로 넣었다**(사용자 결정 — 시범. source `aihub_pm`, 카메라
+  `ah-0001`–`ah-0100`, `tools/import_aihub_pm.py`, 경위·수치는 docs/provenance.md '공개 데이터셋'). 박스는 운영 모델 예측 + AI Hub
+  단서로 넣은 후보(출처 `aihub`)라 전부 사람이 봐야 한다. **카메라 키는 '화면이 다른 것만 골랐다' 는 어림이다** — 이 데이터에는
+  카메라 번호가 없고 같은 장소를 여러 자리에서 찍었다. 분할을 정할 때 `ah-*` 를 한쪽에 둘지부터 사용자와 정할 것.
 - **휴지통 비우기는 원본 파일까지 지운다**(`tidy.purge_trashed`) — 새로 모은 사진은 다른 사본이 없을 수 있으니 비우기 전에 물을 것.
 - **클래스는 10개다** — 11-09 에 responder(8, 출동 차량)·cone(9, 라바콘)을 붙였다(사용자 결정 — DetectView 유고 단서용, 판정은
   docs/label-rules.md '출동 차량·라바콘'). 그 전 8개: pickup 은 09-20 에 사용자가 검수 UI 에서 추가했고, 같은 날 추가한 van 은

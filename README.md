@@ -273,6 +273,8 @@ responder(출동 차량)·cone(라바콘)은 2026-11-09 에 붙였고 판정은 
 **`label --all` 은 조심하세요.** 이미 검수 대기인 이미지까지 다시 추론해 **그 라벨을 모델 예측으로
 덮어씁니다.** 검수 대기 중인 VIRAT 프레임(`tools/import_virat.py` 가 넣은 것, 2026-11-07)은 모델이 못 찾은
 VIRAT 박스까지 지워집니다 — 그 프레임을 지금 모델로 다시 라벨링하려면 `tools/import_virat.py --relabel` 을 쓰세요.
+AI Hub 개인형 이동장치 프레임(`tools/import_aihub_pm.py` 가 넣은 것, 2026-11-22 — 카메라 `ah-…`)도 같습니다: 모델이 못 찾은
+탈것·탄 사람 자리에 넣어 둔 후보 박스가 지워집니다.
 옛 라벨은 변경 내역에 남지만 되돌리려면 이미지마다 해야 합니다. 검수 UI 의 자동 라벨링 버튼은 미라벨 이미지만
 추론합니다.
 
@@ -1156,9 +1158,10 @@ pytest 는 기본 설치에 없어서 처음 한 번만 깝니다.
 | `test_promote.py` | 학습이 끝났을 때 운영 가중치 바꾸기 — 끝까지 간 학습만 올리고(직전 것은 `best.prev.pt`), **중단한 학습은 `models/` 를 건드리지 않는가**. Windows·WSL 학습이 같은 규칙인가. 마지막 epoch 에서 멈춘 학습은 끝난 학습으로 올리는가, 운영 가중치가 없을 때는 멈춘 학습도 올리는가, CLI 요약의 가중치 줄 |
 | `test_tiling.py` | 타일 추론의 합치기(`tiling.merge_cross`) — 차량 클래스끼리는 클래스가 달라도 겹치면 신뢰도 높은 쪽 하나만 남고, 사람과 탈것·덜 겹친 차는 둘 다 남는가. 통째 자동 라벨링의 같은 정리(`tiling.cross_class_keep`)가 같은 클래스는 건드리지 않고 차량 규칙만 타일 쪽과 같은가(무작위 검출 400벌로 견줌). 모델·GPU 없이 검출 배열만으로 봅니다 |
 | `test_eval_test.py` | pod·WSL 평가 스크립트(`wsl/eval_test.py`)가 놓침·헛 박스를 Ultralytics 버전과 상관없이 conf 0.25·IoU 0.45 로 세는가 — 8.4.212 는 그냥 두면 conf 0.001 로 셉니다. Ultralytics 의 혼동 행렬 클래스만 씁니다(모델·GPU 없이) |
+| `test_import_aihub_pm.py` | AI Hub 개인형 이동장치 프레임 넣기(`tools/import_aihub_pm.py`) — 탄 사람 + 탈것을 한 박스로 그린 AI Hub 박스를 그대로 넣지 않고 단서로만 쓰는가(모델이 못 찾은 탈것·탄 사람의 후보 자리, 클래스 고치기), 틀린 줄(NaN·화면 밖·같은 물체에 또 하나) 버리기, 같은 카메라 자리의 주간·야간 프레임을 한 장만 고르는가, 넣은 파일·카메라 등록·검수 대기 행과 실패했을 때 되돌리기. 작은 가짜 데이터와 가짜 모델로 끝까지 돌립니다 |
 
 테스트가 보지 않는 것: 브라우저 화면 조작, 실제 학습·추론, WSL·Runpod 스크립트(위 `eval_test.py` 의 문턱 고정만 봅니다),
-`tools/` 의 도구 대부분(위 표에 나온 `label_qa.py`·`build_subset_dataset.py`·자동 고르기만 봅니다).
+`tools/` 의 도구 대부분(위 표에 나온 `label_qa.py`·`build_subset_dataset.py`·`import_aihub_pm.py`·자동 고르기만 봅니다).
 `tools/test_baseline.py`·`test_tiles.py` 는 이름만 `test_` 인 측정 도구입니다(`pytest.ini` 가 `tests/` 만 모읍니다).
 
 버그를 고치면 그 버그를 다시 내는 입력을 테스트로 남깁니다.
