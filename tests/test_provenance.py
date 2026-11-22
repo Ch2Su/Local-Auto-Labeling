@@ -13,7 +13,7 @@ import pytest
 
 from autolabel.capture import frame_name, notime_name
 from autolabel.provenance import (CameraExists, CameraMissing, add_camera, capture_time, edit_camera, load_cameras,
-                                  normalize_tz, parse_tz, remove_cameras, tz_text)
+                                  normalize_tz, parse_tz, remove_cameras, set_splits, tz_text)
 
 KST = parse_tz("+09:00")
 
@@ -300,3 +300,117 @@ def test_a_refused_edit_writes_nothing(reg, values, new_key, error):
 def test_edit_unknown_camera(reg):
     with pytest.raises(CameraMissing):
         edit_camera(reg, "cam-77", {"mount": "wall"})
+
+
+# ----------------------------------------------------------------- 여러 카메라의 고정 분할 한 번에 (2026-11-23)
+
+MANY = SAMPLE + """\
+  # 도구가 등록한 공개 데이터셋
+  ds-0001:
+    kind: dataset
+    place: 공개 데이터 영상 1
+    split:   # 아직 안 정함
+    note: 메모
+  ds-0002:
+    kind: dataset
+    place: 공개 데이터 영상 2
+    note: split 줄이 없다
+  ds-0003:
+    kind: dataset
+    place: 공개 데이터 영상 3
+    split: train
+"""
+
+
+@pytest.fixture(params=["\n", "\r\n"], ids=["lf", "crlf"])
+def many(request, tmp_path) -> Path:
+    p = tmp_path / "data" / "cameras.yaml"
+    p.parent.mkdir()
+    p.write_bytes(MANY.replace("\n", request.param).encode("utf-8"))
+    return p
+
+
+def splits_of(path: Path) -> dict:
+    return {k: c.split for k, c in load_cameras(path).items()}
+
+
+def test_set_splits_changes_only_those_split_lines_with_one_backup(many, tmp_path):
+    original = many.read_bytes()
+    changed = set_splits(many, {"ds-0001": "train", "ds-0002": "train", "ds-0003": "train"}, backup_dir=tmp_path / "bk")
+    assert changed == ["ds-0001", "ds-0002"]                    # 이미 train 인 ds-0003 은 건드리지 않는다
+    after = many.read_bytes()
+    assert splits_of(many) == {"cam-01": None, "cam-02": "test", "ds-0001": "train", "ds-0002": "train", "ds-0003": "train"}
+    gone, new = changed_lines(original, after)
+    assert gone == ["    split:   # 아직 안 정함"]
+    assert new == ["    split: train  # 아직 안 정함"]           # 줄 끝 주석은 남는다 (ds-0002 의 새 줄은 ds-0003 의 줄과 같은 글자)
+    lines = after.decode("utf-8").splitlines()
+    at = lines.index("    place: 공개 데이터 영상 2")
+    assert lines[at + 1:at + 3] == ["    split: train", "    note: split 줄이 없다"]      # 없던 칸은 note 앞에
+    assert len(lines) == len(original.decode("utf-8").splitlines()) + 1
+    assert only_one_newline_style(after)
+    backups = list((tmp_path / "bk").glob("cameras_*.yaml"))
+    assert len(backups) == 1 and backups[0].read_bytes() == original       # 카메라 수와 상관없이 쓰기 전 파일 하나
+
+
+def test_set_splits_writes_what_edit_camera_would(many, tmp_path):
+    one_by_one = tmp_path / "one.yaml"
+    one_by_one.write_bytes(many.read_bytes())
+    set_splits(many, {"ds-0001": "train", "ds-0002": "val", "cam-02": None})
+    for key, value in (("ds-0001", "train"), ("ds-0002", "val"), ("cam-02", "")):
+        edit_camera(one_by_one, key, {"split": value})
+    assert many.read_bytes() == one_by_one.read_bytes()
+    assert splits_of(many)["cam-02"] is None and b"crop: [0, 0, 100, 100]" in many.read_bytes()
+
+
+def test_set_splits_with_nothing_to_change_writes_nothing(many, tmp_path):
+    original = many.read_bytes()
+    assert set_splits(many, {"ds-0003": "train", "cam-01": None, "cam-02": "test"}, backup_dir=tmp_path / "bk") == []
+    assert set_splits(many, {}, backup_dir=tmp_path / "bk") == []
+    assert many.read_bytes() == original and not (tmp_path / "bk").exists()
+
+
+def test_set_splits_dry_run_checks_but_does_not_write(many, tmp_path):
+    original = many.read_bytes()
+    assert set_splits(many, {"ds-0001": "train", "cam-01": "val"}, backup_dir=tmp_path / "bk", dry_run=True) == [
+        "ds-0001", "cam-01"]
+    assert many.read_bytes() == original and not (tmp_path / "bk").exists()
+
+
+@pytest.mark.parametrize("splits, error, said", [
+    ({"ds-0001": "train", "ds-9999": "train"}, CameraMissing, "ds-9999"),      # 하나라도 없는 키면 하나도 안 고친다
+    ({"ds-0001": "train", "ds-0002": "holdout"}, ValueError, r"^split 은 비우거나"),   # 줄을 고치기 전에 값부터 본다
+    ({"ds-0001": 1}, ValueError, "글자로"),
+])
+def test_a_refused_set_splits_writes_nothing(many, splits, error, said):
+    original = many.read_bytes()
+    with pytest.raises(error, match=said):
+        set_splits(many, splits)
+    assert many.read_bytes() == original
+
+
+def test_set_splits_writes_nothing_if_anything_else_would_change(many, monkeypatch):
+    """다시 읽어 확인하는 그물 — 줄을 고치는 코드가 다른 카메라의 값까지 건드리면(버그) 아무것도 쓰지 않는다."""
+    from autolabel import provenance
+
+    real = provenance._edit_camera_text
+
+    def clumsy(old, key, edits, new_key):
+        return real(old, key, edits, new_key).replace("mount: pole", "mount: wall")
+
+    monkeypatch.setattr(provenance, "_edit_camera_text", clumsy)
+    original = many.read_bytes()
+    with pytest.raises(ValueError, match="기대와 달라"):
+        set_splits(many, {"ds-0001": "train"})
+    assert many.read_bytes() == original
+
+
+def test_set_splits_stops_whole_on_an_entry_it_cannot_edit(tmp_path):
+    """한 줄 꼴 항목은 글자로 못 고친다 — 그 하나 때문에 다른 카메라만 고쳐 두지 않는다."""
+    p = tmp_path / "cameras.yaml"
+    p.write_text("cameras:\n  cam-01:\n    kind: cctv\n    place: 가\n    split:\n"
+                 "  flow-1: {kind: cctv, place: 나}\n", "utf-8")
+    original = p.read_bytes()
+    with pytest.raises(ValueError):
+        set_splits(p, {"cam-01": "train", "flow-1": "train"})
+    assert p.read_bytes() == original and not list(tmp_path.glob("*.tmp"))
+    assert set_splits(p, {"cam-01": "train"}) == ["cam-01"] and splits_of(p) == {"cam-01": "train", "flow-1": None}

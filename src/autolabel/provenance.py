@@ -22,7 +22,7 @@ import secrets
 import shutil
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
@@ -493,6 +493,67 @@ def edit_camera(path: Path, key: str, values: dict, *, new_key: str | None = Non
         finally:
             tmp.unlink(missing_ok=True)
         return after[final], list(edits) + (["key"] if new_key else [])
+
+
+def set_splits(path: Path, splits: dict[str, str | None], *, backup_dir: Path | None = None,
+               dry_run: bool = False) -> list[str]:
+    """여러 카메라의 고정 분할(`split:`)만 한 번에 고친다 (2026-11-23 — 공개 데이터셋의 카메라 백 대를 train 으로 고정하려고).
+
+    edit_camera 를 카메라마다 부르면 쓰기 전 사본이 카메라 수만큼 생기고, 도중에 멈추면 반만 고친 파일이 남는다. 여기서는
+    글자로 전부 고친 뒤 다시 읽어 **'그 카메라들의 split 만 바뀌고 나머지는 속성·순서까지 그대로'** 일 때만 사본 하나를
+    남기고 한 번에 바꿔 끼운다. 줄을 고치는 방식은 edit_camera 와 같다(`_edit_camera_text` — 있던 줄은 그 줄만, 없던 칸은
+    _FIELD_ORDER 자리에, 비우면 'split:'). 지금 값과 같은 카메라는 건드리지 않고, 바뀔 것이 없으면 쓰지 않는다.
+    하나라도 없는 키면 CameraMissing, 못 고치는 모양(한 줄 꼴 항목)이 하나라도 있으면 ValueError — 어느 쪽이든 아무것도
+    쓰지 않는다. dry_run 이면 확인까지만 한다.
+    **그 카메라의 이미지가 이미 다른 분할에 들어 있는지는 부르는 쪽이 본다**(이 모듈은 DB 를 모른다 — split.py 는 정한 분할을
+    옮기지 않아 카메라가 두 분할에 걸친다. 검수 서버의 카메라 고치기가 409 로 막는 것과 같은 일이다).
+    돌려주는 것: 바뀐(dry_run 이면 바뀔) 키들 — 준 순서대로.
+    """
+    want: dict[str, str | None] = {}
+    for k, s in splits.items():
+        key = str(k or "").strip()
+        if s is not None and not isinstance(s, str):
+            raise ValueError(f"{key}: split 은 글자로 적을 것")
+        s = (s or "").strip() or None
+        if s is not None and s not in SPLITS:
+            raise ValueError(f"split 은 비우거나 {'|'.join(SPLITS)} (지금 {s!r})")
+        want[key] = s
+    with _EDIT_LOCK:
+        if not path.exists():
+            raise CameraMissing(f"등록 파일이 없습니다: {path}")
+        old = path.read_bytes().decode("utf-8")        # 줄끝·BOM 을 그대로 두려고 바이트로
+        before = load_cameras(path)                    # 깨진 파일이면 ValueError — 손대지 않는다
+        missing = [k for k in want if k not in before]
+        if missing:
+            raise CameraMissing(f"등록돼 있지 않은 카메라: {', '.join(missing)}")
+        changed = [k for k, s in want.items() if before[k].split != s]
+        if not changed:
+            return []
+        raw_before = (yaml.safe_load(old) or {}).get("cameras") or {}
+        new = old
+        for k in changed:
+            new = _edit_camera_text(new, k, {"split": want[k]}, None)
+        tmp = path.with_name(f"{path.name}.{secrets.token_hex(3)}.tmp")
+        try:
+            tmp.write_text(new, encoding="utf-8", newline="")
+            try:
+                after = load_cameras(tmp)
+                raw_after = (yaml.safe_load(new) or {}).get("cameras") or {}
+            except (ValueError, yaml.YAMLError) as exc:
+                raise ValueError(f"고친 결과를 읽지 못해 아무것도 쓰지 않았습니다 — {exc}") from exc
+            moved = set(changed)
+            ok = (list(after) == list(before) and list(raw_after) == list(raw_before)
+                  and all(after[k] == (replace(before[k], split=want[k]) if k in moved else before[k]) for k in before)
+                  and all(raw_after[k] == ({**(raw_before[k] or {}), "split": want[k]} if k in moved else raw_before[k])
+                          for k in raw_before))
+            if not ok:
+                raise ValueError("고친 결과를 다시 읽으니 기대와 달라 아무것도 쓰지 않았습니다 — 고치려는 카메라의 줄 모양(한 줄 꼴·"
+                                 f"들여쓰기)을 {path.name} 에서 손으로 확인할 것")
+            if not dry_run:
+                _backup_and_swap(path, tmp, backup_dir)
+        finally:
+            tmp.unlink(missing_ok=True)
+    return changed
 
 
 def _line_comment(text: str) -> str:

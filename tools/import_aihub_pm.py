@@ -46,6 +46,13 @@ PM 박스는 '여기에 이 종류의 탈것과 탄 사람이 있다' 는 단서
 등록한다(`provenance.add_camera` — kind dataset, place `AI Hub PM 영상 <영상 id>`, 쓰기 전 파일은 `backups/cameras_<시각>.yaml`
 에 한 번). 분할은 카메라째라, 같은 자리의 다른 영상을 나중에 넣게 되면 같은 키로 넣어야 한다(지금은 같은 화면이면 건너뛴다).
 
+**분할 — AI Hub 그림은 전부 train 이다 (2026-11-23 사용자 결정).** 카메라 키가 어림이라 같은 장소가 train 과 평가셋에 갈릴 수
+있는데, Claude 는 이 그림을 열지 않기로 해서(약관 — 아래 '주의') 눈으로 확인할 수 없다. 그래서 새로 등록하는 카메라에
+`split: train` 을 적고(`SPLIT`), 이미 등록된 것·사람이 손으로 등록한 `ah-NNNN` 은 `--pin-train` 으로 고정한다: 고정이 비어
+있는 것만 train 으로 바꾸고(`provenance.set_splits` — 한 번에, 쓰기 전 파일은 `backups/` 에 하나), 사람이 val·test 로 적어 둔
+것과 이미 train 아닌 분할에 이미지가 든 카메라는 바꾸지 않고 알린다(분할은 정한 것을 옮기지 않아 카메라가 두 분할에 걸친다).
+기본은 보기만이고 `--apply` 를 붙여야 고친다. 색인·모델·AI Hub 폴더는 쓰지 않는다.
+
 **쓰는 것.** 그림은 AI Hub 의 JPEG 바이트 그대로 `<unlabeled>/ah-NNNN/<AI Hub 이름>.jpg` 에 쓰고(풀린 폴더에 없으면 zip 에서
 그 항목만 꺼낸다), DB 에 source='aihub_pm'·camera·status='pending' 으로 넣은 뒤 domain 을 'cctv' 로 정한다. 촬영 시각은
 모른다. 이 도구가 넣은 경로는 scan 이 이미 아는 경로라 건너뛴다. model_version 은 `<가중치 파일>+aihub`.
@@ -66,6 +73,7 @@ PM 박스는 '여기에 이 종류의 탈것과 탄 사람이 있다' 는 단서
     python tools/import_aihub_pm.py --device 0 --apply   # 시범 100장
     python tools/import_aihub_pm.py --scale 0.5          # 묶음마다 몫을 절반으로
     python tools/import_aihub_pm.py --reindex            # 라벨 색인을 다시 만든다
+    python tools/import_aihub_pm.py --pin-train          # 고정 안 된 ah-* 카메라를 본다 (--apply 를 붙이면 train 으로 고정)
 """
 
 from __future__ import annotations
@@ -96,7 +104,7 @@ from autolabel import tiling  # noqa: E402
 from autolabel.config import Config, resolve  # noqa: E402
 from autolabel.grouping import base_name  # noqa: E402
 from autolabel.predictor import build_class_map  # noqa: E402
-from autolabel.provenance import add_camera, load_cameras, remove_cameras  # noqa: E402
+from autolabel.provenance import add_camera, load_cameras, remove_cameras, set_splits  # noqa: E402
 from autolabel.scoring import image_uncertainty  # noqa: E402
 from autolabel.store import Store  # noqa: E402
 from autolabel.yolo_io import Box  # noqa: E402
@@ -105,6 +113,7 @@ AIHUB_ROOT = Path(r"E:\datasets\120.개인형 이동장치 안전 데이터\01.�
 SOURCE = "aihub_pm"          # images.source — 공개 데이터셋은 데이터셋 이름을 쓴다(docs/provenance.md 'DB 변경')
 ORIGIN = "aihub"             # boxes.origin — AI Hub 단서로 넣거나 클래스를 바꾼 박스
 RIGHTS = "AI Hub(NIA) 개인형 이동장치 안전 데이터 — AI 학습용으로만, 제3자 제공·국외 반출 금지"
+SPLIT = "train"              # 등록 파일의 고정 분할 — AI Hub 그림은 전부 train (2026-11-23 사용자 결정, 머리말 '분할')
 KEY_RE = re.compile(r"^ah-(\d{4,})$")
 # <영상 id>_<클립>_<프레임>_<C|B 기기>_<D|N 주야>_<F|R 날씨>_<0|1 연출>
 NAME_RE = re.compile(r"^([A-Z]\d{6})_(\d{3})_(\d{4})_([CB])_([DN])_([FR])_([01])$")
@@ -833,7 +842,7 @@ def apply(cfg: Config, store: Store, picks: list[Pick], version: str, stamp: str
         for n, p in enumerate(picks):
             add_camera(cfg.cameras, p.camera,
                        {"kind": "dataset", "place": f"AI Hub PM 영상 {p.video}", "mount": "unknown",
-                        "view": view_text(p.rel), "resolution": f"{p.w}x{p.h}", "rights": RIGHTS},
+                        "view": view_text(p.rel), "resolution": f"{p.w}x{p.h}", "rights": RIGHTS, "split": SPLIT},
                        backup_dir=backup_dir if n == 0 else None,        # 쓰기 전 파일은 한 번만 남긴다
                        comment=f"tools/import_aihub_pm.py {stamp}" if n == 0 else None)
             registered.append(p.camera)
@@ -889,6 +898,54 @@ def scaled(buckets, scale: float) -> tuple[Bucket, ...]:
     return tuple(Bucket(b.name, b.folders, b.kind, max(0, round(b.count * scale))) for b in buckets)
 
 
+def pin_plan(cfg: Config, store: Store) -> tuple[list[str], dict[str, str], dict[str, dict[str, int]]]:
+    """등록 파일의 `ah-NNNN` 카메라를 train 고정으로 보면 → (고정할 키들, {다른 분할로 고정된 키: 그 분할}, {막힌 키: {분할: 장수}}).
+
+    고정할 것은 **고정 분할이 비어 있는 카메라**뿐이다 — 사람이 val·test 로 적어 둔 것은 바꾸지 않는다. 비어 있어도 그 카메라의
+    이미지가 이미 train 아닌 분할에 들어 있으면 막는다: split.py 는 정한 분할을 옮기지 않아, 고정하면 그 카메라가 두 분할에
+    걸친다(검수 서버의 카메라 고치기가 409 로 막는 것과 같은 일). 휴지통 이미지도 센다(되살리면 그 분할 그대로다).
+    """
+    cams = {k: c for k, c in load_cameras(cfg.cameras).items() if KEY_RE.match(k)}
+    other = {k: c.split for k, c in cams.items() if c.split not in (None, SPLIT)}
+    unset = {k for k, c in cams.items() if c.split is None}
+    blocked: dict[str, dict[str, int]] = {}
+    with store.connect() as con:
+        for r in con.execute("SELECT camera, split, COUNT(*) AS n FROM images "
+                             "WHERE split IS NOT NULL AND split != ? GROUP BY camera, split", (SPLIT,)):
+            if r["camera"] in unset:
+                blocked.setdefault(r["camera"], {})[r["split"]] = int(r["n"])
+    return [k for k in cams if k in unset and k not in blocked], other, blocked
+
+
+def span(keys: list[str]) -> str:
+    return keys[0] if len(keys) == 1 else f"{keys[0]} … {keys[-1]}"
+
+
+def pin_train(cfg: Config, store: Store, *, write: bool) -> int:
+    """`--pin-train` — 고정이 비어 있는 `ah-NNNN` 카메라를 train 으로. 기본은 보기만, write 면 등록 파일을 고친다. → 종료 코드
+    (다른 분할로 고정돼 있거나 막힌 카메라가 있으면 1 — 사람이 볼 것이 남았다)."""
+    todo, other, blocked = pin_plan(cfg, store)
+    n_all = sum(1 for k in load_cameras(cfg.cameras) if KEY_RE.match(k))
+    print(f"등록 파일의 ah-* 카메라 {n_all}대: {SPLIT} 고정 {n_all - len(todo) - len(other) - len(blocked)} · "
+          f"고정할 것 {len(todo)} · 다른 분할로 고정 {len(other)} · 막힘 {len(blocked)}")
+    for k, s in sorted(other.items()):
+        print(f"  [알림] {k} 는 {s} 로 고정돼 있다 — 바꾸지 않았다(전부 {SPLIT} 이라는 결정과 다르다. 손으로 정할 것)")
+    for k, have in sorted(blocked.items()):
+        detail = ", ".join(f"{s} {n}장" for s, n in sorted(have.items()))
+        print(f"  [막힘] {k} 의 이미지가 이미 {detail} — 고정하지 않았다(고정하면 이 카메라가 두 분할에 걸친다)")
+    if todo:
+        changed = set_splits(cfg.cameras, {k: SPLIT for k in todo}, backup_dir=cfg.db.parent / "backups",
+                             dry_run=not write)
+        if write:
+            print(f"  {SPLIT} 으로 고정했다 {len(changed)}대: {span(changed)}  (쓰기 전 파일은 {cfg.db.parent / 'backups'}\\cameras_<시각>.yaml)")
+        else:
+            print(f"  {SPLIT} 으로 고정할 것 {len(changed)}대: {span(changed)}")
+            print(f"\n(보기만 했다. 고치려면 --pin-train --apply — {cfg.cameras} 의 split 줄만 바꾼다)")
+    elif not other and not blocked:
+        print("  고칠 것이 없다.")
+    return 1 if other or blocked else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--config", default=None)
@@ -902,10 +959,18 @@ def main() -> int:
     ap.add_argument("--reindex", action="store_true", help="라벨 색인을 다시 만든다")
     ap.add_argument("--no-sheet", action="store_true", help="대조 시트를 그리지 않는다")
     ap.add_argument("--apply", action="store_true", help="실제로 쓴다 (기본은 보기만)")
+    ap.add_argument("--pin-train", action="store_true",
+                    help="넣지 않고, 고정 분할이 비어 있는 ah-* 카메라를 train 으로 고정한다 (--apply 없이는 보기만)")
     args = ap.parse_args()
 
     cfg = Config.load(args.config)
     store = Store(cfg.db)
+    if args.pin_train:
+        return pin_train(cfg, store, write=args.apply)
+    loose, other, blocked = pin_plan(cfg, store)
+    if loose or other or blocked:
+        print(f"[알림] {SPLIT} 으로 고정되지 않은 ah-* 카메라 {len(loose) + len(other) + len(blocked)}대 — "
+              "`--pin-train` 으로 볼 것(AI Hub 그림은 전부 train 이다)")
     classes = store.get_classes()
     label_root = args.root / "1.Training" / "라벨링데이터"
     image_root = args.root / "1.Training" / "원천데이터"

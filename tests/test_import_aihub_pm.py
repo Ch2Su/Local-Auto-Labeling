@@ -377,7 +377,9 @@ def test_apply_writes_files_cameras_and_pending_rows(cfg, store, aihub, tmp_path
     assert n == 4 and manifest == tmp_path / "runs" / "aihub_pm" / "import_20261122_000000.tsv"
     cams = load_cameras(cfg.cameras)
     assert sorted(cams) == ["ah-0001", "ah-0002", "ah-0003", "ah-0004", "hw-01"]
-    assert cams["ah-0001"].kind == "dataset" and cams["ah-0001"].split is None
+    assert cams["ah-0001"].kind == "dataset"
+    # AI Hub 그림은 전부 train 이다(2026-11-23 사용자 결정) — 새로 등록하는 카메라에 고정을 적는다. 다른 카메라는 그대로
+    assert {k: c.split for k, c in cams.items()} == {**{f"ah-000{i}": "train" for i in range(1, 5)}, "hw-01": None}
     assert cams["ah-0001"].place == f"AI Hub PM 영상 {picks[0].video}"
     assert len(list((cfg.db.parent / "backups").glob("cameras_*.yaml"))) == 1         # 쓰기 전 파일은 한 번만
     with store.connect() as con:
@@ -426,6 +428,112 @@ def test_failed_apply_puts_files_and_cameras_back(cfg, store, aihub, tmp_path, m
     assert not list(cfg.unlabeled.rglob("*.jpg")) and not [d for d in cfg.unlabeled.glob("ah-*")]
     with store.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 0
+
+
+# ---------------------------------------------------- AI Hub 그림은 전부 train (2026-11-23)
+
+REGISTRY = """\
+cameras:
+  hw-01:
+    kind: cctv
+    place: 어딘가
+    split:
+  ah-0001:
+    kind: dataset
+    place: AI Hub PM 영상 A
+    split:
+  ah-0002:
+    kind: dataset
+    place: AI Hub PM 영상 B
+    split: train
+  ah-0003:
+    kind: dataset
+    place: AI Hub PM 영상 C
+    split: test
+  ah-0004:
+    kind: dataset
+    place: AI Hub PM 영상 D
+    split:
+  ah-0005:
+    kind: dataset
+    place: 손으로 등록해 split 줄이 없는 것
+  ah-x:
+    kind: dataset
+    place: 키 꼴이 다른 것
+    split:
+"""
+
+
+@pytest.fixture
+def registry(cfg, add_image):
+    """고정이 빈 것(ah-0001·0004·0005), train(0002), 사람이 test 로 적은 것(0003). ah-0004 는 이미지가 이미 val 에 있다."""
+    cfg.cameras.write_text(REGISTRY, "utf-8")
+    add_image("a.jpg", camera="ah-0001")                    # 미배정 — 막지 않는다
+    add_image("d.jpg", camera="ah-0004", split="val")       # 이미 평가셋에 든 이미지 — 고정하면 두 분할에 걸친다
+    add_image("e.jpg", camera="ah-0005", split="train")     # 이미 train — 고정해도 걸치지 않는다
+    add_image("h.jpg", camera="hw-01", split="test")        # 다른 카메라는 보지 않는다
+    return cfg.cameras
+
+
+def pins(path) -> dict:
+    return {k: c.split for k, c in load_cameras(path).items()}
+
+
+def test_pin_plan_takes_only_empty_pins_that_would_not_straddle(cfg, store, registry):
+    todo, other, blocked = ah.pin_plan(cfg, store)
+    assert todo == ["ah-0001", "ah-0005"]
+    assert other == {"ah-0003": "test"}                     # 사람이 적어 둔 고정은 바꾸지 않는다
+    assert blocked == {"ah-0004": {"val": 1}}
+
+
+def test_pin_train_shows_first_and_writes_only_when_told(cfg, store, registry, capsys):
+    before = registry.read_bytes()
+    assert ah.pin_train(cfg, store, write=False) == 1       # 볼 것(다른 고정·막힘)이 남아 1
+    assert registry.read_bytes() == before and not (cfg.db.parent / "backups").exists()
+    said = capsys.readouterr().out
+    assert "ah-* 카메라 5대: train 고정 1 · 고정할 것 2 · 다른 분할로 고정 1 · 막힘 1" in said
+    assert "ah-0003 는 test 로 고정" in said and "ah-0004 의 이미지가 이미 val 1장" in said and "보기만 했다" in said
+
+    assert ah.pin_train(cfg, store, write=True) == 1
+    assert pins(registry) == {"hw-01": None, "ah-0001": "train", "ah-0002": "train", "ah-0003": "test",
+                              "ah-0004": None, "ah-0005": "train", "ah-x": None}
+    backups = list((cfg.db.parent / "backups").glob("cameras_*.yaml"))
+    assert len(backups) == 1 and backups[0].read_bytes() == before           # 쓰기 전 파일 하나
+
+    after = registry.read_bytes()
+    assert ah.pin_train(cfg, store, write=True) == 1        # 다시 돌려도 더 고칠 것이 없다
+    assert registry.read_bytes() == after and len(list((cfg.db.parent / "backups").glob("cameras_*.yaml"))) == 1
+
+
+def test_pin_train_is_clean_when_every_camera_can_be_pinned(cfg, store, capsys):
+    cfg.cameras.write_text("cameras:\n  ah-0001:\n    kind: dataset\n    place: 가\n    split:\n"
+                           "  ah-0002:\n    kind: dataset\n    place: 나\n    split:\n", "utf-8")
+    assert ah.pin_train(cfg, store, write=True) == 0
+    assert pins(cfg.cameras) == {"ah-0001": "train", "ah-0002": "train"}
+    assert ah.pin_train(cfg, store, write=True) == 0 and "고칠 것이 없다" in capsys.readouterr().out
+
+
+def test_pin_train_runs_without_the_aihub_folder_and_importing_points_at_it(cfg, store, registry, tmp_path, monkeypatch,
+                                                                       capsys):
+    """`--pin-train` 은 색인·모델·AI Hub 폴더 없이 돈다. 넣으려는 실행은 고정 안 된 카메라가 있으면 먼저 알린다."""
+    import yaml
+
+    cfg.path.write_text(yaml.safe_dump(cfg.raw, allow_unicode=True), encoding="utf-8")
+    nowhere = tmp_path / "no-aihub"
+    monkeypatch.setattr(sys, "argv", ["import_aihub_pm.py", "--config", str(cfg.path), "--root", str(nowhere),
+                                      "--pin-train"])
+    before = registry.read_bytes()
+    assert ah.main() == 1 and registry.read_bytes() == before                # --apply 없이는 보기만
+
+    monkeypatch.setattr(sys, "argv", ["import_aihub_pm.py", "--config", str(cfg.path), "--root", str(nowhere)])
+    capsys.readouterr()
+    with pytest.raises(SystemExit, match="원천데이터"):
+        ah.main()
+    assert "train 으로 고정되지 않은 ah-* 카메라 4대" in capsys.readouterr().out
+
+    monkeypatch.setattr(sys, "argv", ["import_aihub_pm.py", "--config", str(cfg.path), "--root", str(nowhere),
+                                      "--pin-train", "--apply"])
+    assert ah.main() == 1 and pins(registry)["ah-0001"] == "train"
 
 
 def test_next_keys_continue_after_the_largest_and_skip_used():

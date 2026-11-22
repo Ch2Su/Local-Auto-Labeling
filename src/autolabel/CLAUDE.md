@@ -223,6 +223,14 @@
     영역이 있는 이미지(masked)가 있는데 test 고정. **시간대를 바꾸면** 그 카메라 이미지의 `captured_at` 을 `capture_time` 으로 다시
     센다(`store.set_captured_at` — updated_at 은 그대로, 다시 셀 수 없으면 그대로). 지우기와 같은 두 잠금을 같은 순서로 쥔다.
     키를 바꾸면 캡처 세션도 새 키로(`rename_camera`). 화면 목록의 `fields`(`camera_fields`)가 고치기 칸을 채운다.
+  - **여러 카메라의 고정 분할만 한 번에 (11-23, `provenance.set_splits` — AI Hub 카메라 백 대를 train 으로 고정하려고).**
+    `edit_camera` 를 카메라마다 부르면 쓰기 전 사본이 카메라 수만큼 생기고 도중에 멈추면 반만 고친 파일이 남는다 — 이 함수는
+    같은 줄 고치기(`_edit_camera_text`)로 전부 고친 뒤 다시 읽어 '그 카메라들의 split 만 바뀌고 나머지는 속성·순서까지 그대로'
+    일 때만 사본 하나를 남기고 한 번에 바꿔 끼운다(하나씩 고친 것과 바이트까지 같다 — `tests/test_provenance.py`). 없는 키·못
+    고치는 한 줄 꼴 항목이 하나라도 있으면 아무것도 안 쓴다. **서버 API 는 없다** — 부르는 것은 `tools/import_aihub_pm.py
+    --pin-train` 뿐이고, 서버의 잠금(`commit_lock`·`ingest_lock`)을 쥐지 않으니 화면에서 카메라를 더하는 바로 그 순간과 겹치면
+    한쪽이 덮일 수 있다(쓰기 전 사본은 남는다). **이미지가 이미 다른 분할에 든 카메라를 막는 것은 부르는 쪽 몫이다**(그 도구의
+    `pin_plan` — 서버의 409 와 같은 일). 서버에서 부르게 되면 그 두 잠금과 `use["assigned"]` 검사를 함께 넣을 것.
   - **이미지가 있는 카메라의 키 바꾸기(11-11 사용자 요청, `camera_rename.py` — 전에는 409).** 키가 든 세 곳을 함께 바꾼다:
     `cameras.yaml` 키 줄, 카메라 폴더 `unlabeled`·`labeled/images`·`labeled/labels` 의 `<키>/` 와 파일 이름 앞머리 `<키>_`(앞머리가
     다른 이름은 옮기기만), DB `images.camera`·`path`·`name` 과 `mask_templates.camera`. **순서가 핵심이다 — DB 행이 없는 파일을
