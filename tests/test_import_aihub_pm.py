@@ -536,6 +536,135 @@ def test_pin_train_runs_without_the_aihub_folder_and_importing_points_at_it(cfg,
     assert ah.main() == 1 and pins(registry)["ah-0001"] == "train"
 
 
+# ---------------------------------------------------- 손으로 고른 그림 점검 --check (2026-11-23)
+
+def put(cfg, store, camera: str, name: str, data: bytes, *, source: str = "aihub_pm", status: str = "pending") -> int:
+    """그림 파일과 DB 행을 함께 둔다 — 도구가 넣은 것(source aihub_pm)이나 사람이 손으로 넣은 것(collected)처럼."""
+    f = cfg.unlabeled / camera / name
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(data)
+    store.ingest_batch([{"path": str(f.resolve()), "source": source, "width": W, "height": H, "status": status,
+                         "boxes": [], "camera": camera}])
+    with store.connect() as con:
+        return int(con.execute("SELECT id FROM images WHERE path=?", (str(f.resolve()),)).fetchone()[0])
+
+
+def aihub_name(video: int, frame: int = 10) -> str:
+    return f"T{video:06d}_000_{frame:04d}_C_D_F_1.jpg"
+
+
+@pytest.fixture
+def stock(cfg, store):
+    """DB 에 있는 것: 도구가 넣은 둘(장면 1·2), 사람이 `ah-0101` 로 손으로 넣은 하나(장면 22), 직접 모은 카메라의 하나(장면 26)."""
+    s = SimpleNamespace()
+    s.a = put(cfg, store, "ah-0001", aihub_name(1), frame_bytes(1, 2))
+    s.b = put(cfg, store, "ah-0002", aihub_name(2), frame_bytes(2, 0), status="approved")
+    s.manual = put(cfg, store, "ah-0101", aihub_name(50), frame_bytes(22, 0), source="collected", status="approved")
+    s.own = put(cfg, store, "hw-01", "hw-01_20261109_101500_000.jpg", frame_bytes(26, 1), source="collected")
+    return s
+
+
+@pytest.fixture
+def picked(cfg, stock, tmp_path):
+    """사용자가 손으로 골라 둔 폴더."""
+    d = tmp_path / "picked"
+    d.mkdir()
+    files = {
+        aihub_name(1): frame_bytes(1, 2),               # 이미 넣은 그림 그대로
+        aihub_name(1, 20): frame_bytes(1, 3),           # 그 영상의 다른 프레임 — 바이트는 다르다
+        aihub_name(50, 33): frame_bytes(23, 0),         # 손으로 넣은 영상의 다른 프레임(화면은 다르게 — 이름으로만 안다)
+        aihub_name(77): frame_bytes(2, 1, True),        # 새 영상인데 ah-0002 와 같은 자리의 밤 화면
+        aihub_name(80): frame_bytes(24, 0),             # 새 것
+        aihub_name(81): frame_bytes(25, 0),             # 새 것
+        aihub_name(81, 20): frame_bytes(25, 1),         # 바로 위와 같은 영상
+        aihub_name(82): frame_bytes(24, 1),             # 영상은 다르지만 T000080 과 같은 자리
+        aihub_name(83): b"jpeg \xff\xd8 not really",    # 읽히지 않는 파일
+        aihub_name(84): frame_bytes(26, 0),             # 직접 모은 카메라(hw-01)와 같은 자리 — AI Hub 것끼리만 자리를 견준다
+        aihub_name(85): frame_bytes(26, 1),             # 직접 모은 카메라의 그림과 바이트가 같다
+        aihub_name(86): frame_bytes(24, 0),             # T000080 과 바이트가 같다(이름만 다르다)
+        "zz_photo.jpg": frame_bytes(27, 0),             # AI Hub 이름 꼴이 아닌 새 그림
+    }
+    for name, data in files.items():
+        (d / name).write_bytes(data)
+    return d
+
+
+def by_name(results) -> dict:
+    return {c.path.name: c for c in results}
+
+
+def test_check_tells_same_file_same_video_and_same_place(cfg, store, stock, picked):
+    own_path = cfg.unlabeled / "ah-0001" / aihub_name(1)                    # DB 에 이미 있는 경로도 함께 준다
+    results = ah.check_files(store, ah.gather([picked, own_path]), log=lambda *_: None)
+    got = by_name(c for c in results if c.path.parent == picked.resolve())
+    verdicts = {name: c.verdict for name, c in got.items()}
+    assert verdicts == {
+        aihub_name(1): "같은 그림", aihub_name(1, 20): "같은 영상", aihub_name(50, 33): "같은 영상",
+        aihub_name(77): "같은 자리", aihub_name(80): "새 것", aihub_name(81): "새 것",
+        aihub_name(81, 20): "준 것끼리 겹침", aihub_name(82): "준 것끼리 겹침", aihub_name(83): "못 읽음",
+        aihub_name(84): "새 것", aihub_name(85): "같은 그림", aihub_name(86): "준 것끼리 겹침", "zz_photo.jpg": "새 것"}
+    assert [c.verdict for c in results if c.path == own_path.resolve()] == ["이미 등록된 경로"]
+
+    same = got[aihub_name(1)]
+    assert same.same_bytes["id"] == stock.a and [k.id for k in same.same_video] == [stock.a]
+    frame = got[aihub_name(1, 20)]                                           # 같은 영상의 다른 프레임 — scan 은 못 잡는다
+    assert frame.same_bytes is None and [k.id for k in frame.same_video] == [stock.a]
+    assert [k.id for k in frame.same_spot] == [stock.a]
+    manual = got[aihub_name(50, 33)]                                         # 사람이 손으로 넣은 영상도 안다(카메라 키로)
+    assert [(k.id, k.camera) for k in manual.same_video] == [(stock.manual, "ah-0101")] and manual.same_spot == []
+    place = got[aihub_name(77)]                                              # 영상은 처음인데 같은 카메라 자리(주간·야간)
+    assert place.same_video == [] and [(k.id, k.camera) for k in place.same_spot] == [(stock.b, "ah-0002")]
+    assert got[aihub_name(84)].same_spot == []                               # 직접 모은 카메라와는 자리를 견주지 않는다
+    assert got[aihub_name(85)].same_bytes["camera"] == "hw-01"               # 바이트는 어느 카메라의 그림과도 견준다
+    twin = got[aihub_name(81, 20)]
+    assert [p.name for p in twin.twin_video] == [aihub_name(81)] and [p.name for p in twin.twin_spot] == [aihub_name(81)]
+    spot = got[aihub_name(82)]
+    assert spot.twin_video == [] and [p.name for p in spot.twin_spot] == [aihub_name(80)]
+    assert got[aihub_name(86)].twin_bytes.name == aihub_name(80)
+    assert got["zz_photo.jpg"].video is None and got[aihub_name(83)].error
+
+
+def test_check_writes_nothing_but_its_list(cfg, store, stock, picked, monkeypatch, capsys):
+    import yaml
+
+    cfg.cameras.write_text("cameras:\n  hw-01:\n    kind: cctv\n    place: 어딘가\n    split:\n", "utf-8")
+    cfg.path.write_text(yaml.safe_dump(cfg.raw, allow_unicode=True), encoding="utf-8")
+    cameras = cfg.cameras.read_bytes()
+    with store.connect() as con:
+        before = con.execute("SELECT id, path, status, camera, source, updated_at FROM images ORDER BY id").fetchall()
+    files_before = sorted(p for p in cfg.unlabeled.rglob("*") if p.is_file())
+    monkeypatch.setattr(sys, "argv", ["import_aihub_pm.py", "--config", str(cfg.path), "--root", str(picked / "none"),
+                                      "--check", str(picked)])
+    assert ah.main() == 0                                                    # AI Hub 폴더·색인·모델 없이 돈다
+    said = capsys.readouterr().out
+    assert "준 그림 13장 (AI Hub 이름 꼴 12 · 아닌 것 1)" in said
+    assert "새 것 4 · 같은 그림 2 · 같은 영상 2 · 같은 자리 1 · 준 것끼리 겹침 3 · 못 읽음 1" in said
+    assert f"[같은 영상] {aihub_name(1, 20)} — 영상 T000001 = ah-0001 id {stock.a} 검수 대기" in said
+    assert f"[같은 자리] {aihub_name(77)} — 같은 자리 = ah-0002 id {stock.b} 승인" in said
+    assert "다음 번호 ah-0102 부터" in said                                    # 손으로 등록한 ah-0101 다음
+    with store.connect() as con:
+        assert con.execute("SELECT id, path, status, camera, source, updated_at FROM images ORDER BY id").fetchall() == before
+    assert cfg.cameras.read_bytes() == cameras and sorted(p for p in cfg.unlabeled.rglob("*") if p.is_file()) == files_before
+    lists = list((cfg.db.parent / "aihub_pm").glob("check_*.tsv"))
+    assert len(lists) == 1
+    rows = lists[0].read_text("utf-8-sig").splitlines()
+    assert rows[0].split("\t")[:3] == ["file", "verdict", "video"] and len(rows) == 14
+    row = next(r.split("\t") for r in rows if aihub_name(77) in r)
+    assert row[1:6] == ["같은 자리", "T000077", "", "", f"ah-0002:{stock.b}"]
+
+
+def test_images_added_by_hand_under_an_ah_camera_count_as_already_in(cfg, store, aihub, tmp_path):
+    """사람이 `ah-NNNN` 카메라로 손으로 넣은 그림(scan 이 출처를 collected 로 적는다)의 영상·자리를 도구가 다시 고르지 않는다.
+    2026-11-23 까지는 출처(aihub_pm)만 봐서 몰랐다."""
+    put(cfg, store, "ah-0101", "T000005_000_0010_C_D_F_1.jpg", frame_bytes(5, 3), source="collected", status="approved")
+    put(cfg, store, "hw-01", "T000001_000_0010_C_D_F_1.jpg", frame_bytes(1, 2), source="collected")   # 다른 카메라는 세지 않는다
+    videos, scenes = ah.existing(store)
+    assert videos == {"T000005"} and len(scenes) == 1
+    picks, report, _ = run(cfg, store, aihub, tmp_path)
+    assert "T000005" not in {p.video for p in picks} and report["연출 킥보드"]["이미 쓴 영상"] == 1
+    assert [p.camera for p in picks][0] == "ah-0102"                         # 번호도 손으로 등록한 키 다음부터
+
+
 def test_next_keys_continue_after_the_largest_and_skip_used():
     assert ah.next_keys(set(), 2) == ["ah-0001", "ah-0002"]
     assert ah.next_keys({"ah-0007", "ah-0009", "hw-01", "ah-x"}, 3) == ["ah-0010", "ah-0011", "ah-0012"]

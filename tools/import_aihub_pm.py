@@ -53,6 +53,14 @@ PM 박스는 '여기에 이 종류의 탈것과 탄 사람이 있다' 는 단서
 것과 이미 train 아닌 분할에 이미지가 든 카메라는 바꾸지 않고 알린다(분할은 정한 것을 옮기지 않아 카메라가 두 분할에 걸친다).
 기본은 보기만이고 `--apply` 를 붙여야 고친다. 색인·모델·AI Hub 폴더는 쓰지 않는다.
 
+**손으로 고른 그림 점검 — `--check <폴더·파일…>` (2026-11-23 사용자 요청).** 사용자가 AI Hub 그림을 직접 골라 넣을 때, 넣기
+전에 이미 넣은 것과 겹치는지를 PC 안에서 재서 이름·번호로 알린다(Claude 가 그림을 볼 수 없어서다 — 아무것도 쓰지 않는다):
+**같은 그림**(바이트가 같은 DB 이미지 — scan 이 등록하지 않는 판정), **같은 영상**(이름의 영상 id — 같은 영상의 다른 프레임은
+바이트가 달라 scan 이 못 잡는다), **같은 자리**(`same_camera` — 넣을 때 건너뛰는 판정). 함께 준 파일끼리도 본다. 목록은
+`<DB 폴더>/aihub_pm/check_<시각>.tsv`. DB 의 AI Hub 그림은 출처가 이 도구이거나 **카메라 키가 `ah-NNNN`** 인 것이다(`known`)
+— 손으로 넣은 그림은 scan 이 출처를 `collected` 로 적으므로 키로도 본다. 넣는 실행의 '이미 넣은 영상·같은 자리 건너뛰기'도
+같은 목록을 쓴다(그날부터 — 전에는 출처만 봐서 손으로 넣은 영상을 다시 고를 수 있었다).
+
 **쓰는 것.** 그림은 AI Hub 의 JPEG 바이트 그대로 `<unlabeled>/ah-NNNN/<AI Hub 이름>.jpg` 에 쓰고(풀린 폴더에 없으면 zip 에서
 그 항목만 꺼낸다), DB 에 source='aihub_pm'·camera·status='pending' 으로 넣은 뒤 domain 을 'cctv' 로 정한다. 촬영 시각은
 모른다. 이 도구가 넣은 경로는 scan 이 이미 아는 경로라 건너뛴다. model_version 은 `<가중치 파일>+aihub`.
@@ -74,6 +82,7 @@ PM 박스는 '여기에 이 종류의 탈것과 탄 사람이 있다' 는 단서
     python tools/import_aihub_pm.py --scale 0.5          # 묶음마다 몫을 절반으로
     python tools/import_aihub_pm.py --reindex            # 라벨 색인을 다시 만든다
     python tools/import_aihub_pm.py --pin-train          # 고정 안 된 ah-* 카메라를 본다 (--apply 를 붙이면 train 으로 고정)
+    python tools/import_aihub_pm.py --check <폴더>        # 손으로 고른 그림이 이미 넣은 것과 겹치는지 본다 (쓰지 않는다)
 """
 
 from __future__ import annotations
@@ -102,12 +111,13 @@ from PIL import Image, ImageDraw  # noqa: E402
 
 from autolabel import tiling  # noqa: E402
 from autolabel.config import Config, resolve  # noqa: E402
+from autolabel.dupcheck import DupIndex  # noqa: E402
 from autolabel.grouping import base_name  # noqa: E402
 from autolabel.predictor import build_class_map  # noqa: E402
 from autolabel.provenance import add_camera, load_cameras, remove_cameras, set_splits  # noqa: E402
 from autolabel.scoring import image_uncertainty  # noqa: E402
 from autolabel.store import Store  # noqa: E402
-from autolabel.yolo_io import Box  # noqa: E402
+from autolabel.yolo_io import Box, iter_images  # noqa: E402
 
 AIHUB_ROOT = Path(r"E:\datasets\120.개인형 이동장치 안전 데이터\01.데이터")
 SOURCE = "aihub_pm"          # images.source — 공개 데이터셋은 데이터셋 이름을 쓴다(docs/provenance.md 'DB 변경')
@@ -745,23 +755,44 @@ def used_keys(cfg: Config, store: Store) -> set[str]:
     return keys
 
 
-def existing(store: Store) -> tuple[set[str], list[Scene]]:
-    """이 도구가 전에 넣은 이미지(휴지통 포함) → (영상 id 들, 화면 지문들 — 파일이 남은 것만)."""
-    videos: set[str] = set()
-    scenes: list[Scene] = []
+@dataclass
+class Known:
+    """DB 에 있는 AI Hub 그림 한 장(휴지통 포함)."""
+    id: int
+    name: str
+    path: str
+    camera: str | None
+    status: str
+    video: str | None               # 이름에서 읽은 영상 id — AI Hub 이름 꼴이 아니면 None
+    scene: Scene | None = None      # 화면 지문 — 파일이 남아 있고 읽힐 때만
+
+
+def known(store: Store) -> list[Known]:
+    """DB 의 AI Hub 그림들 — 출처가 이 도구(`SOURCE`)이거나 **카메라 키가 `ah-NNNN`** 인 것, 화면 지문과 함께.
+
+    사람이 `unlabeled/ah-NNNN/` 에 손으로 넣은 그림은 scan 이 출처를 `collected` 로 적는다. 2026-11-23 까지는 출처만 봐서,
+    손으로 넣은 영상·자리를 이 도구가 모르고 다시 고를 수 있었다."""
     with store.connect() as con:
-        rows = con.execute("SELECT name, path FROM images WHERE source=?", (SOURCE,)).fetchall()
+        rows = con.execute("SELECT id, name, path, camera, status, source FROM images ORDER BY id").fetchall()
+    out: list[Known] = []
     for r in rows:
-        v = video_of(r["name"])
-        if v:
-            videos.add(v)
-        p = Path(r["path"])
+        if r["source"] != SOURCE and not KEY_RE.match(r["camera"] or ""):
+            continue
+        k = Known(int(r["id"]), r["name"], r["path"], r["camera"], r["status"], video_of(r["name"]))
+        p = Path(k.path)
         if p.is_file():
             try:
-                scenes.append(scene_of(p.read_bytes()))
+                k.scene = scene_of(p.read_bytes())
             except Exception:
                 pass
-    return videos, scenes
+        out.append(k)
+    return out
+
+
+def existing(store: Store) -> tuple[set[str], list[Scene]]:
+    """이미 넣은 AI Hub 그림(`known` — 휴지통 포함) → (영상 id 들, 화면 지문들 — 파일이 남은 것만)."""
+    rows = known(store)
+    return {k.video for k in rows if k.video}, [k.scene for k in rows if k.scene is not None]
 
 
 def view_text(rel: str) -> str:
@@ -946,6 +977,199 @@ def pin_train(cfg: Config, store: Store, *, write: bool) -> int:
     return 1 if other or blocked else 0
 
 
+# ───────────────────────────── 손으로 고른 그림 점검 (--check) ─────────────────────────────
+
+STATUS_KO = {"approved": "승인", "pending": "검수 대기", "skipped": "건너뜀", "trashed": "휴지통"}
+VERDICTS = ("새 것", "같은 그림", "같은 영상", "같은 자리", "준 것끼리 겹침", "이미 등록된 경로", "못 읽음")
+
+
+@dataclass
+class Checked:
+    """`--check` 가 본 파일 하나 — DB 의 그림과 겹치는 것, 함께 준 앞의 파일과 겹치는 것."""
+    path: Path
+    video: str | None = None                                    # 이름에서 읽은 영상 id (AI Hub 이름 꼴이 아니면 None)
+    error: str | None = None                                    # 그림을 못 읽었다
+    registered: bool = False                                    # 이 경로가 이미 DB 에 있다
+    same_bytes: dict | None = None                              # 바이트가 같은 DB 이미지(어느 카메라든) — {id, camera, status, …}
+    same_video: list[Known] = field(default_factory=list)       # 같은 영상의 DB 그림(AI Hub 것)
+    same_spot: list[Known] = field(default_factory=list)        # 같은 카메라 자리의 DB 그림(AI Hub 것)
+    twin_bytes: Path | None = None                              # 함께 준 앞의 파일 가운데 바이트가 같은 것
+    twin_video: list[Path] = field(default_factory=list)        # 〃 같은 영상인 것
+    twin_spot: list[Path] = field(default_factory=list)         # 〃 같은 자리인 것
+
+    @property
+    def verdict(self) -> str:
+        """가장 무거운 겹침 하나 — 같은 그림 > 같은 영상 > 같은 자리 > 준 것끼리."""
+        if self.error:
+            return "못 읽음"
+        if self.registered:
+            return "이미 등록된 경로"
+        if self.same_bytes:
+            return "같은 그림"
+        if self.same_video:
+            return "같은 영상"
+        if self.same_spot:
+            return "같은 자리"
+        if self.twin_bytes or self.twin_video or self.twin_spot:
+            return "준 것끼리 겹침"
+        return "새 것"
+
+
+def gather(paths: list[Path]) -> list[Path]:
+    """준 폴더(아래까지)와 파일의 그림들 — 풀어 쓴 경로로, 겹치지 않게."""
+    seen: set[str] = set()
+    out: list[Path] = []
+    for p in paths:
+        p = Path(p)
+        if p.is_dir():
+            found = list(iter_images(p))
+        elif p.is_file():
+            found = [p]
+        else:
+            raise SystemExit(f"없는 경로: {p}")
+        for f in found:
+            f = f.resolve()
+            if os.path.normcase(str(f)) not in seen:
+                seen.add(os.path.normcase(str(f)))
+                out.append(f)
+    return out
+
+
+def check_files(store: Store, files: list[Path], log=print) -> list[Checked]:
+    """손으로 고른 그림이 이미 넣은 것과 겹치는지 본다 (2026-11-23 사용자 요청). **아무것도 쓰지 않는다.**
+
+    Claude 는 AI Hub 그림을 열지 않기로 해서(머리말 '주의') 눈으로 가려 줄 수 없다 — 그래서 PC 안에서 세 가지를 잰다:
+    - **같은 그림**: 바이트가 같은 DB 이미지(`dupcheck.DupIndex` — scan 이 등록하지 않는 바로 그 판정. 어느 카메라든).
+    - **같은 영상**: 이름의 영상 id 가 DB 의 AI Hub 그림(`known`)과 같다. 같은 영상의 다른 프레임은 바이트가 달라 scan 이 못 잡는다.
+    - **같은 자리**: 화면 지문이 DB 의 AI Hub 그림과 같은 카메라 자리다(`same_camera` — 넣을 때 건너뛰는 판정과 같다).
+    함께 준 파일끼리도 같은 셋을 본다(앞의 파일과). 이름이 AI Hub 꼴이 아니면 영상은 모르고 나머지 둘만 본다.
+    바이트가 같은 것은 지문을 재지 않는다(이미 같은 그림이다). 견주는 시간은 (준 수) × (DB 의 AI Hub 그림 수 + 준 수)에
+    비례한다 — 한 쌍 길어야 10ms 쯤."""
+    import cv2
+
+    with store.connect() as con:
+        rows = [{"id": int(r["id"]), "path": r["path"], "status": r["status"], "split": r["split"],
+                 "camera": r["camera"], "n_boxes": 0}
+                for r in con.execute("SELECT id, path, status, split, camera FROM images")]
+    registered = {os.path.normcase(r["path"]) for r in rows}
+    dup = DupIndex(rows)
+    log("DB 의 AI Hub 그림을 읽는다…")
+    have = known(store)
+    by_video: dict[str, list[Known]] = collections.defaultdict(list)
+    for k in have:
+        if k.video:
+            by_video[k.video].append(k)
+    log(f"  {len(have)}장 (화면 지문 {sum(k.scene is not None for k in have)}장, 영상 {len(by_video)}개)")
+
+    out: list[Checked] = []
+    given_video: dict[str, list[Path]] = collections.defaultdict(list)
+    given_scene: list[tuple[Path, Scene]] = []
+    threads = cv2.getNumThreads()                   # choose 와 같은 까닭 — Ultralytics 가 줄여 둔 스레드를 재는 동안만 되돌린다
+    cv2.setNumThreads(max(1, min(16, os.cpu_count() or 1)))
+    try:
+        for n, f in enumerate(files, 1):
+            c = Checked(f, video_of(f.name))
+            out.append(c)
+            if os.path.normcase(str(f)) in registered:
+                c.registered = True
+                continue
+            if c.video:
+                c.same_video = list(by_video.get(c.video, ()))
+                c.twin_video = list(given_video[c.video])
+                given_video[c.video].append(f)
+            hit = dup.find(str(f))
+            if hit is not None:
+                if hit["id"] is not None:
+                    c.same_bytes = hit
+                else:
+                    c.twin_bytes = Path(hit["path"])
+                continue
+            dup.add(str(f), {"id": None, "path": str(f), "status": "(준 것)", "split": None, "camera": None, "n_boxes": 0})
+            try:
+                scene = scene_of(f.read_bytes())
+            except Exception as exc:
+                c.error = str(exc) or type(exc).__name__
+                continue
+            c.same_spot = [k for k in have if k.scene is not None and same_camera(scene, k.scene)]
+            c.twin_spot = [p for p, s in given_scene if same_camera(scene, s)]
+            given_scene.append((f, scene))
+            if n % 20 == 0:
+                log(f"  {n}/{len(files)}")
+    finally:
+        cv2.setNumThreads(threads)
+    return out
+
+
+def _where(k: Known) -> str:
+    return f"{k.camera or '카메라 없음'} id {k.id} {STATUS_KO.get(k.status, k.status)}"
+
+
+def _why(c: Checked) -> str:
+    """한 파일의 겹침을 한 줄로 — 무거운 것부터 전부."""
+    parts: list[str] = []
+    if c.error:
+        parts.append(c.error)
+    if c.same_bytes:
+        b = c.same_bytes
+        parts.append(f"바이트가 같은 그림 = {b['camera'] or '카메라 없음'} id {b['id']} {STATUS_KO.get(b['status'], b['status'])}")
+    if c.same_video:
+        parts.append(f"영상 {c.video} = " + ", ".join(_where(k) for k in c.same_video[:4])
+                     + (f" 외 {len(c.same_video) - 4}" if len(c.same_video) > 4 else ""))
+    spots = [k for k in c.same_spot if k not in c.same_video]
+    if spots:
+        parts.append("같은 자리 = " + ", ".join(_where(k) for k in spots[:4]) + (f" 외 {len(spots) - 4}" if len(spots) > 4 else ""))
+    if c.twin_bytes:
+        parts.append(f"준 것 가운데 바이트가 같은 그림 = {c.twin_bytes.name}")
+    if c.twin_video:
+        parts.append(f"준 것 가운데 같은 영상 = {', '.join(p.name for p in c.twin_video[:3])}")
+    twins = [p for p in c.twin_spot if p not in c.twin_video]
+    if twins:
+        parts.append(f"준 것 가운데 같은 자리 = {', '.join(p.name for p in twins[:3])}")
+    return " · ".join(parts)
+
+
+def check_report(results: list[Checked], path: Path, log=print) -> Path:
+    """점검 결과를 찍고(겹친 것은 파일마다 한 줄) 전부를 TSV 로 남긴다 — 그림은 쓰지 않는다(이름·번호뿐)."""
+    counts = collections.Counter(c.verdict for c in results)
+    named = sum(1 for c in results if c.video)
+    log(f"\n준 그림 {len(results)}장 (AI Hub 이름 꼴 {named} · 아닌 것 {len(results) - named})")
+    log("  " + " · ".join(f"{v} {counts[v]}" for v in VERDICTS if counts[v]))
+    shown = [c for c in results if c.verdict != "새 것"]
+    for c in shown[:80]:
+        log(f"  [{c.verdict}] {c.path.name} — {_why(c)}")
+    if len(shown) > 80:
+        log(f"  (외 {len(shown) - 80}장 — 목록 파일에 전부)")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["file\tverdict\tvideo\tdb_same_bytes\tdb_same_video\tdb_same_spot\tgiven_twins\tdetail"]
+    for c in results:
+        twins = [c.twin_bytes] if c.twin_bytes else []
+        twins += [p for p in c.twin_video + c.twin_spot if p not in twins]
+        lines.append("\t".join([
+            str(c.path), c.verdict, c.video or "",
+            str(c.same_bytes["id"]) if c.same_bytes else "",
+            " ".join(f"{k.camera}:{k.id}" for k in c.same_video),
+            " ".join(f"{k.camera}:{k.id}" for k in c.same_spot),
+            " ".join(p.name for p in twins), _why(c)]))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+    return path
+
+
+def check_main(cfg: Config, store: Store, paths: list[Path]) -> int:
+    files = gather(paths)
+    if not files:
+        print("그림이 없다.")
+        return 0
+    results = check_files(store, files)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    listed = check_report(results, index_path(cfg).parent / f"check_{stamp}.tsv")
+    print(f"\n목록: {listed}")
+    print("(보기만 했다 — DB·등록 파일·그림은 그대로다.)")
+    print("  같은 그림은 scan 이 등록하지 않는다. 같은 영상의 다른 프레임은 scan 이 못 잡으니 넣기 전에 뺀다.")
+    print(f"  같은 자리를 넣는다면 그 카메라 키 폴더에 넣는다(카메라 = 화면 하나). 새 화면은 다음 번호 "
+          f"{next_keys(used_keys(cfg, store), 1)[0]} 부터 `ah-NNNN` 으로 등록하고 --pin-train --apply.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--config", default=None)
@@ -961,12 +1185,16 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true", help="실제로 쓴다 (기본은 보기만)")
     ap.add_argument("--pin-train", action="store_true",
                     help="넣지 않고, 고정 분할이 비어 있는 ah-* 카메라를 train 으로 고정한다 (--apply 없이는 보기만)")
+    ap.add_argument("--check", nargs="+", type=Path, metavar="경로",
+                    help="넣지 않고, 손으로 고른 그림(폴더·파일)이 이미 넣은 AI Hub 그림과 같은 그림·같은 영상·같은 자리인지 본다")
     args = ap.parse_args()
 
     cfg = Config.load(args.config)
     store = Store(cfg.db)
     if args.pin_train:
         return pin_train(cfg, store, write=args.apply)
+    if args.check:
+        return check_main(cfg, store, args.check)
     loose, other, blocked = pin_plan(cfg, store)
     if loose or other or blocked:
         print(f"[알림] {SPLIT} 으로 고정되지 않은 ah-* 카메라 {len(loose) + len(other) + len(blocked)}대 — "

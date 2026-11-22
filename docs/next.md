@@ -36,8 +36,8 @@ Runpod 를 먼저 권하지 않기·백업 전에 묻기)은 루트에도 남겼
      화면은 건너뛰어 실제로 넣을 수 있는 수는 그보다 훨씬 적다). **분할: AI Hub 그림은 전부 train (11-23 사용자 결정** — Claude 가
      그 그림을 열지 않기로 해서 같은 장소가 갈리지 않는지 볼 수 없다). 그날 등록 파일의 `ah-*` 100대를 `split: train` 으로
      고정했다(`import_aihub_pm.py --pin-train --apply`, 새로 등록하는 카메라도 train — docs/provenance.md 의 그 항목 '넣은 것').
-     사용자가 손으로 더 넣을 수 있다 — 카메라 키는 `ah-NNNN` 으로 등록하고 `--pin-train` 을 다시, 중복은
-     `labeler.py dupcheck --folder`(바이트가 같은 것만 — 같은 영상의 다른 프레임은 이름으로 본다).
+     사용자가 손으로 더 넣을 수 있다 — 넣기 전에 `import_aihub_pm.py --check <폴더>`(같은 그림·같은 영상·같은 자리를 이름과
+     번호로 — 쓰지 않는다. 바이트만 볼 때는 `labeler.py dupcheck --folder`), 카메라 키는 `ah-NNNN` 으로 등록하고 `--pin-train` 을 다시.
      **첫 분할 때 정할 것이 하나 늘었다:** 고정한 AI Hub 그림도 분할 비율에 들어가서, 전부 승인되면 직접 모은 194장이
      train 106 · val 46 · test 42(55·24·22%)가 된다(사본 실측 — 지금 승인분만이면 66·16·18%). 그대로 둘지, 고정한 공개
      데이터셋을 비율 밖에 둘지(`split._stratify_groups` 가 고정 묶음도 센다), 비율을 바꿀지.

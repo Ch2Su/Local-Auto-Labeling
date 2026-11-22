@@ -162,7 +162,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-23 에 497개·58초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-23 에 500개·65초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
@@ -239,8 +239,9 @@ width/height 는 회전 전 원시 크기다**(`labeler.py check` 도 원시 크
   카메라 번호가 없고 같은 장소를 여러 자리에서 찍었다. **그래서 AI Hub 그림은 전부 train 에 둔다 (11-23 사용자 결정)** — 그날
   등록 파일의 `ah-*` 100대를 `split: train` 으로 고정했고(`import_aihub_pm.py --pin-train --apply`), 도구가 새로 등록하는
   카메라도 train 으로 적는다. 사용자가 손으로 더 넣을 수 있다 — **카메라 키를 `ah-NNNN` 으로 등록해야** '열지 않는다'·
-  `local_only`·train 고정이 걸리고(scan 은 출처를 `collected` 로 넣는다), 등록한 뒤 `--pin-train` 을 다시 돌린다. 중복은
-  docs/provenance.md 의 그 항목. **고정한 그림도 분할 비율에 든다** — AI Hub 가 전부 승인되면 직접 모은 그림의 train 몫이
+  `local_only`·train 고정이 걸리고(scan 은 출처를 `collected` 로 넣는다), 등록한 뒤 `--pin-train` 을 다시 돌린다. 넣기 전에
+  겹침(같은 그림·같은 영상·같은 자리)은 `import_aihub_pm.py --check <폴더>` 로 잰다 — Claude 가 그림을 못 보니 이 숫자가 전부다
+  (docs/provenance.md 의 그 항목). **고정한 그림도 분할 비율에 든다** — AI Hub 가 전부 승인되면 직접 모은 그림의 train 몫이
   66% → 55% 로 준다(사본 실측, docs/next.md 5번): 첫 분할 때 사용자와 정할 것.
 - **휴지통 비우기는 원본 파일까지 지운다**(`tidy.purge_trashed`) — 새로 모은 사진은 다른 사본이 없을 수 있으니 비우기 전에 물을 것.
 - **클래스는 10개다** — 11-09 에 responder(8, 출동 차량)·cone(9, 라바콘)을 붙였다(사용자 결정 — DetectView 유고 단서용, 판정은
