@@ -285,6 +285,32 @@ def test_a_batch_that_was_just_made_is_fetched_once(opened):
     assert opened["pending_first"]["reloads"] == 0
 
 
+# ----------------------------------------------------------------- 목록 주소
+
+def test_the_list_address_carries_the_batch(node, tmp_path):
+    """목록·이미지 보기·묶음 펼치기가 모두 `listUrl` 로 묻는다 — 배치 필터가 여기 안 실리면 배치를 열어도 전체 목록이 온다."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    script = "\n".join([
+        "const els = { '#filter-status': { value: 'pending' }, '#filter-order': { value: 'recent' } };",
+        "const $ = (sel) => els[sel];",
+        "const S = { ids: [3, 4], filterEmpty: false, filterClasses: new Set(), filterCamera: '', filterDomain: '',",
+        "            filterSplit: '', filterWork: '', tagF: { inc: [], exc: [], any: false, none: false }, tagNoneKey: '__none__' };",
+        "const compressIds = (ids) => ids.join(',');",
+        js_function(app, "tagQuery"), js_function(app, "listUrl"),
+        "const out = [listUrl(100, 0)];",
+        "S.filterWork = '7'; out.push(listUrl(100, 200));",
+        "S.filterWork = '__none__'; S.filterCamera = 'cam-01'; out.push(listUrl(50, 0));",
+        "els['#filter-status'].value = 'ids'; out.push(listUrl(10, 0));",
+        "console.log(JSON.stringify(out));",
+    ])
+    assert run_node(node, script, tmp_path) == [
+        "/api/images?status=pending&order=recent&limit=100&offset=0",
+        "/api/images?status=pending&order=recent&limit=100&offset=200&wb=7",
+        "/api/images?status=pending&order=recent&limit=50&offset=0&camera=cam-01&wb=__none__",
+        "/api/images?ids=3,4&limit=10&offset=0",                 # '지정한 id' 는 필터를 보지 않는다
+    ]
+
+
 # ----------------------------------------------------------------- 형식 거르기 (화면 ↔ 서버)
 
 NAMES = ["a.jpg", "A.JPG", "b.jpeg", "c.png", "d.bmp", "e.webp", "f.tif", "g.tiff", "h.avif", "i.heic", "j.gif", "k.txt",

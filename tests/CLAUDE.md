@@ -5,7 +5,7 @@
 규칙은 루트에 남겼다. 테스트를 더하면 여기와 README '회귀 테스트' 표에 적을 것.
 
 - `tests/test_js_parity.py` 가 '고치면 둘 다' 인 식(`maskCover`·`maskSlabs`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`capName`·
-  `MASK_MAX`·`MASK_DROP`·`MASK_SAME`·`MASK_MAX_PTS`)을 node 로 돌려 Python 과 견주고, 화면 스크립트(app·gallery·capture·health)의 문법도 본다. JS 선언을 글자로
+  `MASK_MAX`·`MASK_DROP`·`MASK_SAME`·`MASK_MAX_PTS`)을 node 로 돌려 Python 과 견주고, 화면 스크립트(app·gallery·capture·health·work)의 문법도 본다. JS 선언을 글자로
   떼므로(맨 왼쪽 `function 이름(` … 맨 왼쪽 `}`, 한 줄 `const`) 그 모양을 바꾸면 테스트의 규칙도 맞춘다. 짝이 새로 생기면 거기에 더할 것.
   다각형 영역(2026-11-19)은 꼬이지 않은·꼬인·픽셀에 맞춘 다각형과 사각형을 섞은 708건을 끝자리까지 견준다(`poly_cover_cases`,
   다각형 입력은 `helpers.random_poly`) — 화면 쪽은 `ptsBox`·`polyMask`·`maskFromWire`·`maskToWire` 를 함께 뗀다.
@@ -95,6 +95,17 @@
   돌려 실패하는 것을 봤다 — 그림이 실제로 나가는 두 경우는 색 단언에서 걸렸다. **대조군과 가릴 영역(같은 날 리뷰):** 보내도 되는
   그림마다 오른쪽 라벨을 통째로 덮는 영역을 두고 씨앗 여덟 개로 뽑아, 양성이 반 넘게 덮인 라벨이 아니고 음성이 영역 밖인지 본다
   (고치기 전에는 씨앗 0 의 음성 대조가 영역 한가운데였다). responder·cone 에 설명이 있고 판정 문구가 라바콘을 말하는지도.
+- **작업 배치 (2026-11-23)** — `tests/test_workbatch.py`(store·workbatch·서버 API·스캔 작업·`labeler.py scan`·영상 캡처의 넣기를
+  서버째로), `tests/test_upload.py`(웹 이미지 넣기 — 서버 API 와 `UploadManager` 를 따로), `tests/test_js_work.py`(app.js `approveTarget`·
+  `approveText`·`workLabel`·`workTodo`·`setStatus`·`setStatusNow`·`nextAfter`·`listUrl`·`tagQuery`, work.js `workFirstStatus`·`workOpen`·
+  `upExtOk` — `APP_PARTS`·`OPEN_APP_PARTS`·`WORK_PARTS`), `tests/test_work_batch_tool.py`(`tools/work_batch.py` 를 `sys.argv` 로).
+  그림은 작은 진짜 JPEG 이다(스캔·올리기가 열어 본다 — 색이 다르면 바이트가 달라 중복 검사에 걸리지 않는다). 옛 DB 는
+  `test_workbatch.OLD_IMAGES`(work_batch 열이 없는 images 표)로 만든다. 2026-11-23 에 규칙 스물일곱 가지를 하나씩 끄고 돌려 전부
+  실패하는 것을 봤다(하나는 원래 코드와 뜻이 같은 변형이라 그 대신 '승인 전 확인보다 먼저 갈 상태를 정하는' 변형을 돌려 봤다).
+  `test_js_filters.py`·`test_js_health.py`(+`health_harness.js`)·`test_js_views.py` 도 배치 필터·보기에 맞춰 늘렸다.
+- **테스트는 `YOLO_AUTOINSTALL=false` 로 돈다**(conftest, 2026-11-23) — Ultralytics 가 올라온 프로세스에서 못 알아보는 그림을
+  열면 `pi-heif` 를 이 `.venv` 에 설치하려 들었다(올리기 테스트가 전체 실행에서만 그렇게 실패했다 — 앞선 테스트가 Ultralytics 를
+  올려 둔다). `tests/test_yolo_io.py` 가 `image_size` 는 원래의 `Image.open` 으로 여는지 본다(갈아 끼운 것을 흉내 낸 대역으로).
 - `tests/test_eval_test.py`(11-15)는 `wsl/eval_test.py` 의 `at_conf`(놓침·헛 박스)가 conf 0.25·IoU 0.45 로 세어지는지 본다 —
   Ultralytics 8.4.212 의 검증기는 혼동 행렬을 val 의 conf 0.001·IoU 0.5 로 세서, 같은 119장에서 헛 박스가 에러 없이 20 → 988 이
   됐다(mAP 는 8.4.142 와 같았다 — docs/experiments.md '새 풀 프레임 데이터'). **Ultralytics 를 올리면 이 테스트부터 볼 것.** val 에

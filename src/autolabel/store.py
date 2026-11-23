@@ -1123,6 +1123,13 @@ class Store:
             rows = self._work_rows(con, " WHERE id=?", (int(batch_id),))
         return rows[0] if rows else None
 
+    def work_batch_brief(self, batch_id: int) -> dict | None:
+        """배치 한 줄만, 장수 없이 — {id, kind, name, hold}. 검수 화면이 이미지를 열 때마다(↑·↓ 를 누르고 있으면 초에 수십 번)
+        부르므로 이미지 표를 세지 않는다."""
+        with self.connect() as con:
+            r = con.execute("SELECT id, kind, name, hold FROM work_batches WHERE id=?", (int(batch_id),)).fetchone()
+        return None if r is None else {"id": int(r["id"]), "kind": r["kind"], "name": r["name"], "hold": bool(r["hold"])}
+
     def unbatched_counts(self) -> dict[str, int]:
         """배치 없는 이미지의 상태별 장수 ({상태: n} + total)."""
         out = {s: 0 for s in STATUSES}

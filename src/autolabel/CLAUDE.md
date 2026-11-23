@@ -359,7 +359,49 @@
   **그런 줄이 남아 있으면 서버 쪽 묶음(100개씩…) 경계가 밀려 있다** — 묶음을 펼칠 때는 펼친 묶음을 전부 새로 받고(`toggleChunk` —
   그 묶음만 받으면 사이의 이미지가 어느 묶음에도 안 나왔다), 다시 받은 뒤 보던·넘어갈 이미지가 닫힌 묶음으로 밀렸으면
   `openChunkWith()` 가 그 묶음을 펼친다.
-- **보기는 app.js 의 `VIEWS` 표 한 곳에 적는다 (11-15 리뷰).** 라벨링 말고의 보기(이미지 보기·영상 캡처·데이터 점검)마다
+- **작업 배치 (2026-11-23 사용자 요청 — `workbatch.py`·`upload.py`·`web/work.js`, 사용법은 README '작업 배치'. 설계는 사용자와
+  정했다: 아래 넷)** — 한 번에 넣은 묶음을 '작업 N' 으로 따로 보고 검수한 뒤 데이터셋에 넣는다.
+  - **DB:** 표 `work_batches`(id AUTOINCREMENT·kind capture|upload|scan|manual·name·note·hold·created_at)와 열 `images.work_batch`
+    (참조, ON DELETE SET NULL — 배치를 지워도 이미지는 남는다). `Store` 를 열 때 더한다(사용자 결정 '서버 켤 때 자동 + 직전
+    사본'): **이미지가 든 옛 DB 는 더하기 전에 `backups/<이름>_before_workbatch_<시각>.db` 로 통째로 뜨고**(`copy_db`, 하루 사본의
+    이름 꼴이 아니라 keep 정리에 안 지워진다), 못 뜨면 DB 를 바꾸지 않고 멈춘다(`needs_work_batch_migration` 은 읽기 전용).
+    서버뿐 아니라 새 코드의 명령·도구가 `Store` 를 처음 열 때도 같다 — 서버는 `store.migrated_from` 을 로그에 찍는다.
+    배치는 라벨이 아니라 `set_work_batch` 는 `updated_at`·변경 이력을 건드리지 않는다(자동 라벨링의 (상태, updated_at) 확인).
+  - **새 상태 `reviewed`('검수 끝', 사용자 결정 — 검수 끝 + 배치별 선택).** **'데이터셋' 은 여전히 `approved` 하나다** —
+    학습·분할·내보내기·데이터 점검(승인만)·`tools/` 가 전부 approved 만 읽으니 그 뜻을 바꾸지 말 것. `work_batches.hold` 가 참인
+    배치에서는 승인(Space·Enter·단추)이 reviewed 로 가고(`app.js approveTarget` — 이미 approved·reviewed 인 장은 approved),
+    배치의 '데이터셋에 추가'(`POST /api/work-batches/{id}/add` → `store.add_reviewed_to_dataset`)가 **그 배치의 reviewed 만** 올린다.
+    검수 대기·미라벨을 한꺼번에 올리는 길을 만들지 말 것('사람이 보지 않은 것은 승인되지 않게', 자동 승인 없음). 승인 전 확인
+    (사진이 뜨기 전·그리던 다각형·겹친 박스·자동 라벨링이 그새 넣은 박스·휴지통)은 reviewed 에도 건다 — `setStatus` 는 확인을
+    **먼저** 하고 그 뒤에 `approveTarget` 으로 갈 상태를 정한다(순서를 바꾸면 `tests/test_js_work.py` 가 실패한다). reviewed 는
+    `label --all` 의 대상(미라벨·검수 대기)이 아니라 예측이 덮지 않는다. 서버의 `/status` 는 어느 상태든 받는다(막는 것은 화면).
+    상태를 세는 곳(`STATUSES`·`counts`·cli status·화면의 숫자·상태 필터)에 하나 늘었다 — 상태를 고르는 새 코드는 reviewed 를 볼 것.
+  - **배치가 생기는 때:** `workbatch.ingest_as_batch` 가 `ingest(work=Intake)` 를 부르고, Intake 가 새 **미라벨** 이미지가 처음
+    나올 때 배치를 만든다(새 것이 없으면 안 만든다 · 시드는 묻지 않는다 · 끝나고 0장이면 지운다). 영상 캡처·이미지 넣기는
+    `mine`(이번에 넣는 파일 — 캡처는 앞에서 옮기다 멈춘 같은 이름까지)만 그 배치에 넣고 같은 스캔의 다른 새 파일은 'scan' 배치로
+    따로 묶는다. 폴더 스캔(웹 `job_scan`·`labeler.py scan`)은 새 파일 전부가 한 배치다. **`ingest` 를 부르는 새 길은 `ingest_as_batch`
+    로 부를 것**(그냥 부르면 그 이미지는 배치 없음). `tools/import_*` 는 `ingest_batch` 를 직접 부르니 배치 없음이다 — 묶는 것은
+    `tools/work_batch.py`(기본은 보기만, 읽기 전용으로 열어 열도 안 더한다).
+  - **배치 자동 라벨링:** `POST /api/jobs/predict {work_batch}` 는 `store.work_batch_image_ids(그 배치, 미라벨[+검수 대기])` 를
+    대상으로 — **빈 목록이면 빈 목록 그대로**(None 이면 `AutoLabeler.run` 이 미라벨 전부를 돈다). GPU 잠금은 그대로다.
+  - **목록 필터:** `_list_where(work=)` — 번호 또는 `NO_WORK`('배치 없음'), API `wb=`. 화면은 `S.filterWork` 이고 `noFilters`·
+    `filterState`·`setFilters`·`listUrl`·`renderFilterSummary`·`syncListControls` 에 들어 있다(새 필터 규칙 그대로). 목록 위 머리줄
+    (`#work-bar`, `renderWorkBar`)은 `setFilters` 가 맞추고, 배치 목록(`S.works`)은 `loadState` 마다 `loadWorks` 가 받는다.
+    배치 열기(`work.js workOpen`)는 `hcOpenFiltered` 와 같은 약속(저장 먼저 · 못 받으면 필터 되돌리기 · 받는 사이 다른 보기로 갔으면
+    끌고 오지 않기). `/api/images/{id}` 의 `work` 는 `store.work_batch_brief`(장수를 세지 않는다 — 이미지를 열 때마다 부른다).
+  - **웹 이미지 넣기(`upload.py`):** 영상 업로드처럼 본문 그대로(`POST /api/upload/{sid}/file?name&size`) 받아 `<DB 폴더>/upload/<세션>/
+    files/` 에 두고, 넣기(`commit`) 때만 `unlabeled/<카메라>/up<세션 시각>/` 로 옮겨 스캔한다 — **넣기 전에는 unlabeled 에 아무것도
+    없다**(폴더 스캔에 엉뚱한 배치로 걸리지 않게). 이름은 `clean_name`(경로 조각·Windows 금지 글자·장치 이름, 확장자는 `IMG_EXTS`
+    — 화면 `upExtOk`·`WK_EXTS` 와 같아야 한다, `tests/test_js_work.py`), 세션 id 는 `capture.SID_RE`, 파일은 `xb` 로 쓴다.
+    **카메라 없이는 넣지 않는다**(등록 키 또는 None = 자동 `vid-NN` — 번호는 `capture.taken_camera_keys`·`next_auto_key` 로 영상
+    캡처와 같은 줄, 한 장도 못 넣으면 등록을 되돌린다). 이미 있는 그림과 바이트가 같은 파일은 **옮기기 전에** 거른다
+    (`dupcheck.DupIndex` — 옮긴 뒤 스캔이 막으면 등록 안 된 사본이 unlabeled 에 남는다). 넣기는 `capman.commit_lock` → `ingest_lock`
+    순서·`_capture_blocker` 를 따른다. 서버를 켜면 넣지 않은 세션 폴더는 지운다(그 이름 꼴만).
+  - **`yolo_io.image_size` 는 PIL 의 원래 `Image.open`(`plain_image_open`)으로 연다** — Ultralytics(8.4.212)가 import 때 갈아 끼운
+    `Image.open` 은 못 알아보는 파일에서 `pi-heif` 를 **지금 파이썬 환경에 설치하려 든다**(`.venv` 는 다른 프로젝트도 쓴다). 그
+    모듈이 올라온 서버(자동 라벨링을 한 번이라도 돈 뒤)에서 이미지가 아닌 파일을 올리면 설치가 돌았다. 밖에서 온 파일을 여는 새
+    코드도 그것으로 열 것. 테스트는 `YOLO_AUTOINSTALL=false`(conftest). 썸네일·`display_size` 는 아직 `Image.open` 그대로다.
+- **보기는 app.js 의 `VIEWS` 표 한 곳에 적는다 (11-15 리뷰).** 라벨링 말고의 보기(이미지 보기·작업 배치·영상 캡처·데이터 점검)마다
   `show`·`hide`(setView 가 부른다)·`key`(그 보기의 키 처리 — **없으면 키를 버린다**)·`vToggle`(V 가 라벨링과 오간다 — 이미지
   보기만)·`full`(세 칸을 통째로 쓴다 — `body.view-full` 이 왼쪽 목록·가운데·오른쪽 칸을 숨긴다, style.css 한 줄)을 적는다.
   `setView`·`viewKeydown`·처음 열 때의 마지막 보기(`viewOf`)가 이 표만 본다 — **보기를 더할 때 그 셋과 keydown 을 따로 고치지
@@ -418,7 +460,7 @@
   내린다 — 새 끝내기 길을 만들면 둘 다 볼 것(안 내리면 누르고 있는 화살표가 그 뒤로 먹지 않는다). 목록 끝에서 반복 입력은 같은
   장을 다시 열지 않는다(한 번 누르기는 전처럼 다시 연다). `tests/test_js_nav.py` 가 이 함수들을 node 로 돌린다.
 - **건너뛰기와 '검수 대기로' 는 한 번 묻는다 (11-11 사용자 요청).** `skipOrAdvance` 는 건너뜀으로 내릴 때만 `confirm` 한다(상태를
-  바꾸지 않는 '다음' 은 묻지 않는다). 아래 줄의 `검수 대기로`(`#btn-to-pending` → `backToPending`)는 승인됨·건너뜀·휴지통에서
+  바꾸지 않는 '다음' 은 묻지 않는다). 아래 줄의 `검수 대기로`(`#btn-to-pending` → `backToPending`)는 승인됨·검수 끝(11-23)·건너뜀·휴지통에서
   보이고(`BACK_TO_PENDING` — 전의 휴지통 '복원' 을 넓혔다), 상태만 pending 으로 바꾸고 다음으로 간다. 둘 다 묻기 전에 `navBusy()`
   를 보고(물어 놓고 setStatus 가 버리지 않게), 답한 뒤 지금 이미지가 그대로인지 다시 본다. 서버의 `/status` 는 어느 상태로든
   받는다 — 막는 것은 화면뿐이다. pending 으로 돌린 승인 이미지는 `label --all` 이 예측으로 덮는다(이력은 남는다, README).

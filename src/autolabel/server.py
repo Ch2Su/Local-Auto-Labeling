@@ -763,12 +763,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
                 "cameras": [{**c, "place": cams[c["key"]].place if c["key"] in cams else None} for c in row["cameras"]]}
 
     def _work_brief(batch_id) -> dict | None:
-        if batch_id is None:
-            return None
-        row = store.get_work_batch(int(batch_id))
-        if row is None:
-            return None
-        return {"id": row["id"], "kind": row["kind"], "name": row["name"], "hold": row["hold"]}
+        return None if batch_id is None else store.work_batch_brief(int(batch_id))
 
     def _work_or_404(batch_id: int) -> dict:
         row = store.get_work_batch(batch_id)
