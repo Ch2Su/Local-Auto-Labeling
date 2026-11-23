@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from .config import Config
@@ -34,6 +34,9 @@ class IngestReport:
     by_camera: dict = None  # type: ignore[assignment]
     no_time: dict = None  # type: ignore[assignment]
     no_camera: int = 0
+    # 작업 배치 (workbatch.py, 2026-11-23): 이번에 새로 넣은 미라벨 이미지를 묶은 배치 — workbatch.Intake.finish 의 꼴
+    # {'main': {id, n} | None, 'other': {id, n} | None}. 배치 없이 돌린 스캔(work 를 안 준 ingest)은 None.
+    work: dict | None = None
 
     def __post_init__(self) -> None:
         if self.unreadable is None:
@@ -56,12 +59,13 @@ class IngestReport:
         labels = {
             "unlabeled": "미라벨",
             "pending": "검수 대기",
+            "reviewed": "검수 끝",
             "approved": "승인",
             "skipped": "건너뜀",
         }
         detail = ", ".join(
             f"{labels[k]} {self.unlabeled_status[k]}"
-            for k in ("unlabeled", "pending", "approved", "skipped")
+            for k in ("unlabeled", "pending", "reviewed", "approved", "skipped")
             if self.unlabeled_status.get(k)
         )
         lines = [
@@ -84,6 +88,12 @@ class IngestReport:
             lines.append(
                 f"  주의: 카메라 폴더 없이 들어온 새 이미지 {self.no_camera}장 -> 출처 없음(source='unlabeled')."
                 " 출처를 남기려면 unlabeled/<카메라키>/ 아래에 둘 것 (docs/provenance.md)")
+        if self.work:
+            main, other = self.work.get("main"), self.work.get("other")
+            if main:
+                lines.append(f"  작업 배치 {main['id']}: 새 이미지 {main['n']}장 — 검수 UI '작업 배치' 에서 엽니다")
+            if other:
+                lines.append(f"  작업 배치 {other['id']} (폴더 스캔): 폴더에 있던 다른 새 이미지 {other['n']}장")
         if self.unreadable:
             lines.append(f"  읽지 못한 파일 {len(self.unreadable)}개: {self.unreadable[:5]}")
         if self.duplicates:
@@ -204,12 +214,16 @@ def _check_db_paths(paths: Iterable[str], *, max_ratio: float = 0.5) -> None:
         )
 
 
-def ingest(cfg: Config, store: Store, *, force: bool = False) -> IngestReport:
+def ingest(cfg: Config, store: Store, *, force: bool = False,
+           work: Callable[[str], int | None] | None = None) -> IngestReport:
     """폴더를 훑어 아직 DB에 없는 이미지만 등록한다.
 
     이미 등록된 이미지는 건너뛴다. 재스캔이 빨라지고, 검수 UI에서 손본 라벨이
     원본 .txt 로 되덮이지 않는다. DB 경로가 디스크와 맞지 않으면(절반 넘게 '파일 없음')
     force 가 아닌 한 멈춘다 (`_check_db_paths`).
+
+    work 는 새 **미라벨** 이미지의 경로를 받아 그 이미지의 작업 배치 번호(없으면 None)를 돌려준다(2026-11-23,
+    workbatch.Intake — 보통은 `workbatch.ingest_as_batch` 로 부른다). 시드는 묻지 않는다(곧바로 승인이라 배치에 넣지 않는다).
     """
     raw = store.known_statuses()
     if not force:
@@ -229,7 +243,7 @@ def ingest(cfg: Config, store: Store, *, force: bool = False) -> IngestReport:
 
     def rest() -> IngestReport:
         return _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard,
-                                 unlabeled, cameras)
+                                 unlabeled, cameras, work)
 
     # --- 시드: 사람이 만든 정답이므로 곧바로 approved ---
     if cfg.seed_coco:
@@ -366,7 +380,7 @@ def _ingest_coco(cfg, store, known, pending, report, flush, guard) -> None:
 
 
 def _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard,
-                      images, cameras) -> "IngestReport":
+                      images, cameras, work=None) -> "IngestReport":
     # --- 미라벨: 아직 추론 전 ---
     seed_root = _seed_root(cfg)
     root = cfg.unlabeled.resolve()
@@ -402,6 +416,9 @@ def _ingest_unlabeled(cfg, store, known, pending, report, flush, statuses, guard
                 report.no_time[key] = report.no_time.get(key, 0) + 1
         else:
             report.no_camera += 1
+        if work is not None:
+            # 작업 배치 — 중복·읽지 못한 파일을 다 거른 뒤에 묻는다(넣지도 않을 파일 때문에 빈 배치가 생기지 않게)
+            item["work_batch"] = work(resolved)
         pending.append(item)
         report.unlabeled_images += 1
         report.unlabeled_status["unlabeled"] = report.unlabeled_status.get("unlabeled", 0) + 1

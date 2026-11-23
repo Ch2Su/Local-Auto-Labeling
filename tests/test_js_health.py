@@ -33,10 +33,10 @@ APP_PARTS = ("noFilters", "filterState", "setFilters")      # app.js — 필터 
 CELL = {"cell": {"x": 24, "y": 13, "n": 2, "ids": [5, 6], "more": 0}}
 HEAT = {"grid": [48, 27], "cells": [], "max": 0, "boxes": 0, "images": 0, "sample_id": None}
 REPORT = {"imgsz": 960, "default_imgsz": 640, "heatmap": HEAT}      # /api/health?heat=1 의 답(화면이 그리는 수치는 대역이 받는다)
-# 처음 상태(health_harness.js): 왼쪽 필터 = 검수 대기 · 클래스 1 · old-cam · cctv · train · 태그 7 포함/9 제외(하나라도)
+# 처음 상태(health_harness.js): 왼쪽 필터 = 검수 대기 · 클래스 1 · old-cam · cctv · train · 작업 배치 7 · 태그 7 포함/9 제외(하나라도)
 BEFORE = {"status": "pending", "classes": [1], "empty": False, "camera": "old-cam", "domain": "cctv", "split": "train",
-          "tagF": {"inc": [7], "exc": [9], "any": True, "none": False},
-          "selects": [["old-cam", True], ["cctv", True], ["train", True]]}
+          "work": "7", "tagF": {"inc": [7], "exc": [9], "any": True, "none": False},
+          "selects": [["old-cam", True], ["cctv", True], ["train", True], ["7", True]]}
 NO_TAGS = {"inc": [], "exc": [], "any": False, "none": False}
 
 SCENARIOS = {
@@ -216,8 +216,9 @@ def test_saving_the_controls_before_the_first_answer_keeps_the_saved_size(hc):
 
 def test_a_row_sets_that_one_filter_and_opens_the_gallery(hc):
     got = hc["filtered"]
-    want = {"status": "live", "classes": [], "empty": False, "camera": "cam-02", "domain": "", "split": "",
-            "tagF": NO_TAGS, "selects": [["cam-02", True], ["", False], ["", False]]}
+    # 열어 둔 작업 배치(7)도 다른 필터처럼 풀린다 — 데이터 점검의 수치는 배치를 가리지 않고 센 것이다 (2026-11-23)
+    want = {"status": "live", "classes": [], "empty": False, "camera": "cam-02", "domain": "", "split": "", "work": "",
+            "tagF": NO_TAGS, "selects": [["cam-02", True], ["", False], ["", False], ["", False]]}
     assert got["listedWith"] == [want] and got["filters"] == want    # 목록을 받을 때 이미 새 조건이다
     assert (got["loaded"], got["views"], got["view"], got["toasts"]) == ([42], ["gallery"], "gallery", [])
     assert hc["filtered_class_zero"]["filters"]["classes"] == [0]    # 클래스 0 도 '없음' 으로 읽지 않는다

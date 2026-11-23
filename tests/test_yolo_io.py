@@ -90,3 +90,44 @@ def test_display_size_swaps_for_rotated_exif(tmp_path):
     q = tmp_path / "plain.jpg"
     Image.new("RGB", (40, 20)).save(q)
     assert display_size(q) == image_size(q) == (40, 20)
+
+
+def test_a_file_that_is_not_an_image_never_starts_a_package_install(tmp_path, monkeypatch):
+    """Ultralytics(8.4.212)는 import 될 때 `PIL.Image.open` 을 제 함수로 바꾼다 — Pillow 가 파일을 못 알아보면 `pi-heif` 를
+    지금 쓰는 파이썬 환경에 설치하려 들고, 못 깔면 ModuleNotFoundError 를 낸다. 2026-11-23 에 웹 이미지 올리기의 테스트
+    (이름만 .jpg 인 글자 파일)가 전체 테스트에서만 그렇게 실패했다: 앞선 테스트가 Ultralytics 를 올려 둔 프로세스였다.
+    `image_size` 는 원래의 `Image.open` 으로 연다 — 여기서는 그 갈아 끼우기를 흉내 낸다(진짜 Ultralytics 를 올리지 않는다)."""
+    import sys
+    import types
+
+    import autolabel.yolo_io as yolo_io
+
+    # 진짜 원래 함수 — 전체 테스트에서는 앞선 테스트가 Ultralytics 를 이미 올려 `Image.open` 이 갈아 끼워져 있다(그것을 원래
+    # 함수로 잡으면 이 테스트가 진짜 설치를 돌린다 — 11-23 에 그렇게 겪었다)
+    original = yolo_io.plain_image_open()
+    installs: list = []
+
+    def image_open(filename, *args, **kwargs):               # ultralytics.utils.patches.image_open 과 같은 꼴
+        try:
+            return original(filename, *args, **kwargs)
+        except Image.UnidentifiedImageError:
+            installs.append(str(filename))                   # 진짜는 여기서 check_requirements("pi-heif") — 설치를 돌린다
+            raise ModuleNotFoundError("No module named 'pi_heif'") from None
+
+    fake = types.ModuleType("ultralytics.utils.patches")
+    fake._image_open = original
+    monkeypatch.setitem(sys.modules, "ultralytics.utils.patches", fake)
+    monkeypatch.setattr(Image, "open", image_open)
+
+    junk = tmp_path / "notes.jpg"
+    junk.write_bytes(b"this is not a jpeg at all")
+    with pytest.raises(Image.UnidentifiedImageError):        # OSError 다 — 스캔·올리기가 '읽지 못한 파일' 로 거른다
+        image_size(junk)
+    assert installs == []
+    good = tmp_path / "ok.jpg"
+    Image.new("RGB", (40, 20)).save(good)
+    assert image_size(good) == (40, 20)
+    assert yolo_io.plain_image_open() is original
+    # 그 모듈이 원래 함수를 다른 이름으로 들게 되면(Ultralytics 를 올렸다) 지금의 Image.open 으로 돌아간다 — 조용히 깨지지 않는다
+    del fake._image_open
+    assert yolo_io.plain_image_open() is image_open

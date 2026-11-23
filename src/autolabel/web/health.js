@@ -141,7 +141,9 @@ function hcRenderTiles(d) {
   const per = cams.map((r) => r.images);
   const tiles = [
     { label: "이미지", value: hcN(d.images),
-      sub: `승인 ${hcN(c.approved)} · 대기 ${hcN(c.pending)} · 미라벨 ${hcN(c.unlabeled)} · 건너뜀 ${hcN(c.skipped)} · 휴지통 ${hcN(c.trashed)}`,
+      // 검수 끝(작업 배치의 '모아서 한꺼번에' — 아직 승인 전, 2026-11-23)은 있을 때만 적는다
+      sub: `승인 ${hcN(c.approved)}` + (c.reviewed ? ` · 검수 끝 ${hcN(c.reviewed)}` : "")
+        + ` · 대기 ${hcN(c.pending)} · 미라벨 ${hcN(c.unlabeled)} · 건너뜀 ${hcN(c.skipped)} · 휴지통 ${hcN(c.trashed)}`,
       title: "큰 숫자는 지금 범위의 이미지 수, 아래는 범위와 상관없는 상태별 수입니다" },
     { label: "박스", value: hcN(d.boxes),
       sub: `이미지당 평균 ${d.per_image.mean} · 중앙값 ${d.per_image.median} · 최대 ${hcN(d.per_image.max)}`,

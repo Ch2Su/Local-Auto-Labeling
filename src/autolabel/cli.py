@@ -22,7 +22,7 @@ import sys
 
 from .config import Config, resolve
 from .export import export_yolo
-from .ingest import discover_classes, ingest
+from .ingest import discover_classes
 from .predictor import AutoLabeler
 from .split import ensure_splits, leak_report
 from .stopper import StopSignal
@@ -31,6 +31,7 @@ from .tidy import check_images, prune_missing, purge_trashed, tidy_approved
 from .trainer import find_resume_point
 from .trainer import resume_train as run_resume
 from .trainer import train as run_train
+from .workbatch import ingest_as_batch
 
 
 def _setup(args) -> tuple[Config, Store]:
@@ -41,7 +42,8 @@ def _setup(args) -> tuple[Config, Store]:
 def cmd_scan(args) -> int:
     cfg, store = _setup(args)
     # ingest 를 먼저 돌려야 클래스 추론이 등록된 박스를 볼 수 있다.
-    report = ingest(cfg, store, force=args.force)
+    # 이 스캔이 새로 등록한 미라벨 이미지는 작업 배치 하나가 된다 (2026-11-23, workbatch.py — 웹의 '폴더 스캔' 과 같다)
+    report = ingest_as_batch(cfg, store, "scan", force=args.force)
     classes = discover_classes(cfg, store)
     print(report.summary())
     print(f"클래스({len(classes)}개): {classes}")
@@ -255,11 +257,17 @@ def cmd_status(args) -> int:
     for key, label in [
         ("unlabeled", "미라벨    "),
         ("pending", "검수 대기 "),
+        ("reviewed", "검수 끝   "),       # 작업 배치의 '모아서 한꺼번에' — 아직 데이터셋(승인)에 넣지 않은 것 (2026-11-23)
         ("approved", "승인      "),
         ("skipped", "건너뜀    "),
     ]:
         print(f"  {label}: {counts[key]:>6}")
     print(f"  {'합계      '}: {counts['total']:>6}")
+    batches = [b for b in store.list_work_batches() if b["total"]]
+    if batches:
+        open_n = sum(1 for b in batches
+                     if b["counts"]["unlabeled"] + b["counts"]["pending"] + b["counts"]["reviewed"])
+        print(f"작업 배치 : {len(batches)}개 (할 일이 남은 배치 {open_n}개) — 검수 UI '작업 배치' 에서 봅니다")
     return 0
 
 

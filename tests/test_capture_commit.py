@@ -49,10 +49,12 @@ def session(cfg) -> Path:
     return d
 
 
-def manager(cfg, scans: list | None = None) -> CaptureManager:
-    def ingest():
+def manager(cfg, scans: list | None = None, asked: list | None = None) -> CaptureManager:
+    def ingest(mine=None, note=None):
         if scans is not None:
             scans.append(sorted(p.name for p in cfg.unlabeled.rglob("*.jpg")))
+        if asked is not None:      # 넣기가 스캔에 넘긴 것 — 이번 영상의 파일(작업 배치에 들 것)과 영상 이름
+            asked.append((sorted(p.name for p in mine), note))
         raise RuntimeError("시험에서는 스캔하지 않는다")      # commit 은 scan_error 로 적고 계속한다(파일은 이미 옮겼다)
 
     return CaptureManager(cfg, ingest=ingest)
@@ -60,12 +62,14 @@ def manager(cfg, scans: list | None = None) -> CaptureManager:
 
 def test_commit_moves_only_the_chosen_frames_and_closes_the_session(cfg, session):
     scans: list = []
-    man = manager(cfg, scans)
+    asked: list = []
+    man = manager(cfg, scans, asked)
     out = man.commit(SID, "cam-01", "2026-11-10 12:00:00", [0, 2, 3])
     names = ["cam-01_20261110_120000_000.jpg", "cam-01_20261110_120002_000.jpg", "cam-01_20261110_120003_000.jpg"]
     assert (out["moved"], out["exists"], out["missing"], out["camera"], out["auto"]) == (3, 0, 0, "cam-01", None)
     assert sorted(p.name for p in (cfg.unlabeled / "cam-01" / "20261110").iterdir()) == names
     assert scans == [names] and "scan_error" in out          # 옮긴 뒤에 스캔을 불렀다
+    assert asked == [(names, "clip.mp4")]                    # 이번에 넣은 파일과 영상 이름을 스캔에 넘긴다(작업 배치, 2026-11-23)
     assert not session.exists() and SID not in man.sessions  # 넣으면 세션 폴더째 지운다(안 고른 프레임도)
 
 
@@ -92,9 +96,13 @@ def test_a_commit_cut_short_by_a_dead_server_says_so_after_restart(cfg, session,
     assert "넣는 도중 서버가 꺼졌습니다" in s.note and "폴더 스캔" in s.note
     # 남은 프레임은 다시 넣을 수 있다 — 이미 옮긴 둘은 같은 이름이라 건너뛴다(덮지 않는다)
     monkeypatch.setattr(capture, "_rename", real)
+    asked: list = []
+    again.ingest = manager(cfg, asked=asked).ingest
     out = again.commit(SID, "cam-01", "2026-11-10 12:00:00", [0, 1, 2, 3])
     assert (out["moved"], out["exists"], out["missing"]) == (2, 2, 0)
     assert len(list((cfg.unlabeled / "cam-01" / "20261110").iterdir())) == 4
+    # 앞에서 옮기기만 하고 등록하지 못한 둘도 '이번 영상의 파일' 로 넘긴다 — 같은 작업 배치에 들게 (2026-11-23)
+    assert len(asked) == 1 and len(asked[0][0]) == 4
 
 
 def test_a_commit_refused_before_moving_leaves_the_saved_state_alone(cfg, session):

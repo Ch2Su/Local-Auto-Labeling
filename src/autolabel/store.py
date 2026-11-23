@@ -3,9 +3,14 @@
 이미지 한 장의 상태는 다음 중 하나:
   unlabeled : 아직 모델 추론을 돌리지 않음
   pending   : 자동 라벨이 붙었고 사람 검수 대기
-  approved  : 검수 완료 -> 학습 데이터로 사용
+  reviewed  : 검수 끝 — 사람이 봤지만 아직 데이터셋에 넣지 않음 (2026-11-23, 작업 배치의 '모아서 한꺼번에')
+  approved  : 검수 완료 -> 학습 데이터로 사용 ('데이터셋' 은 이 상태 하나뿐이다)
   skipped   : 사람이 보류/제외
   trashed   : 휴지통. 학습에서 빠지며, 비우기 전까지는 되돌릴 수 있다
+
+**reviewed 를 approved 와 따로 둔 이유.** 학습·분할·내보내기·`tools/` 가 전부 `status='approved'` 만 읽는다 — '검수는
+끝났지만 아직 넣지 않은' 이미지를 approved 에 섞으면 그 전부를 고쳐야 한다. pending 에 표시만 다는 방식은
+`label --all`(미라벨·검수 대기를 예측으로 덮는다)이 검수 끝낸 박스를 덮는다.
 """
 
 from __future__ import annotations
@@ -27,7 +32,11 @@ from .masks import merge as merge_masks
 from .masks import subtract as subtract_masks
 from .yolo_io import Box
 
-STATUSES = ("unlabeled", "pending", "approved", "skipped", "trashed")
+STATUSES = ("unlabeled", "pending", "reviewed", "approved", "skipped", "trashed")
+
+# 작업 배치가 어디서 왔나 (work_batches.kind): 영상 캡처의 넣기 · 웹 이미지 올리기 · 폴더 스캔 · 이미 있던 이미지를 묶음
+WORK_KINDS = ("capture", "upload", "scan", "manual")
+WORK_NAME_MAX = 60       # 작업 배치 이름
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -62,9 +71,27 @@ CREATE TABLE IF NOT EXISTS images (
     captured_at   TEXT,
     -- 촬영 형태 (2026-11-03): 'cctv' | 'noncctv' | 'drone', 모르면 NULL. legacy 는 출처가 없어 사람이 검수
     -- UI 에서 고른다(DOMAINS). 경로·source 로 가르던 도메인(test_baseline)에 CCTV 아닌 사진이 섞여 있었다.
-    domain        TEXT
+    domain        TEXT,
+    -- 작업 배치 (2026-11-23, 아래 work_batches). 한 번에 넣은 묶음 — NULL = 배치 없음(그 전에 넣은 이미지·도구가 넣은 것).
+    -- 라벨이 아니라 updated_at·변경 이력은 건드리지 않는다. 배치를 지우면 NULL 이 된다(이미지는 남는다).
+    work_batch    INTEGER REFERENCES work_batches(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_images_status ON images(status, uncertainty DESC, id);
+
+-- 작업 배치 (2026-11-23, 사용자 요청 — workbatch.py). 한 번에 넣은 묶음(영상 캡처의 넣기·웹 이미지 올리기·폴더 스캔)을
+-- '작업 N' 으로 따로 보고, 그 안에서 자동/수동 라벨링·검수를 한 뒤 데이터셋(approved)에 넣는다.
+-- hold = 1 이면 검수한 장을 곧바로 approved 로 올리지 않고 reviewed('검수 끝')로 모아 두었다가 한꺼번에 올린다
+-- (화면이 Space 의 뜻을 이 값으로 정한다 — 서버는 어느 쪽 상태든 받는다). note 는 무엇에서 왔나(영상 파일 이름 등) —
+-- 화면에만 쓴다. id 는 AUTOINCREMENT(지운 번호가 새 배치에 붙으면 열려 있던 화면이 엉뚱한 배치를 가리킨다 — 태그와 같은 이유).
+-- images.work_batch 는 이 표보다 먼저 만들어지지만 SQLite 는 참조하는 표가 나중에 생겨도 된다.
+CREATE TABLE IF NOT EXISTS work_batches (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT    NOT NULL,
+    name       TEXT,
+    note       TEXT,
+    hold       INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT    NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS boxes (
     id       INTEGER PRIMARY KEY,
@@ -284,6 +311,7 @@ DOMAINS = ("cctv", "noncctv", "drone")   # images.domain 에 넣을 수 있는 �
 NO_DOMAIN = "__none__"   # 도메인 필터에서 '미분류' 를 뜻하는 값
 NO_SPLIT = "__none__"    # 분할 필터에서 '미배정'(다음 학습·split 때 배정)을 뜻하는 값
 NO_TAG = "__none__"      # 태그 필터에서 '태그 없음' 을 뜻하는 값
+NO_WORK = "__none__"     # 작업 배치 필터에서 '배치 없음' 을 뜻하는 값 (2026-11-23)
 LIVE = "live"            # 목록의 상태 필터에서 '휴지통만 뺀 전부' — 'all' 은 휴지통도 넣는다 (데이터 점검의 범위 all, 2026-11-15)
 TAG_NAME_MAX = 40
 TEMPLATE_NAME_MAX = 40   # 가릴 영역 템플릿 이름
@@ -342,9 +370,18 @@ def clean_template_name(name: str) -> str:
     return name
 
 
+def clean_work_name(name: str | None) -> str | None:
+    """작업 배치 이름 다듬기 — 앞뒤·겹친 공백을 떼고, 비면 None(이름 없음 — 화면이 종류·시각으로 적는다). 너무 길면 ValueError."""
+    name = " ".join(str(name or "").split())
+    if len(name) > WORK_NAME_MAX:
+        raise ValueError(f"작업 배치 이름은 {WORK_NAME_MAX}자까지입니다.")
+    return name or None
+
+
 def _list_where(
     status: str | None, classes: list[int] | None, empty: bool, camera: str | None = None,
     domain: str | None = None, split: str | None = None, tag: int | str | TagFilter | None = None,
+    work: int | str | None = None,
 ) -> tuple[str, list]:
     """목록·개수가 함께 쓰는 WHERE 절. 둘이 어긋나면 묶음 수가 틀어진다.
 
@@ -374,6 +411,11 @@ def _list_where(
     elif split:
         parts.append("i.split=?")
         args.append(split)
+    if work == NO_WORK:              # 작업 배치(한 번에 넣은 묶음, 2026-11-23) — 다른 조건과 AND
+        parts.append("i.work_batch IS NULL")
+    elif work is not None and work != "":
+        parts.append("i.work_batch=?")
+        args.append(int(work))
     tf = TagFilter.of(tag)           # 태그 — 넣을 것(전부/하나라도)·뺄 것, 또는 하나도 없는 것 (TagFilter)
     if tf is not None and tf.none:
         parts.append("NOT EXISTS (SELECT 1 FROM image_tags t WHERE t.image_id=i.id)")
@@ -437,10 +479,50 @@ def copy_db(src: Path, dst: Path) -> Path:
     return dst
 
 
+def needs_work_batch_migration(db_path: Path) -> bool:
+    """이미지가 든 DB 인데 작업 배치 열(images.work_batch)이 아직 없는가 — 읽기 전용으로만 본다(아무것도 만들지 않는다).
+    DB 파일이 없거나 비었거나 images 표가 없으면(새 DB) False."""
+    db_path = Path(db_path)
+    try:
+        if not db_path.is_file() or db_path.stat().st_size == 0:
+            return False
+    except OSError:
+        return False
+
+    def look(con: sqlite3.Connection) -> bool:
+        try:
+            cols = {r[1] for r in con.execute("PRAGMA table_info(images)")}
+            if not cols or "work_batch" in cols:
+                return False
+            return con.execute("SELECT 1 FROM images LIMIT 1").fetchone() is not None
+        finally:
+            con.close()
+
+    try:
+        return look(sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=30.0))
+    except sqlite3.OperationalError:
+        # 읽기 전용으로 못 여는 자리(WAL 색인을 만들 수 없는 폴더 등) — 보통 연결로 읽기만 한다
+        return look(sqlite3.connect(db_path, timeout=30.0))
+
+
 class Store:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # 작업 배치 (2026-11-23, 사용자 결정 — '서버를 새 코드로 켤 때 자동으로, 직전에 사본'). 표 work_batches 와 열
+        # images.work_batch 를 더하기 **전에** DB 를 통째로 떠 둔다(`<DB 폴더>/backups/<이름>_before_workbatch_<시각>.db` —
+        # 하루 사본의 이름 꼴이 아니라 keep 정리에 지워지지 않는다). 사본을 못 뜨면 DB 를 바꾸지 않고 멈춘다.
+        # 이미지가 없는 DB(새 DB·테스트)는 뜨지 않는다. 그 사본의 경로를 migrated_from 에 남긴다(서버가 알린다).
+        self.migrated_from: Path | None = None
+        if needs_work_batch_migration(self.db_path):
+            dst = (self.db_path.parent / "backups"
+                   / f"{self.db_path.stem}_before_workbatch_{datetime.now():%Y%m%d_%H%M%S}.db")
+            try:
+                self.migrated_from = copy_db(self.db_path, dst)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"작업 배치 열을 더하기 전에 DB 사본을 뜨지 못해 DB 를 바꾸지 않았습니다 ({dst}): "
+                    f"{type(exc).__name__}: {exc}") from exc
         with self.connect() as con:
             con.executescript(_SCHEMA)
             # 이미 있는 DB 에는 CREATE TABLE IF NOT EXISTS 가 열을 더해 주지 않는다.
@@ -449,6 +531,13 @@ class Store:
             for col in ("split", "grp", "dhash", "camera", "captured_at", "domain"):
                 if col not in cols:
                     con.execute(f"ALTER TABLE images ADD COLUMN {col} TEXT")
+            # 작업 배치 (2026-11-23). 옛 코드는 이 열과 work_batches 표를 모르고 지나간다(넣는 이미지는 배치 없음).
+            # 참조가 붙은 열은 기본값이 NULL 일 때만 더할 수 있다 — 그래서 NULL = 배치 없음이다.
+            if "work_batch" not in cols:
+                con.execute("ALTER TABLE images ADD COLUMN work_batch INTEGER"
+                            " REFERENCES work_batches(id) ON DELETE SET NULL")
+            # 열이 생긴 뒤에야 만들 수 있어 _SCHEMA 밖에 둔다 (옛 DB 는 executescript 때 아직 열이 없다)
+            con.execute("CREATE INDEX IF NOT EXISTS idx_images_work ON images(work_batch)")
             # 가릴 영역의 전후 (2026-11-09). NULL = 그 저장에서 영역은 그대로였다.
             hcols = {r["name"] for r in con.execute("PRAGMA table_info(box_history)")}
             for col in ("masks_before", "masks_after"):
@@ -601,6 +690,7 @@ class Store:
         domain: str | None = None,
         split: str | None = None,
         tag: int | str | TagFilter | None = None,
+        work: int | str | None = None,
     ) -> list[dict]:
         """검수 대상 목록. 기본은 불확실도 높은 순(= 사람이 볼 가치가 큰 순).
 
@@ -625,9 +715,9 @@ class Store:
             return [by_id[i] for i in wanted if i in by_id][offset:offset + limit]
 
         if order == "rare":
-            return self._list_rare(status, classes, empty, limit, offset, camera, domain, split, tag)
+            return self._list_rare(status, classes, empty, limit, offset, camera, domain, split, tag, work)
         if order == "tag":
-            return self._list_by_tag(status, classes, empty, limit, offset, camera, domain, split, tag)
+            return self._list_by_tag(status, classes, empty, limit, offset, camera, domain, split, tag, work)
 
         order_sql = {
             "uncertainty": "i.uncertainty DESC, i.id ASC",
@@ -635,7 +725,7 @@ class Store:
             "recent": "i.updated_at DESC, i.id DESC",
         }.get(order, "i.uncertainty DESC, i.id ASC")
 
-        where, args = _list_where(status, classes, empty, camera, domain, split, tag)
+        where, args = _list_where(status, classes, empty, camera, domain, split, tag, work)
         sql = f"SELECT {_LIST_COLS} FROM images i{where} ORDER BY {order_sql} LIMIT ? OFFSET ?"
         args += [limit, offset]
 
@@ -666,7 +756,8 @@ class Store:
 
     def _list_rare(self, status, classes, empty, limit: int, offset: int,
                    camera: str | None = None, domain: str | None = None,
-                   split: str | None = None, tag: int | str | TagFilter | None = None) -> list[dict]:
+                   split: str | None = None, tag: int | str | TagFilter | None = None,
+                   work: int | str | None = None) -> list[dict]:
         """'드문 클래스 먼저' 정렬. 이미지 점수 = 박스마다 (신뢰도 × 그 클래스의 희소도) 중 최댓값.
 
         자동 라벨이 van·pickup 처럼 드문 클래스를 확신하는 이미지가 맨 앞에 온다 — 검수할
@@ -675,7 +766,7 @@ class Store:
         목록 묶음(100개씩…)과 맞도록 같은 조건의 전체를 점수로 줄 세운 뒤 잘라 준다.
         """
         rarity = self.class_rarity()
-        where, args = _list_where(status, classes, empty, camera, domain, split, tag)
+        where, args = _list_where(status, classes, empty, camera, domain, split, tag, work)
         with self.connect() as con:
             rows = con.execute(f"SELECT {_LIST_COLS} FROM images i{where}", args).fetchall()
             boxes = con.execute(
@@ -701,7 +792,8 @@ class Store:
 
     def _list_by_tag(self, status, classes, empty, limit: int, offset: int,
                      camera: str | None = None, domain: str | None = None,
-                     split: str | None = None, tag: int | str | TagFilter | None = None) -> list[dict]:
+                     split: str | None = None, tag: int | str | TagFilter | None = None,
+                     work: int | str | None = None) -> list[dict]:
         """'태그 순' 정렬 (2026-11-10 사용자 요청). 이미지의 태그를 **넓은 것부터** 이어 붙인 이름으로 줄 세운다.
 
         넓은 것 = 붙은 이미지가 많은 것(`list_tags` 의 n, 같으면 이름순) — 태그는 나라·도시·장소, 영상 종류처럼 넓고
@@ -710,7 +802,7 @@ class Store:
         맨 뒤. 목록 묶음(100개씩…)과 맞도록 같은 조건의 전체를 줄 세운 뒤 잘라 준다('드문 클래스 먼저' 와 같다).
         """
         tags = {t["id"]: (t["n"], t["name"].casefold()) for t in self.list_tags()}
-        where, args = _list_where(status, classes, empty, camera, domain, split, tag)
+        where, args = _list_where(status, classes, empty, camera, domain, split, tag, work)
         with self.connect() as con:
             rows = [dict(r) for r in con.execute(f"SELECT {_LIST_COLS} FROM images i{where}", args).fetchall()]
 
@@ -732,13 +824,14 @@ class Store:
         domain: str | None = None,
         split: str | None = None,
         tag: int | str | TagFilter | None = None,
+        work: int | str | None = None,
     ) -> int:
         """`list_images` 와 같은 조건으로 개수만 센다.
 
         클래스로 거르면 상태별 개수(`counts()`)를 쓸 수 없어서 따로 센다. 목록 UI 는
         이 수로 묶음(100개씩…)을 나누므로 필터와 정확히 같은 조건이어야 한다.
         """
-        where, args = _list_where(status, classes, empty, camera, domain, split, tag)
+        where, args = _list_where(status, classes, empty, camera, domain, split, tag, work)
         with self.connect() as con:
             return int(con.execute(f"SELECT COUNT(*) FROM images i{where}", args).fetchone()[0])
 
@@ -975,6 +1068,131 @@ class Store:
                 (status, current_id),
             ).fetchone()
         return int(row["id"]) if row else None
+
+    # ------------------------------------------------------------ 작업 배치
+    # 한 번에 넣은 묶음 (2026-11-23, 사용자 요청 — workbatch.py 머리말). 표 work_batches + images.work_batch.
+    # '일괄 수정 묶음'(box_history.batch·아래 batches())과는 다른 것이다 — 그래서 이름을 work 로 쓴다.
+
+    def create_work_batch(self, kind: str, *, name: str | None = None, note: str | None = None,
+                          hold: bool = False) -> int:
+        """새 작업 배치를 만들고 번호를 돌려준다. 이미지는 넣을 때(ingest_batch 의 work_batch)나 set_work_batch 로 붙인다."""
+        if kind not in WORK_KINDS:
+            raise ValueError(f"알 수 없는 작업 배치 종류: {kind}")
+        name = clean_work_name(name)
+        note = " ".join(str(note or "").split())[:200] or None
+        with _write_lock, self.connect() as con:
+            cur = con.execute("INSERT INTO work_batches(kind, name, note, hold, created_at) VALUES (?,?,?,?,?)",
+                              (kind, name, note, int(bool(hold)), _now()))
+            return int(cur.lastrowid)
+
+    @staticmethod
+    def _work_rows(con: sqlite3.Connection, where: str = "", args: tuple = ()) -> list[dict]:
+        """배치 줄 + 상태별 장수 + 카메라별 장수(휴지통 제외, 많은 것부터). 새 배치가 앞이다."""
+        rows = [dict(r) for r in con.execute(
+            f"SELECT id, kind, name, note, hold, created_at FROM work_batches{where} ORDER BY id DESC", args)]
+        by_id = {r["id"]: r for r in rows}
+        for r in rows:
+            r["hold"] = bool(r["hold"])
+            r["counts"] = {s: 0 for s in STATUSES}
+            r["cameras"] = []
+        for b, status, n in con.execute(
+                "SELECT work_batch, status, COUNT(*) FROM images WHERE work_batch IS NOT NULL"
+                " GROUP BY work_batch, status"):
+            if b in by_id and status in by_id[b]["counts"]:
+                by_id[b]["counts"][status] = int(n)
+        for b, camera, n in con.execute(
+                "SELECT work_batch, camera, COUNT(*) AS n FROM images"
+                " WHERE work_batch IS NOT NULL AND status != 'trashed'"
+                " GROUP BY work_batch, camera ORDER BY n DESC, camera"):
+            if b in by_id:
+                by_id[b]["cameras"].append({"key": camera, "n": int(n)})
+        for r in rows:
+            r["total"] = sum(r["counts"].values())
+        return rows
+
+    def list_work_batches(self) -> list[dict]:
+        """작업 배치 전부(새것부터): {id, kind, name, note, hold, created_at, counts{상태: 장수}, total, cameras[{key, n}]}.
+        이미지가 한 장도 안 남은 배치(전부 휴지통에서 비워졌다)도 싣는다 — 숨기는 것은 화면이 한다."""
+        with self.connect() as con:
+            con.execute("BEGIN")            # 줄과 장수가 같은 시점이게 (health_snapshot 과 같다)
+            return self._work_rows(con)
+
+    def get_work_batch(self, batch_id: int) -> dict | None:
+        with self.connect() as con:
+            con.execute("BEGIN")
+            rows = self._work_rows(con, " WHERE id=?", (int(batch_id),))
+        return rows[0] if rows else None
+
+    def unbatched_counts(self) -> dict[str, int]:
+        """배치 없는 이미지의 상태별 장수 ({상태: n} + total)."""
+        out = {s: 0 for s in STATUSES}
+        with self.connect() as con:
+            for status, n in con.execute(
+                    "SELECT status, COUNT(*) FROM images WHERE work_batch IS NULL GROUP BY status"):
+                if status in out:
+                    out[status] = int(n)
+        out["total"] = sum(out[s] for s in STATUSES)
+        return out
+
+    def update_work_batch(self, batch_id: int, *, name: str | None = None, set_name: bool = False,
+                          hold: bool | None = None) -> bool:
+        """이름(set_name 이 참일 때만 — 빈 이름은 '이름 없음')과 hold 를 고친다. 없는 배치면 False."""
+        fields, args = [], []
+        if set_name:
+            fields.append("name=?")
+            args.append(clean_work_name(name))
+        if hold is not None:
+            fields.append("hold=?")
+            args.append(int(bool(hold)))
+        with _write_lock, self.connect() as con:
+            if not fields:
+                return con.execute("SELECT 1 FROM work_batches WHERE id=?", (int(batch_id),)).fetchone() is not None
+            cur = con.execute(f"UPDATE work_batches SET {', '.join(fields)} WHERE id=?", (*args, int(batch_id)))
+            return cur.rowcount > 0
+
+    def set_work_batch(self, image_ids: list[int], batch_id: int | None) -> int:
+        """이미지들을 그 배치로 옮긴다(None = 배치 없음). 바꾼 행 수. 라벨이 아니라 updated_at 은 건드리지 않는다
+        (set_domain 과 같은 이유 — 자동 라벨링의 (상태, updated_at) 확인도 깨지 않는다). 없는 배치면 ValueError."""
+        ids = list(dict.fromkeys(int(i) for i in image_ids))
+        if not ids:
+            return 0
+        with _write_lock, self.connect() as con:
+            if batch_id is not None and con.execute(
+                    "SELECT 1 FROM work_batches WHERE id=?", (int(batch_id),)).fetchone() is None:
+                raise ValueError(f"작업 배치 {batch_id} 가 없습니다.")
+            cur = con.executemany("UPDATE images SET work_batch=? WHERE id=?", [(batch_id, i) for i in ids])
+            return cur.rowcount
+
+    def work_batch_image_ids(self, batch_id: int, statuses: tuple[str, ...]) -> list[int]:
+        """그 배치에서 주어진 상태인 이미지 id(번호순) — 배치만 자동 라벨링할 때."""
+        if not statuses:
+            return []
+        marks = ",".join("?" * len(statuses))
+        with self.connect() as con:
+            return [int(r[0]) for r in con.execute(
+                f"SELECT id FROM images WHERE work_batch=? AND status IN ({marks}) ORDER BY id",
+                (int(batch_id), *statuses))]
+
+    def add_reviewed_to_dataset(self, batch_id: int) -> int:
+        """그 배치의 '검수 끝'(reviewed)을 전부 승인(approved — 데이터셋)으로 올린다. 올린 장수.
+
+        **reviewed 만 올린다** — 검수 대기·미라벨은 사람이 보지 않은 것이라 그대로 둔다(자동 승인은 없다).
+        한 트랜잭션이라 도중에 사람이 '검수 끝' 으로 넘긴 장은 통째로 들어가거나 통째로 다음 번에 들어간다.
+        """
+        with _write_lock, self.connect() as con:
+            cur = con.execute(
+                "UPDATE images SET status='approved', updated_at=? WHERE work_batch=? AND status='reviewed'",
+                (_now(), int(batch_id)))
+            return cur.rowcount
+
+    def delete_work_batch(self, batch_id: int, *, only_if_empty: bool = False) -> bool:
+        """배치를 지운다 — 이미지는 남고 '배치 없음' 이 된다(FOREIGN KEY ON DELETE SET NULL). only_if_empty 면 이미지가
+        한 장이라도 있을 때 지우지 않는다(넣기가 한 장도 못 넣은 배치를 걷어 낼 때). 지웠으면 True."""
+        with _write_lock, self.connect() as con:
+            if only_if_empty and con.execute(
+                    "SELECT 1 FROM images WHERE work_batch=? LIMIT 1", (int(batch_id),)).fetchone():
+                return False
+            return con.execute("DELETE FROM work_batches WHERE id=?", (int(batch_id),)).rowcount > 0
 
     # -------------------------------------------------------------------- 박스
 
@@ -1609,7 +1827,8 @@ class Store:
 
         이미지 한 장마다 연결을 새로 여는 방식은 수천 장에서 몇 분씩 걸린다.
         items 각 항목: {path, source, width, height, status, boxes, uncertainty, model_version}
-        (+ 있으면 camera, captured_at — 새로 넣을 때만 쓰고, 이미 있는 행에는 쓰지 않는다)
+        (+ 있으면 camera, captured_at, work_batch — 새로 넣을 때만 쓰고, 이미 있는 행에는 쓰지 않는다.
+        work_batch 는 작업 배치 번호(work_batches.id) — 없는 번호면 FOREIGN KEY 로 통째로 실패한다)
         """
         if not items:
             return 0
@@ -1623,8 +1842,8 @@ class Store:
                 cur = con.execute(
                     "INSERT INTO images"
                     "(path, name, width, height, source, status, uncertainty, model_version, updated_at,"
-                    " camera, captured_at)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                    " camera, captured_at, work_batch)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
                     " ON CONFLICT(path) DO NOTHING",
                     (
                         it["path"],
@@ -1638,6 +1857,7 @@ class Store:
                         now,
                         it.get("camera"),
                         it.get("captured_at"),
+                        it.get("work_batch"),
                     ),
                 )
                 if cur.rowcount == 0:

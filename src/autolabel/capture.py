@@ -140,6 +140,16 @@ def next_auto_key(taken) -> str:
     return f"vid-{n:02d}"
 
 
+def taken_camera_keys(cfg, cams, fields, used) -> set[str]:
+    """자동 카메라 번호가 피해야 할 키 — 등록(cams·fields)·DB 이미지가 쓰는 키(used)·카메라 폴더 이름. 등록에서 빠진 옛 키나
+    등록 안 된 폴더와 번호가 겹치면 그 이미지가 새 카메라 것으로 읽힌다. 영상 캡처와 이미지 올리기(upload.py)가 함께 쓴다."""
+    taken = set(cams) | set(fields) | set(used or ())
+    for d in (cfg.unlabeled, cfg.labeled / "images", cfg.labeled / "labels"):
+        if d.is_dir():
+            taken |= {p.name for p in d.iterdir() if p.is_dir()}
+    return taken
+
+
 # ───────────────────────────── 세션 ─────────────────────────────
 
 class CaptureError(Exception):
@@ -247,11 +257,13 @@ class Session:
 class CaptureManager:
     """한 프로젝트의 캡처 세션들 (`<DB 폴더>/capture/`). 서버가 프로젝트마다 하나 만든다.
 
-    ingest: 스캔(잠금을 쥐고 `ingest.ingest` 를 부른다), blocker: 넣으면 안 되는 이유(정리·휴지통 비우기 중) 또는 None,
+    ingest: 스캔(잠금을 쥐고 `ingest.ingest` 를 부른다) — `ingest(mine=[이번에 넣는 파일 경로], note=영상 파일 이름)` 으로
+    부른다: 서버는 그 파일들을 작업 배치 하나로 묶는다(workbatch.py, 2026-11-23 — 결과의 `work`),
+    blocker: 넣으면 안 되는 이유(정리·휴지통 비우기 중) 또는 None,
     used_cameras: DB 이미지가 쓰는 카메라 키(자동 카메라 번호가 등록에서 빠진 옛 키와 겹치지 않게).
     """
 
-    def __init__(self, cfg, *, ingest: Callable[[], object], blocker: Callable[[], str | None] | None = None,
+    def __init__(self, cfg, *, ingest: Callable[..., object], blocker: Callable[[], str | None] | None = None,
                  known_paths: Callable[[], set[str]] | None = None,
                  used_cameras: Callable[[], set[str]] | None = None):
         self.cfg = cfg
@@ -611,10 +623,7 @@ class CaptureManager:
         hit = find_auto_camera(fields, tag)
         if hit and hit in cams:
             return hit, "reused"
-        taken = set(cams) | set(fields) | (self.used_cameras() if self.used_cameras else set())
-        for d in (self.cfg.unlabeled, self.cfg.labeled / "images", self.cfg.labeled / "labels"):
-            if d.is_dir():
-                taken |= {p.name for p in d.iterdir() if p.is_dir()}
+        taken = taken_camera_keys(self.cfg, cams, fields, self.used_cameras() if self.used_cameras else ())
         v = s.video
         name = re.sub(r"[\x00-\x1f\x7f]", " ", str(v.get("name") or "")).strip()[:80] or "?"
         attrs = {"kind": "cctv", "place": f"모름 — 영상 {name}", "note": auto_note(tag),
@@ -697,6 +706,9 @@ class CaptureManager:
             moved: list[Path] = []
             exists: list[str] = []
             missing: list[int] = []
+            # 이번 넣기의 파일(옮긴 것 + 같은 이름이 이미 있던 것) — 스캔이 새로 등록하면 이 영상의 작업 배치에 든다.
+            # 이미 있던 이름도 넣는 것은 '넣는 도중 서버가 꺼진' 뒤의 다시 넣기 때문이다(앞에서 옮기기만 하고 등록 못 한 프레임)
+            mine: list[Path] = []
             try:
                 for i in idx:
                     src = s.frame_path(i)
@@ -705,6 +717,7 @@ class CaptureManager:
                     else:
                         t = t0 + timedelta(seconds=frames[i]["t"])
                         dst = root / f"{t:%Y%m%d}" / frame_name(camera, t)
+                    mine.append(dst)
                     if dst.exists():
                         exists.append(dst.name)
                         continue
@@ -735,10 +748,12 @@ class CaptureManager:
                    "last": moved[-1].name if moved else None, "no_time": t0 is None}
             if moved:
                 try:
-                    report = self.ingest()
+                    report = self.ingest(mine=mine, note=str(s.video.get("name") or "") or None)
                 except Exception as exc:  # noqa: BLE001 — 파일은 이미 옮겼다. 사람이 고친 뒤 '폴더 스캔' 하면 된다
                     out["scan_error"] = f"{type(exc).__name__}: {exc}"
                 else:
+                    # 이 영상의 작업 배치와, 같은 스캔에 함께 걸린 다른 새 파일의 배치 (workbatch.Intake.finish)
+                    out["work"] = getattr(report, "work", None)
                     mine = {os.path.normcase(str(p.resolve())) for p in moved}
                     dups = [d for d in report.duplicates if os.path.normcase(d["path"]) in mine]
                     out["duplicates"] = len(dups)

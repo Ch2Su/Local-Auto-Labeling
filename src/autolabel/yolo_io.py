@@ -128,13 +128,31 @@ def iter_images(root: Path) -> Iterator[Path]:
             yield p
 
 
+def plain_image_open():
+    """PIL 의 **원래** `Image.open` — Ultralytics 가 갈아 끼운 것을 거치지 않는다 (2026-11-23).
+
+    Ultralytics(8.4.212 에서 확인 — `ultralytics/utils/patches.py`)는 import 될 때 `PIL.Image.open` 을 제 함수로 바꾼다:
+    Pillow 가 파일을 못 알아보면(`UnidentifiedImageError`) **`pi-heif` 를 지금 쓰는 파이썬 환경에 자동으로 설치하려 들고**
+    (`check_requirements` → `uv pip install`), 못 깔면 `ModuleNotFoundError` 를 낸다. 그래서 그 모듈이 올라온 프로세스
+    (자동 라벨링·학습·예측 비교를 한 번이라도 돈 검수 서버)에서 이미지가 아닌 파일을 열어 보는 것만으로 설치가 돌았다 —
+    웹 이미지 올리기의 테스트(이름만 .jpg 인 글자 파일)가 그렇게 실패했다. `.venv` 는 다른 프로젝트도 쓴다.
+    원래 함수는 그 모듈이 `_image_open` 으로 들고 있다. 모듈이 없거나 그 이름이 없어지면 지금의 `Image.open` 그대로다.
+    """
+    import sys
+
+    patches = sys.modules.get("ultralytics.utils.patches")
+    return getattr(patches, "_image_open", None) or Image.open
+
+
 def image_size(path: Path) -> tuple[int, int]:
     """픽셀 데이터를 디코딩하지 않고 헤더만 읽어 크기를 구한다.
 
     **EXIF 회전을 적용하지 않은 원시 크기**다. DB 의 width/height 가 이 값이고
     `labeler.py check` 도 이 값과 견준다. 화면·모델이 보는 크기는 `display_size`.
+    이미지가 아닌 파일이면 `PIL.UnidentifiedImageError`(OSError) — 스캔·이미지 올리기가 '읽지 못한 파일' 로 거른다.
+    `plain_image_open` 으로 연다: 못 알아보는 파일 하나가 패키지 설치를 일으키지 않게.
     """
-    with Image.open(path) as im:
+    with plain_image_open()(path) as im:
         return im.size
 
 

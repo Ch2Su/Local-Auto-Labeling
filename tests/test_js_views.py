@@ -18,7 +18,7 @@ import pytest
 from helpers import WEB, run_node
 from test_js_parity import find_node, js_function
 
-NAMES = ("gallery", "capture", "health")
+NAMES = ("gallery", "work", "capture", "health")
 
 
 def js_block(src: str, head: str) -> str:
@@ -77,6 +77,10 @@ def got(table, tmp_path_factory) -> dict:
         "  out.health_v = await press('v');",
         "  out.to_capture = await go('capture');",
         "  out.capture_v = await press('V');",
+        "  out.to_work = await go('work');",
+        "  out.work_space = await press(' ');",
+        "  out.work_enter = await press('Enter');",
+        "  out.work_v = await press('v');",
         "  out.to_new = await go('brandnew');",
         "  out.new_space = await press(' ');",
         "  out.new_s = await press('s');",
@@ -100,13 +104,16 @@ def test_the_table_lists_every_view_button_and_its_page(table):
     for name in names:
         assert f"body:not(.view-{name}) #{name}" in css, name
     assert "body.view-full .panel-left" in css               # 세 칸을 통째로 쓰는 보기의 숨김 목록은 한 줄뿐이다
-    assert not re.search(r"body\.view-(capture|health) \.panel-left", css)
+    assert not re.search(r"body\.view-(capture|health|work) \.panel-left", css)
+    for name in names:                                       # 보기마다 화면(<section id="이름">)이 있다
+        assert re.search(rf'<section class="[^"]*" id="{name}">', html), name
 
 
 def test_the_real_table(got):
     t = got["table"]
     assert {n: (v["key"], v["vToggle"], v["full"]) for n, v in t.items() if n != "brandnew"} == {
-        "gallery": (True, True, False), "capture": (True, False, True), "health": (False, False, True)}
+        "gallery": (True, True, False), "work": (False, False, True), "capture": (True, False, True),
+        "health": (False, False, True)}
     assert all(v["show"] == v["hide"] == "function" for v in t.values())
 
 
@@ -128,9 +135,17 @@ def test_a_view_without_a_key_handler_swallows_every_key(got):
     assert got["capture_v"] == [True, "capture", ["captureKey:V"]]         # 영상 캡처는 V 도 제 키로 받는다
 
 
+def test_the_work_batch_view_swallows_keys_too(got):
+    """작업 배치 보기(2026-11-23)는 키를 쓰지 않는다 — 배치 카드를 보는 동안 Space·Enter 가 숨은 라벨링 이미지를 승인하지 않는다."""
+    assert got["to_work"] == [["captureHide", "workShow"], ["view-full", "view-work"]]
+    assert got["work_space"] == [True, "work", []]
+    assert got["work_enter"] == [True, "work", []]
+    assert got["work_v"] == [True, "work", []]
+
+
 def test_a_view_added_to_the_table_is_safe_without_touching_keydown(got):
     """표에 show·hide 만 적은 새 보기 — keydown 을 고치지 않아도 Space(승인)·S(건너뛰기)·V 가 라벨링으로 새지 않는다."""
-    assert got["to_new"] == [["captureHide", "newShow"], ["view-brandnew"]]
+    assert got["to_new"] == [["workHide", "newShow"], ["view-brandnew"]]
     assert got["new_space"] == [True, "brandnew", []]
     assert got["new_s"] == [True, "brandnew", []]
     assert got["new_v"] == [True, "brandnew", []]

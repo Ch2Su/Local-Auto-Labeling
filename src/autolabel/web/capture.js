@@ -517,10 +517,20 @@ function capShowResult(r, name) {
   if (r.missing) lines.push(`프레임 파일이 없어 건너뜀 ${r.missing}장.`);
   if (r.duplicates) lines.push(`내용이 이미 있는 이미지와 같아 등록하지 않음 ${r.duplicates}장(멈춘 화면 등).`);
   if (r.unreadable) lines.push(`읽지 못해 등록하지 않음 ${r.unreadable}장.`);
-  if (r.other_new) lines.push(`폴더에 있던 다른 새 이미지 ${r.other_new}장도 함께 등록됐습니다.`);
+  // 작업 배치 (2026-11-23, 서버 workbatch.py): 이번에 넣은 프레임이 '작업 N' 하나가 된다. 같은 스캔에 걸린 다른 새 파일은
+  // '폴더 스캔' 배치로 따로 묶인다. 옛 서버(배치를 모른다)면 work 가 없다 — 그때는 전처럼 미라벨 목록으로 안내한다
+  const main = r.work && r.work.main, other = r.work && r.work.other;
+  if (main) lines.push(`이 프레임들은 <b>작업 ${main.id}</b>(${main.n}장)로 묶였습니다.`);
+  if (r.other_new) {
+    lines.push(`폴더에 있던 다른 새 이미지 ${r.other_new}장도 함께 등록됐습니다`
+      + (other ? ` — 작업 ${other.id}(폴더 스캔)으로 따로 묶었습니다.` : "."));
+  }
   if (r.scan_error) lines.push(`<span class="err-text">파일은 옮겼지만 스캔이 멈췄습니다: ${esc(r.scan_error)}<br>고친 뒤 데이터 → 폴더 스캔.</span>`);
   if (r.left) lines.push(esc(r.left));
-  if (r.moved && !r.scan_error) {
+  if (main) {
+    lines.push(`다음: <button class="linkbtn" id="cap-go-work">작업 ${main.id} 열기</button> 로 들어가 보거나, `
+      + '<button class="linkbtn" id="cap-go-works">작업 배치</button> 에서 자동 라벨링.');
+  } else if (r.moved && !r.scan_error) {
     lines.push('다음: 라벨링에서 <b>미라벨</b>로 보고, 모델 → 자동 라벨링. '
       + '<button class="linkbtn" id="cap-go-label">라벨링에서 보기</button>');
   }
@@ -535,6 +545,10 @@ function capShowResult(r, name) {
       await setView("label");
       try { await reloadList(); } catch (err) { toast(err.message, true); }
     };
+  }
+  if (main) {
+    $("#cap-go-work").onclick = () => workOpen(main.id);       // work.js — 라벨링을 그 배치로 걸러 연다
+    $("#cap-go-works").onclick = () => setView("work");
   }
   toast(r.moved ? `${r.moved}장을 넣었습니다` : "넣은 것이 없습니다", !r.moved || !!r.scan_error);
 }

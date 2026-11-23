@@ -36,18 +36,21 @@ async function scenario(sc) {
   Object.assign($("#filter-camera"), { value: "old-cam", on: true });
   Object.assign($("#filter-domain"), { value: "cctv", on: true });
   Object.assign($("#filter-split"), { value: "train", on: true });
+  Object.assign($("#filter-work"), { value: "7", on: true });       // 작업 배치 7 을 열어 둔 채다 (2026-11-23)
   Object.assign($("#hc-scope"), { value: "all" });
   Object.assign($("#hc-masked"), { value: "keep" });
 
   const S = { filterClasses: new Set([1]), filterEmpty: false, filterCamera: "old-cam", filterDomain: "cctv",
-              filterSplit: "train", tagF: { inc: [7], exc: [9], any: true, none: false }, images: [{ id: 11 }] };
+              filterSplit: "train", filterWork: "7", tagF: { inc: [7], exc: [9], any: true, none: false },
+              images: [{ id: 11 }] };
   const H = { data: { list_status: "live", scope: "all" }, heat: { cells: [] }, seq: 3, heatSeq: 5, opening: false,
               heatQ: { scope: "approved", masked: "drop", cls: "", cam: "cam-01" }, cls: "2", cam: "", hover: -1,
               sizeReady: false, savedSize: 960 };          // 입력 크기 칸은 아직 안 채워졌고, 지난번에 960 을 남겨 두었다
   const filters = () => ({
     status: $("#filter-status").value, classes: [...S.filterClasses], empty: S.filterEmpty,
-    camera: S.filterCamera, domain: S.filterDomain, split: S.filterSplit, tagF: JSON.parse(JSON.stringify(S.tagF)),
-    selects: ["#filter-camera", "#filter-domain", "#filter-split"].map((s) => [$(s).value, $(s).on]),
+    camera: S.filterCamera, domain: S.filterDomain, split: S.filterSplit, work: S.filterWork,
+    tagF: JSON.parse(JSON.stringify(S.tagF)),
+    selects: ["#filter-camera", "#filter-domain", "#filter-split", "#filter-work"].map((s) => [$(s).value, $(s).on]),
   });
   const log = { api: [], opened: [], views: [], toasts: [], listedWith: [], loaded: [], syncs: 0, renders: 0, saved: null };
 

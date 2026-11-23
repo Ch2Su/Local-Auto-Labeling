@@ -7,10 +7,16 @@ GPU·모델·학습은 쓰지 않는다. 돌리는 법은 README '회귀 테스�
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+# 테스트가 파이썬 환경을 바꾸지 않게 (2026-11-23). Ultralytics 는 없는 패키지를 만나면 지금 환경에 설치하려 든다
+# (`check_requirements` — 예: 못 알아보는 이미지 파일을 열면 `pi-heif`, yolo_io.plain_image_open 머리말). 이 `.venv` 는 다른
+# 프로젝트도 쓴다. Ultralytics 가 import 될 때 읽는 값이라 그 전에(여기서) 둔다 — 이미 정해 둔 값이 있으면 그대로 둔다.
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 

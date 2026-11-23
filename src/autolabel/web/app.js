@@ -56,6 +56,11 @@ const S = {
   filterCamera: "",           // 카메라(출처) 필터: "" 전체 / 카메라키 / "__none__" 출처 없음
   filterDomain: "",           // 도메인 필터: "" 전체 / cctv·noncctv·drone / "__none__" 미분류
   filterSplit: "",            // 분할 필터: "" 전체 / train·val·test / "__none__" 미배정
+  // 작업 배치 필터 (2026-11-23): "" 전체 / 배치 번호(글자) / "__none__" 배치 없음. '작업 배치' 보기에서 배치를 열면 여기가 그 번호다
+  filterWork: "",
+  works: [],                  // 작업 배치 [{id, kind, kind_name, name, note, hold, created_at, counts, total, cameras}] 새것부터 (/api/work-batches)
+  workNone: null,             // 배치 없는 이미지의 상태별 장수 {unlabeled, pending, …, total}
+  workNoneKey: "__none__",    // '배치 없음' 을 뜻하는 wb= 값 (/api/work-batches 의 none_key)
   statusBusy: false,          // 승인·건너뛰기(setStatus)가 도는 중 — navBusy 참고
   domainBusy: false,          // 도메인 지정이 도는 중 — 그동안의 Q·W·E(꾹 눌렀을 때 반복 입력)는 버린다
   tags: [],                   // [{id, name, n}] 이름순 (/api/tags)
@@ -1583,7 +1588,7 @@ function renderClassList() {
     li.querySelector(".nm").textContent = name;
 
     const STATUS_KO = {
-      approved: "승인", pending: "검수 대기",
+      approved: "승인", reviewed: "검수 끝", pending: "검수 대기",
       skipped: "건너뜀", unlabeled: "미라벨",
     };
     const breakdown = Object.keys(STATUS_KO)
@@ -1887,6 +1892,7 @@ function listUrl(limit, offset) {
   if (S.filterCamera) url += `&camera=${encodeURIComponent(S.filterCamera)}`;
   if (S.filterDomain) url += `&domain=${encodeURIComponent(S.filterDomain)}`;
   if (S.filterSplit) url += `&split=${encodeURIComponent(S.filterSplit)}`;
+  if (S.filterWork) url += `&wb=${encodeURIComponent(S.filterWork)}`;
   return url + tagQuery();
 }
 
@@ -2612,6 +2618,96 @@ async function loadCameras() {
   if (typeof renderGalleryCam === "function") renderGalleryCam();
 }
 
+/* ── 작업 배치 (2026-11-23 사용자 요청 — 서버 workbatch.py, '작업 배치' 보기는 work.js) ──
+ * 한 번에 넣은 묶음(영상 캡처의 넣기·이미지 넣기·폴더 스캔)이 '작업 N' 이다. 여기에는 라벨링과 맞닿는 것만 둔다:
+ * 목록 필터(S.filterWork — 다른 필터처럼 noFilters·filterState·setFilters 에 든다), 목록 위의 머리줄(renderWorkBar),
+ * 그리고 승인이 어느 상태로 가는가(approveTarget). 배치 목록(S.works)은 loadState 마다 다시 받는다. */
+
+/** 배치의 한 줄 이름 — '작업 7 · 이름' (이름이 없으면 종류: 영상 캡처·이미지 올리기·폴더 스캔). */
+function workLabel(b) {
+  return `작업 ${b.id} · ${b.name || b.kind_name || b.kind}`;
+}
+
+/** 배치에 남은 할 일(미라벨·검수 대기·검수 끝) 장수 — 0 이면 끝난 배치다(전부 승인·건너뜀·휴지통). */
+function workTodo(b) {
+  const c = b.counts || {};
+  return (c.unlabeled || 0) + (c.pending || 0) + (c.reviewed || 0);
+}
+
+/** 승인(Space·Enter·승인 단추)이 이 이미지를 어느 상태로 보내는가 (2026-11-23 사용자 결정).
+ *  '모아서 한꺼번에'(hold)인 작업 배치의 이미지는 먼저 '검수 끝'(reviewed)으로 — 데이터셋(approved)에는 배치의 '데이터셋에
+ *  추가' 가 한꺼번에 올리거나, 이미 검수 끝인 장에서 한 번 더 승인하면 그 장만 올라간다. 그 밖(배치 없음·'바로 추가' 배치)은
+ *  지금까지처럼 곧바로 approved 다. **이미 승인된 장은 어느 배치에서든 approved 그대로다** — 승인된 장에서 Space 를 눌러
+ *  넘기는 것이 그 장을 데이터셋에서 빼면 안 된다. */
+function approveTarget(cur) {
+  const hold = !!(cur && cur.work && cur.work.hold);
+  return hold && cur.status !== "reviewed" && cur.status !== "approved" ? "reviewed" : "approved";
+}
+
+/** 승인 단추의 글 — approveTarget 과 같은 판단이라 Space 가 무엇을 할지 늘 보인다. */
+function approveText(cur) {
+  if (approveTarget(cur) === "reviewed") return "검수 끝 후 다음";
+  return cur && cur.status === "reviewed" ? "데이터셋에 추가 후 다음" : "승인 후 다음";
+}
+
+async function loadWorks() {
+  let data;
+  try { data = await api("/api/work-batches"); } catch { return; }   // 실패해도 검수는 되어야 한다
+  S.works = data.batches || [];
+  S.workNone = data.unbatched || null;
+  S.workNoneKey = data.none_key || "__none__";
+  const shown = S.works.filter((b) => b.total > 0);
+  const sel = $("#filter-work");
+  const keep = S.filterWork;
+  sel.innerHTML = "";
+  const add = (value, text, title = "") => {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = text; o.title = title;
+    sel.appendChild(o);
+  };
+  add("", "작업 배치: 전체");
+  for (const b of shown) {
+    const live = b.total - (b.counts.trashed || 0);
+    add(String(b.id), `${workLabel(b)} (${live})`, [b.kind_name, b.note, b.hold ? "모아서 한꺼번에" : "바로 추가"].filter(Boolean).join(" · "));
+  }
+  if (shown.length) add(S.workNoneKey, `배치 없음 (${(S.workNone?.total ?? 0) - (S.workNone?.trashed ?? 0)})`);
+  $("#work-filter").classList.toggle("hidden", !shown.length);
+  // 고른 배치가 없어졌으면(이미지가 전부 비워졌다) 필터를 풀되 목록은 건드리지 않는다 — 다음에 받을 때 전체가 된다
+  S.filterWork = [...sel.options].some((o) => o.value === keep) ? keep : "";
+  sel.value = S.filterWork;
+  sel.classList.toggle("on", !!S.filterWork);
+  // 지금 이미지의 배치가 그새 바뀌었으면('모아서' 를 켜고 껐다 — 다른 창·작업 배치 보기) 승인 단추도 따라가게
+  if (S.cur && S.cur.work) {
+    const b = S.works.find((x) => x.id === S.cur.work.id);
+    if (b && (b.hold !== S.cur.work.hold || b.name !== S.cur.work.name)) {
+      S.cur.work = { ...S.cur.work, hold: b.hold, name: b.name };
+      renderStatusButtons();
+    }
+  }
+  renderWorkBar();
+  renderFilterSummary();
+  if (VIEW === "work" && typeof workRender === "function") workRender();
+}
+
+/** 목록 위 머리줄 — 지금 목록이 작업 배치 하나로 걸러져 있을 때만. 남은 장수와 '검수 끝' 을 한꺼번에 넣는 단추. */
+function renderWorkBar() {
+  const bar = $("#work-bar");
+  const b = S.filterWork ? S.works.find((x) => String(x.id) === S.filterWork) : null;
+  bar.classList.toggle("hidden", !b);
+  if (!b) return;
+  const c = b.counts;
+  $("#work-bar-name").textContent = workLabel(b);
+  $("#work-bar-name").title = [b.kind_name, b.note].filter(Boolean).join(" · ");
+  const parts = [["unlabeled", "미라벨"], ["pending", "검수 대기"], ["reviewed", "검수 끝"], ["approved", "데이터셋"],
+                 ["skipped", "건너뜀"]].filter(([k]) => c[k]).map(([k, t]) => `${t} ${c[k]}`);
+  $("#work-bar-sub").textContent = (parts.join(" · ") || "이미지 없음")
+    + (b.hold ? " — 모아서 한꺼번에 추가" : "");
+  const add = $("#work-bar-add");
+  add.classList.toggle("hidden", !c.reviewed);
+  add.textContent = `검수 끝 ${c.reviewed}장 데이터셋에 추가`;
+  add.title = "이 배치에서 '검수 끝' 인 이미지를 전부 승인(데이터셋)으로 올립니다 — 검수 대기·미라벨은 그대로 둡니다. 한 번 묻습니다";
+}
+
 /* ── 클래스 필터 ──────────────────────────────────────
  * 고른 클래스를 **전부** 가진 이미지만 남긴다(교집합). '박스 없음' 은 그 반대쪽이라
  * 같이 고를 수 없게 했다 — 교집합이 언제나 비기 때문이다. */
@@ -2697,6 +2793,7 @@ function renderFilterSummary() {
   if (S.filterCamera) parts.push(`카메라 ${optText($("#filter-camera"))}`);
   if (S.filterDomain) parts.push(`도메인 ${optText($("#filter-domain"))}`);
   if (S.filterSplit) parts.push(`분할 ${optText($("#filter-split"))}`);
+  if (S.filterWork) parts.push(optText($("#filter-work")) || `작업 ${S.filterWork}`);
   const tags = tagFilterText();
   if (tags) parts.push(tags);
   const sum = $("#filters-sum");
@@ -2719,15 +2816,15 @@ function toggleFilters(open = $("#filters-body").classList.contains("hidden")) {
 
 /** 아무 필터도 안 건 값(상태 칸만 status). */
 function noFilters(status) {
-  return { status, classes: [], empty: false, camera: "", domain: "", split: "",
+  return { status, classes: [], empty: false, camera: "", domain: "", split: "", work: "",
            tagF: { inc: [], exc: [], any: false, none: false } };
 }
 
-/** 왼쪽 필터의 지금 값 — 상태 칸과 클래스·카메라·도메인·분할·태그 필터. 사본이라 setFilters 로 되돌릴 수 있다. */
+/** 왼쪽 필터의 지금 값 — 상태 칸과 클래스·카메라·도메인·분할·작업 배치·태그 필터. 사본이라 setFilters 로 되돌릴 수 있다. */
 function filterState() {
   return {
     status: $("#filter-status").value, classes: [...S.filterClasses], empty: S.filterEmpty,
-    camera: S.filterCamera, domain: S.filterDomain, split: S.filterSplit,
+    camera: S.filterCamera, domain: S.filterDomain, split: S.filterSplit, work: S.filterWork,
     tagF: { ...S.tagF, inc: [...S.tagF.inc], exc: [...S.tagF.exc] },
   };
 }
@@ -2741,16 +2838,19 @@ function setFilters(f) {
   S.filterCamera = f.camera;
   S.filterDomain = f.domain;
   S.filterSplit = f.split;
+  S.filterWork = f.work ?? "";
   S.tagF = f.tagF;
-  for (const [sel, v] of [["#filter-camera", f.camera], ["#filter-domain", f.domain], ["#filter-split", f.split]]) {
+  for (const [sel, v] of [["#filter-camera", f.camera], ["#filter-domain", f.domain], ["#filter-split", f.split],
+                          ["#filter-work", S.filterWork]]) {
     $(sel).value = v;
     $(sel).classList.toggle("on", !!v);
   }
   tagFilter?.render();
   syncClassFilter();
+  renderWorkBar();
 }
 
-/** 클래스·카메라·도메인·분할·태그 필터를 모두 푼다(상태·정렬은 그대로). */
+/** 클래스·카메라·도메인·분할·작업 배치·태그 필터를 모두 푼다(상태·정렬은 그대로). */
 function clearFilters() {
   setFilters(noFilters($("#filter-status").value));
   reloadList();
@@ -3466,6 +3566,8 @@ async function loadState() {
   const c = st.counts;
   $("#counts").innerHTML =
     `<span>대기 <b>${c.pending}</b></span>` +
+    // 검수 끝(작업 배치의 '모아서 한꺼번에' — 아직 데이터셋에 넣지 않은 것)은 있을 때만. 옛 서버는 이 수를 주지 않는다
+    (c.reviewed ? `<span title="검수는 끝났지만 아직 데이터셋(승인)에 넣지 않은 이미지">검수 끝 <b>${c.reviewed}</b></span>` : "") +
     `<span>승인 <b>${c.approved}</b></span>` +
     `<span>미라벨 <b>${c.unlabeled}</b></span>` +
     `<span>건너뜀 <b>${c.skipped}</b></span>` +
@@ -3480,6 +3582,7 @@ async function loadState() {
   loadDomains();
   loadSplits();         // 학습·split 이 미배정을 배정하면 바뀐다
   loadTags();
+  loadWorks();          // 작업 배치 — 넣기·스캔으로 생기고, 상태를 바꿀 때마다 장수가 바뀐다. 실패해도 검수는 되어야 한다
   if (st.job && st.job.status === "running" && !S.jobPoll) watchJob(st.job.id);
 }
 
@@ -3519,6 +3622,7 @@ function syncListControls() {
   $("#filter-camera").disabled = ids;  // 카메라 필터도 마찬가지
   $("#filter-domain").disabled = ids;
   $("#filter-split").disabled = ids;
+  $("#filter-work").disabled = ids;    // 작업 배치 필터도 (id 목록은 배치를 보지 않는다)
   tagFilter?.setDisabled(ids);
   if (ids) $("#cf-panel").classList.add("hidden");
   renderFilterSummary();
@@ -3595,7 +3699,14 @@ function renderStatusButtons() {
   $("#btn-trash").classList.toggle("hidden", inTrash);
   $("#btn-to-pending").classList.toggle("hidden", !(status in BACK_TO_PENDING));
   $("#btn-purge").classList.toggle("hidden", !inTrash);
-  $("#btn-approve").classList.toggle("hidden", inTrash);
+  const approve = $("#btn-approve");
+  approve.classList.toggle("hidden", inTrash);
+  // 승인이 어디로 가는지를 단추에 적는다 (2026-11-23, approveTarget) — '모아서 한꺼번에' 배치면 '검수 끝', 그 밖은 '승인'
+  approve.innerHTML = `${approveText(S.cur)} <kbd>Space</kbd>`;
+  approve.title = !S.cur ? "" : approveTarget(S.cur) === "reviewed"
+    ? "이 이미지를 '검수 끝' 으로 표시하고 다음으로 — 이 작업 배치는 '모아서 한꺼번에' 라 데이터셋(승인)에는 아직 넣지 않습니다. 배치의 '데이터셋에 추가' 로 한꺼번에 넣습니다"
+    : S.cur.status === "reviewed" ? "검수 끝인 이 이미지를 지금 데이터셋(승인)에 넣고 다음으로"
+      : "이 이미지를 승인(데이터셋에 추가)하고 다음으로";
 }
 
 /** 가운데 위의 이름·정보 줄. meta 는 서버가 준 그대로(GET /api/images/{id}) — S.cur 의 크기는 사진이 뜨면 화면 크기로
@@ -3606,6 +3717,7 @@ function renderImgMeta(meta) {
   $("#img-meta").textContent =
     `${meta.width}×${meta.height} · ${meta.status} · ${meta.split || "미배정"} · 불확실도 ${meta.uncertainty}` +
     (meta.model_version ? ` · ${meta.model_version}` : "") +
+    (meta.work ? ` · 작업 ${meta.work.id}` : "") +
     // 출처(docs/provenance.md): 시각은 카메라 현지 시각 그대로(시간대 표기는 뗀다)
     (meta.camera ? ` · 카메라 ${meta.camera}${meta.camera_place ? `(${meta.camera_place})` : ""}` +
       (meta.captured_at ? ` ${meta.captured_at.replace("T", " ").slice(0, 19)}` : " · 촬영 시각 모름") : "");
@@ -3618,7 +3730,7 @@ async function refreshCurMeta() {
   const id = S.cur.id;
   const meta = await api(`/api/images/${id}`);
   if (!S.cur || S.cur.id !== id) return;          // 그새 다른 이미지로 갔다
-  for (const k of ["name", "path", "camera", "captured_at", "camera_place", "grp", "split"]) S.cur[k] = meta[k];
+  for (const k of ["name", "path", "camera", "captured_at", "camera_place", "grp", "split", "work"]) S.cur[k] = meta[k];
   S.maskBlock = meta.mask_block || null;          // test 로 고정한 카메라로 옮겼으면 가릴 영역을 둘 수 없다
   renderMaskTemplates();
   renderImgMeta({ ...meta, status: S.cur.status });
@@ -3735,22 +3847,27 @@ async function loadImageNow(id) {
  *  누르고 있으면 겹쳐 돌아, 화면에 뜨지도 않은 다음 이미지까지 승인됐다. 실패도 알린다 — 예전에는 묻혔다 (2026-11-05). */
 async function setStatus(status) {
   if (!S.cur || navBusy()) return;
-  if (status === "approved" && S.cur.status === "trashed") {
+  // 승인(Space·Enter·승인 단추)은 '모아서 한꺼번에' 인 작업 배치에서는 먼저 '검수 끝'(reviewed)으로 간다 (2026-11-23,
+  // approveTarget). **사람이 봤다는 표시이기는 마찬가지라 아래의 승인 전 확인은 둘 다에 건다** — 사진이 뜨기 전·그리던
+  // 다각형·겹친 박스·자동 라벨링이 그새 넣은 박스. 검수 끝은 나중에 보지 않고 한꺼번에 승인으로 올라가기 때문이다.
+  const approving = status === "approved";
+  if (approving && S.cur.status === "trashed") {
     toast("휴지통 이미지는 [검수 대기로] 되돌린 뒤 승인하세요", true);
     return;
   }
-  if (status === "approved" && S.imgId !== S.cur.id) {
+  if (approving && S.imgId !== S.cur.id) {
     toast("이 이미지의 사진이 아직 화면에 없어 승인하지 않았습니다 (받는 중이거나 받지 못했습니다)", true);
     return;
   }
   // 그리던 다각형은 아직 영역이 아니다 — 승인하면 덮으려던 자리가 칠해지지 않은 채 학습에 들어간다 (2026-11-19)
-  if (status === "approved" && S.poly) {
+  if (approving && S.poly) {
     toast("그리던 다각형이 있습니다 — Enter 로 닫거나 Esc 로 버린 뒤 승인하세요", true);
     return;
   }
+  if (approving) status = approveTarget(S.cur);
   S.statusBusy = true;
   try {
-    await setStatusNow(status);
+    await setStatusNow(status, approving);
   } catch (err) {
     toast(`${status ? "상태는 바꿨지만 " : ""}다음 이미지로 넘어가지 못했습니다: ${err.message}`, true);
   } finally {
@@ -3758,7 +3875,8 @@ async function setStatus(status) {
   }
 }
 
-async function setStatusNow(status) {
+/** approving — 승인 동작인가(상태가 approved 든 '검수 끝' reviewed 든, setStatus 가 정한다). 승인 전 확인을 여기에 건다. */
+async function setStatusNow(status, approving = status === "approved") {
   const id = S.cur.id;
   // 저장에 실패한 채로 승인하면 화면과 다른 박스가 학습에 들어간다.
   if (!(await saveBeforeLeaving())) return;
@@ -3769,7 +3887,7 @@ async function setStatusNow(status) {
   }
   // 자동 라벨링이 도는 중이면 승인 전에 서버의 박스를 한 번 더 본다 — 보는 사이 작업이 이 이미지에 박스를 넣었으면
   // 사람이 보지 않은 박스가 승인된다(2026-11-05). 작업이 끝난 뒤는 syncCurrentAfterJob 이 맞춘다.
-  if (status === "approved" && S.jobKind === "predict") {
+  if (approving && S.jobKind === "predict") {
     const now = await api(`/api/images/${id}`);
     if (!S.cur || S.cur.id !== id) return;
     if (!sameBoxes(now.boxes, S.boxes)) {
@@ -3780,7 +3898,7 @@ async function setStatusNow(status) {
   }
   const before = S.images.map((im) => im.id);
 
-  if (status === "approved") {
+  if (approving) {
     const overlaps = selfOverlaps();
     if (overlaps.length) {
       const lines = overlaps.slice(0, 5).map(([i, j, v]) =>
@@ -3851,6 +3969,7 @@ async function skipOrAdvance() {
  *  승인을 풀면 다시 승인할 때까지 학습에서 빠진다. */
 const BACK_TO_PENDING = {
   approved: "이 이미지의 승인을 풀고 검수 대기로 되돌립니다. 다시 승인할 때까지 학습에 들어가지 않습니다.",
+  reviewed: "이 이미지의 '검수 끝' 을 풀고 검수 대기로 되돌립니다.",
   skipped: "이 이미지의 '건너뜀'을 풀고 검수 대기로 되돌립니다.",
   trashed: "이 이미지를 휴지통에서 꺼내 검수 대기로 되돌립니다.",
 };
@@ -4235,6 +4354,28 @@ $("#filter-split").onchange = () => {
   $("#filter-split").classList.toggle("on", !!S.filterSplit);
   reloadList();
 };
+// 작업 배치 필터 (2026-11-23) — 고르면 그 배치의 이미지만. 머리줄(#work-bar)은 목록을 받은 뒤가 아니라 지금 맞춘다:
+// 저장을 못 해 reloadList 가 칸을 되돌리면 setFilters 가 머리줄도 되돌린다
+$("#filter-work").onchange = () => {
+  S.filterWork = $("#filter-work").value;
+  $("#filter-work").classList.toggle("on", !!S.filterWork);
+  renderWorkBar();
+  reloadList();
+};
+$("#work-bar-exit").onclick = (e) => {
+  e.currentTarget.blur();            // 포커스가 남으면 Space 가 승인 대신 이 단추를 또 누른다
+  S.filterWork = "";
+  $("#filter-work").value = "";
+  $("#filter-work").classList.remove("on");
+  renderWorkBar();
+  reloadList();
+};
+$("#work-bar-list").onclick = (e) => { e.currentTarget.blur(); setView("work"); };
+$("#work-bar-add").onclick = (e) => {
+  e.currentTarget.blur();
+  const b = S.works.find((x) => String(x.id) === S.filterWork);
+  if (b) workAddToDataset(b);        // work.js — 한 번 묻고 '검수 끝' 을 전부 승인으로
+};
 // 태그 필터 — 여러 개 넣고 빼기, 찾기 칸 (2026-11-04 사용자 요청, makeTagFilter)
 tagFilter = makeTagFilter($("#filter-tags"));
 $("#btn-mtpl-save").onclick = (e) => { e.currentTarget.blur(); saveMaskTemplate(); };
@@ -4378,6 +4519,7 @@ const VIEW_KEY = `view:${BASE}`;
  * 함수는 뒤에 읽히는 스크립트(gallery.js·capture.js·health.js)에 있어서 부를 때 찾는다. */
 const VIEWS = {
   gallery: { show: () => galleryShow(), hide: () => galleryHide(), key: (e) => galleryKey(e), vToggle: true },
+  work: { show: () => workShow(), hide: () => workHide(), full: true },                                       // 2026-11-23 (work.js)
   capture: { show: () => captureShow(), hide: () => captureHide(), key: (e) => captureKey(e), full: true },   // 2026-11-10
   health: { show: () => healthShow(), hide: () => healthHide(), full: true },                                 // 2026-11-15
 };
@@ -4636,7 +4778,7 @@ async function loadProjects() {
     // 검수 대기가 없으면(예: 시드만 넣은 첫 실행) 빈 화면 대신
     // 실제로 이미지가 있는 상태로 필터를 옮겨 준다.
     if (!S.images.length) {
-      const fallback = ["approved", "pending", "unlabeled", "skipped", "trashed"]
+      const fallback = ["approved", "pending", "reviewed", "unlabeled", "skipped", "trashed"]
         .find((s) => (S.counts?.[s] || 0) > 0);
       if (fallback) {
         $("#filter-status").value = fallback;

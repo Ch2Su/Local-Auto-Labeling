@@ -43,7 +43,7 @@ from .health import cell_images as health_cell_images
 from .health import heatmap as health_heatmap
 from .health import masked_out as health_masked_out
 from .health import report as health_report
-from .ingest import discover_classes, ingest
+from .ingest import discover_classes
 from .jobs import JobManager
 from .predictor import AutoLabeler, LiveDetector
 from .masks import MAX_MASKS, MAX_POINTS, to_wire
@@ -54,12 +54,16 @@ from .scoring import image_uncertainty
 from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
 from .stopper import StopSignal
-from .store import DOMAINS, LIVE, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, Store, TagFilter, TemplateExists
+from .store import (DOMAINS, LIVE, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, NO_WORK, WORK_NAME_MAX, Store, TagFilter,
+                    TemplateExists)
 from .tidy import prune_missing, purge_trashed, tidy_approved
 from .trainer import find_resume_point
 from .trainer import resume_train as run_resume
 from .trainer import train as run_train
-from .yolo_io import Box, display_size
+from .upload import MAX_FILE_BYTES, MAX_FILES, UploadError, UploadManager
+from .workbatch import KIND_NAMES as WORK_KIND_NAMES
+from .workbatch import ingest_as_batch
+from .yolo_io import IMG_EXTS, Box, display_size
 
 WEB_DIR = Path(__file__).parent / "web"
 
@@ -177,6 +181,21 @@ class PredictIn(BaseModel):
     include_pending: bool = False
     # 타일 추론으로 돌릴지 (2026-11-10, 메뉴 '자동 라벨링 (타일)' — tiling.py). 기본은 통째 추론
     tiles: bool = False
+    # 이 작업 배치의 이미지만 (2026-11-23, workbatch.py — 작업 배치 보기의 '자동 라벨링'). 없으면 전체
+    work_batch: int | None = Field(None, ge=1)
+
+
+class WorkBatchEditIn(BaseModel):
+    # 작업 배치 고치기 — 보낸 칸만 본다. name 을 빈 글로 보내면 이름을 지운다(화면이 종류·시각으로 적는다).
+    # hold: true = 검수한 장을 '검수 끝' 으로 모아 두었다가 한꺼번에 데이터셋에, false = 검수하는 대로 승인
+    name: str | None = Field(None, max_length=200)
+    hold: bool | None = None
+
+
+class UploadBeginIn(BaseModel):
+    # 웹 이미지 올리기 (2026-11-23, upload.py). camera 를 비우면 넣을 때 이 묶음용 카메라를 자동으로 등록한다(vid-NN)
+    camera: str | None = Field(None, max_length=64)
+    name: str | None = Field(None, max_length=200)       # 작업 배치 이름 (없어도 된다)
 
 
 class TrainIn(BaseModel):
@@ -486,11 +505,27 @@ def _tag_filter(tag: str | None, xtag: str | None, tagmode: str) -> TagFilter | 
     return TagFilter(tuple(inc), tuple(exc), tagmode == "any") if inc or exc else None
 
 
+def _work_filter(wb: str | None) -> int | str | None:
+    """목록 API 의 `wb=` 를 store 의 작업 배치 조건으로 — 번호, `__none__`(배치 없음), 없으면 None. 읽을 수 없으면 400."""
+    if wb is None or wb == "":
+        return None
+    if wb == NO_WORK:
+        return NO_WORK
+    n = _to_id(wb)
+    if n is None:
+        raise HTTPException(400, f"작업 배치 번호로 읽을 수 없습니다: {wb[:40]}")
+    return n
+
+
 def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str | None = None,
                guard: bool = True) -> FastAPI:
     """프로젝트 하나의 앱. guard 는 바깥 앱일 때만 켠다 — 탭 서버(create_multi_app)는 바깥 앱이 한 번 건다.
     bind_host 는 서버가 연 주소(labeler.py review 의 --host, 없으면 config 의 server.host) — _RequestGuard 참고."""
     store = Store(cfg.db)
+    if store.migrated_from is not None:
+        # 작업 배치 열·표를 처음 더했다 (2026-11-23 — Store.__init__). 더하기 직전의 DB 가 어디 있는지 알린다
+        print(f"[{label}] DB 에 작업 배치(표 work_batches · 열 images.work_batch)를 더했습니다. 더하기 직전의 DB 사본: "
+              f"{store.migrated_from}")
     jobs = JobManager(label)          # label 은 'GPU 를 누가 쓰는 중' 안내에 쓰인다
     # 스캔(ingest)은 '폴더 스캔' 작업과 영상 캡처의 '넣기'(작업 큐 밖, capture.py)가 함께 부른다 — 겹치지 않게
     ingest_lock = threading.Lock()
@@ -623,6 +658,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             "camera": r.get("camera"),
             "domain": r.get("domain"),
             "split": r.get("split"),
+            "work": r.get("work_batch"),
             "tags": sorted(int(t) for t in r["tag_ids"].split(",")) if r.get("tag_ids") else [],
         }
         if "rare_score" in r:      # '드문 클래스 먼저' 정렬일 때만
@@ -635,13 +671,14 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         status: str = "pending", limit: int = 300, offset: int = 0, order: str = "uncertainty",
         ids: str | None = None, cls: str | None = None, empty: bool = False,
         camera: str | None = None, domain: str | None = None, split: str | None = None,
-        tag: str | None = None, xtag: str | None = None, tagmode: str = "all",
+        tag: str | None = None, xtag: str | None = None, tagmode: str = "all", wb: str | None = None,
     ) -> dict:
         """`cls=2,4` 는 **두 클래스를 모두 가진** 이미지만, `empty=1` 은 박스가 없는 이미지만.
 
         둘을 같이 주면 `empty` 가 이긴다 (store.list_images 참고). `domain=__none__` 은 미분류,
         `split=__none__` 은 미배정. `tag=3,7` 은 그 태그가 **모두** 붙은 것(`tagmode=any` 면 하나라도),
         `xtag=5,9` 는 그중 하나라도 붙은 것을 뺀다. `tag=__none__` 은 태그 없는 것(`xtag` 는 보지 않는다).
+        `wb=7` 은 작업 배치 7 의 이미지만, `wb=__none__` 은 배치 없는 이미지(2026-11-23, workbatch.py).
         """
         if ids is not None:
             # 'id 로 열기': 쉼표·공백으로 구분한 id 와 범위(5493-5497). 상태 필터를 무시하고 준 순서대로.
@@ -670,14 +707,15 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         if split and split not in (*SPLITS, NO_SPLIT):
             raise HTTPException(400, f"알 수 없는 분할: {split}")
         tag_f = _tag_filter(tag, xtag, tagmode)
+        work = _work_filter(wb)
         rows = store.list_images(
             status=status, limit=limit, offset=offset, order=order,
-            classes=wanted_cls, empty=empty, camera=camera, domain=domain, split=split, tag=tag_f,
+            classes=wanted_cls, empty=empty, camera=camera, domain=domain, split=split, tag=tag_f, work=work,
         )
-        if empty or wanted_cls or camera or domain or split or tag_f is not None:
+        if empty or wanted_cls or camera or domain or split or tag_f is not None or work is not None:
             # 거르면 상태별 개수를 쓸 수 없다. 목록 묶음이 이 수로 나뉘므로 같은 조건으로 센다.
             total = store.count_images(status=status, classes=wanted_cls, empty=empty,
-                                       camera=camera, domain=domain, split=split, tag=tag_f)
+                                       camera=camera, domain=domain, split=split, tag=tag_f, work=work)
         else:
             counts = store.counts()
             if status == LIVE:          # 휴지통만 뺀 전부 (store._list_where)
@@ -714,6 +752,63 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
                       for k, c in sorted(reg.items())]
         return {"cameras": cams, "registered": registered, "no_camera": counts.get(None, 0), "none_key": NO_CAMERA,
                 "error": error}
+
+    # ── 작업 배치 (2026-11-23 사용자 요청, workbatch.py · web/work.js): 한 번에 넣은 묶음을 따로 보고 검수한 뒤 데이터셋에 ──
+    # 주소를 /api/images/… 밑에 두지 않는다({image_id} 경로와 겹치면 FastAPI 가 422 에서 멈춘다 — /api/bulk 와 같은 이유).
+
+    def _work_out(row: dict) -> dict:
+        """화면에 주는 배치 한 줄 — 카메라에 장소를 붙인다(장소는 화면에만 쓴다)."""
+        cams = _cameras()[0]
+        return {**row, "kind_name": WORK_KIND_NAMES.get(row["kind"], row["kind"]),
+                "cameras": [{**c, "place": cams[c["key"]].place if c["key"] in cams else None} for c in row["cameras"]]}
+
+    def _work_brief(batch_id) -> dict | None:
+        if batch_id is None:
+            return None
+        row = store.get_work_batch(int(batch_id))
+        if row is None:
+            return None
+        return {"id": row["id"], "kind": row["kind"], "name": row["name"], "hold": row["hold"]}
+
+    def _work_or_404(batch_id: int) -> dict:
+        row = store.get_work_batch(batch_id)
+        if row is None:
+            raise HTTPException(404, "그런 작업 배치가 없습니다.")
+        return row
+
+    @app.get("/api/work-batches")
+    def list_work_batches() -> dict:
+        """작업 배치 전부(새것부터)와 배치 없는 이미지의 상태별 장수. 필터 칸과 '작업 배치' 보기가 함께 쓴다."""
+        return {"batches": [_work_out(r) for r in store.list_work_batches()],
+                "unbatched": store.unbatched_counts(), "none_key": NO_WORK,
+                "name_max": WORK_NAME_MAX}
+
+    @app.get("/api/work-batches/{batch_id}")
+    def get_work_batch(batch_id: int) -> dict:
+        return _work_out(_work_or_404(batch_id))
+
+    @app.put("/api/work-batches/{batch_id}")
+    def edit_work_batch(batch_id: int, payload: WorkBatchEditIn) -> dict:
+        """이름·'모아서 한꺼번에'(hold)를 고친다 — 보낸 칸만. 이미지의 상태는 바꾸지 않는다: hold 를 꺼도 이미 '검수 끝' 인
+        장은 그대로 남아 '데이터셋에 추가' 를 기다린다."""
+        sent = payload.model_fields_set
+        try:
+            ok = store.update_work_batch(batch_id, name=payload.name, set_name="name" in sent,
+                                         hold=payload.hold if "hold" in sent else None)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if not ok:
+            raise HTTPException(404, "그런 작업 배치가 없습니다.")
+        return _work_out(_work_or_404(batch_id))
+
+    @app.post("/api/work-batches/{batch_id}/add")
+    def add_work_batch_to_dataset(batch_id: int) -> dict:
+        """그 배치의 '검수 끝' 을 전부 승인(데이터셋)으로 올린다. 검수 대기·미라벨은 그대로 둔다 — 사람이 보지 않은
+        이미지는 이 길로도 승인되지 않는다."""
+        _work_or_404(batch_id)
+        added = store.add_reviewed_to_dataset(batch_id)
+        print(f"[{label}] 작업 배치 {batch_id}: 검수 끝 {added}장을 데이터셋(승인)에 넣음")
+        return {"ok": True, "added": added, "batch": _work_out(_work_or_404(batch_id))}
 
     @app.get("/api/domains")
     def list_domains() -> dict:
@@ -996,6 +1091,9 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             "captured_at": row["captured_at"],
             "camera_place": _camera_place(row["camera"]),
             "domain": row["domain"],
+            # 작업 배치 (2026-11-23) — {id, kind, name, hold} 또는 없음. 화면은 hold 로 승인(Space)이 '검수 끝' 으로
+            # 갈지 곧바로 '승인' 으로 갈지 정한다(app.js approveTarget)
+            "work": _work_brief(row["work_batch"]),
             "tags": store.image_tag_ids(image_id),
             # 가릴 영역(사각형 [x1, y1, x2, y2]·다각형 [[x, y], …])과, 둘 수 없으면 그 이유(test 이미지) — masks.py
             "masks": [to_wire(m) for m in store.get_masks(image_id)],
@@ -1296,20 +1394,30 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     def job_scan() -> dict:
         def work(job) -> dict:
             with ingest_lock:
-                report = ingest(cfg, store)
+                # 이 스캔이 새로 등록한 미라벨 이미지는 작업 배치 하나가 된다 (2026-11-23, workbatch.py)
+                report = ingest_as_batch(cfg, store, "scan")
             discover_classes(cfg, store)
             print(report.summary())
-            return {"counts": store.counts(), "classes": store.get_classes()}
+            return {"counts": store.counts(), "classes": store.get_classes(), "work": report.work}
 
         return _start(jobs, "scan", work)
 
     @app.post("/api/jobs/predict")
     def job_predict(payload: PredictIn) -> dict:
+        wb = payload.work_batch
+        if wb is not None:
+            _work_or_404(wb)         # 없는 배치는 작업을 만들기 전에 알린다
+
         def work(job) -> dict:
             free_gpu()
             labeler = AutoLabeler(cfg, store)
+            statuses = ("unlabeled", "pending") if payload.include_pending else ("unlabeled",)
             ids = None
-            if payload.include_pending:
+            if wb is not None:
+                # 이 배치의 미라벨만(include_pending 이면 검수 대기도). '검수 끝'·승인은 건드리지 않는다
+                ids = store.work_batch_image_ids(wb, statuses)
+                print(f"작업 배치 {wb}: 대상 {len(ids)}장 ({'·'.join(statuses)})", flush=True)
+            elif payload.include_pending:
                 ids = [
                     r["id"]
                     for r in store.list_images(status="unlabeled", limit=10**9)
@@ -1320,7 +1428,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
 
             report = labeler.run(ids, progress=progress, tiles=payload.tiles)
             print(report.summary())
-            return {"processed": report.processed, "boxes": report.boxes,
+            return {"processed": report.processed, "boxes": report.boxes, "work_batch": wb,
                     "skipped_changed": report.skipped_changed, "tiled": report.tiled if payload.tiles else None}
 
         return _start(jobs, "predict", work)
@@ -1479,9 +1587,10 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     # 영상을 올려 몇 초마다 한 장 뽑고, 고른 것만 unlabeled/<카메라>/ 에 넣는다. 작업 큐(jobs)를 쓰지 않는다 — 학습이
     # 도는 몇 시간 동안에도 캡처할 수 있게. 넣기의 스캔만 '폴더 스캔' 과 같은 잠금(ingest_lock)을 쥔다.
 
-    def _capture_ingest():
+    def _capture_ingest(mine=None, note: str | None = None):
         with ingest_lock:
-            report = ingest(cfg, store)
+            # 이번에 옮긴 프레임(mine)은 이 영상의 작업 배치로, 함께 걸린 다른 새 파일은 '폴더 스캔' 배치로 (workbatch.py)
+            report = ingest_as_batch(cfg, store, "capture", mine=mine or (), note=note)
         print(f"[{label}] 영상 캡처 넣기 — 스캔:\n{report.summary()}")
         return report
 
@@ -1850,6 +1959,67 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     @app.get("/api/capture/{sid}/frame/{i}")
     def capture_frame(sid: str, i: int):
         return _capture_file(sid, i, False)
+
+    # ------------------------------------------------------------------ 이미지 올리기 (2026-11-23, upload.py)
+    # 브라우저에서 고른 이미지를 임시 폴더에 받아 두었다가 '넣기' 때만 unlabeled/<카메라>/ 로 옮겨 스캔한다(작업 배치 하나).
+    # 영상 캡처처럼 작업 큐를 쓰지 않고, 넣기는 같은 두 잠금(capman.commit_lock → ingest_lock)을 같은 순서로 쥔다.
+
+    def _upload_ingest(mine=None, note: str | None = None, name: str | None = None):
+        with ingest_lock:
+            report = ingest_as_batch(cfg, store, "upload", mine=mine or (), note=note, name=name)
+        print(f"[{label}] 이미지 넣기 — 스캔:\n{report.summary()}")
+        return report
+
+    upman = UploadManager(
+        cfg, ingest=_upload_ingest, blocker=_capture_blocker, commit_lock=capman.commit_lock,
+        dup_rows=lambda: [{k: r[k] for k in ("id", "path", "status", "split", "n_boxes")}
+                          for r in store.list_images(status="all", limit=10**9)],
+        used_cameras=lambda: {k for k in store.camera_counts(with_trashed=True) if k})
+
+    def _up(fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except UploadError as exc:
+            raise HTTPException(exc.status, str(exc)) from None
+
+    @app.get("/api/upload")
+    def upload_list() -> dict:
+        """넣지 않은 묶음과 받는 한도·형식. 카메라 목록은 /api/capture 의 것을 함께 쓴다(화면 work.js)."""
+        return {"sessions": upman.list(), "unlabeled": ui_paths["unlabeled"],
+                "limits": {"max_files": MAX_FILES, "max_bytes": MAX_FILE_BYTES, "exts": sorted(IMG_EXTS)}}
+
+    @app.post("/api/upload")
+    def upload_begin(payload: UploadBeginIn) -> dict:
+        return _up(upman.begin, payload.camera, payload.name)
+
+    @app.post("/api/upload/{sid}/file")
+    async def upload_file(request: Request, sid: str, name: str, size: int | None = None) -> dict:
+        """이미지 하나를 본문 그대로 받는다(영상 올리기와 같은 꼴 — multipart 가 아니다). size 는 브라우저가 아는 크기."""
+        sess, dst, final = await run_in_threadpool(_up, upman.reserve, sid, name, size)
+        written = 0
+        try:
+            with open(dst, "xb") as f:               # 같은 이름을 둘이 쓰지 않는다(reserve 가 자리를 잡았다)
+                async for chunk in request.stream():
+                    written += len(chunk)
+                    if written > MAX_FILE_BYTES:
+                        break
+                    await run_in_threadpool(f.write, chunk)
+        except ClientDisconnect:
+            await run_in_threadpool(upman.reject, sess, dst)
+            raise HTTPException(400, "올리기가 끊겼습니다.") from None
+        except OSError as exc:
+            await run_in_threadpool(upman.reject, sess, dst)
+            raise HTTPException(500, f"파일을 쓰지 못했습니다: {exc}") from exc
+        item = await run_in_threadpool(_up, upman.accept, sess, dst, written, size)
+        return {"ok": True, "sent": name, **item}
+
+    @app.post("/api/upload/{sid}/commit")
+    def upload_commit(sid: str) -> dict:
+        return _up(upman.commit, sid)
+
+    @app.delete("/api/upload/{sid}")
+    def upload_discard(sid: str) -> dict:
+        return {"ok": True, "left": _up(upman.discard, sid)}
 
     # ------------------------------------------------------------------ 정적
 

@@ -19,6 +19,7 @@
   <div class="seg" id="view-switch">
     <button class="seg-btn on" data-view="label" title="라벨링 — 한 장씩 박스를 고치고 승인합니다 (V)">라벨링</button>
     <button class="seg-btn" data-view="gallery" title="이미지 보기 — 여러 장을 한눈에 보고 골라서 태그·도메인을 한꺼번에 바꿉니다 (V)">이미지 보기</button>
+    <button class="seg-btn" data-view="work" title="작업 배치 — 한 번에 넣은 묶음(영상 캡처·이미지 넣기·폴더 스캔)마다 따로 봅니다. 배치를 열어 자동·수동 라벨링과 검수를 하고, 한 장씩 또는 한꺼번에 데이터셋에 넣습니다. 이미지 넣기도 여기서 합니다">작업 배치</button>
     <button class="seg-btn" data-view="capture" title="영상 캡처 — 영상 파일을 불러와 몇 초마다 한 장 뽑고, 넣을 것만 골라 데이터(미라벨)로 넣습니다">영상 캡처</button>
     <button class="seg-btn" data-view="health" title="데이터 점검 — 클래스 균형·박스 크기·이미지당 객체 수·카메라별 수·박스 위치를 한 화면에서 봅니다. 읽기만 합니다">데이터 점검</button>
   </div>
@@ -71,6 +72,7 @@
       <select id="filter-status">
         <option value="approved">승인됨</option>
         <option value="pending">검수 대기</option>
+        <option value="reviewed" title="검수는 끝났지만 아직 데이터셋(승인)에 넣지 않은 이미지 — 작업 배치를 '모아서 한꺼번에' 로 둔 때. 배치의 '데이터셋에 추가' 나 이 장의 승인(Space)으로 넣습니다">검수 끝</option>
         <option value="unlabeled">미라벨</option>
         <option value="skipped">건너뜀</option>
         <option value="trashed">휴지통</option>
@@ -124,6 +126,13 @@
             <option value="">분할: 전체</option>
           </select>
         </div>
+        <!-- 작업 배치(한 번에 넣은 묶음, 2026-11-23)로 거르기. 배치가 하나라도 있을 때만 보인다 — '작업 배치' 보기에서
+             배치를 열면 이 칸이 그 배치로 맞춰진다 -->
+        <div id="work-filter" class="camera-filter hidden">
+          <select id="filter-work" title="작업 배치(한 번에 넣은 묶음)로 거릅니다. 다른 필터와 함께 걸립니다. '작업 배치' 보기에서 배치를 열어도 여기가 바뀝니다.">
+            <option value="">작업 배치: 전체</option>
+          </select>
+        </div>
         <div class="camera-filter">
           <div id="filter-tags" title="태그로 거릅니다. 다른 필터와 함께 걸립니다. 줄을 누르거나 Enter 면 포함, 줄 끝 − 나 Shift+Enter 면 제외, 다시 누르면 풀립니다. 포함이 둘 이상이면 '모두 붙은 것 / 하나라도' 를 고릅니다. T·Q·W·E 로 조건에 맞지 않게 된 줄은 목록에 그대로 둡니다 — 아래 '↻ 새로 받기' 를 누르면 빠집니다."></div>
         </div>
@@ -146,6 +155,16 @@
       <!-- 새로 받기 (2026-11-04): Q·W·E·T 로 필터에 맞지 않게 된 채 남겨 둔 줄을 걷어 낸다 -->
       <button id="btn-reload-list" class="btn btn-sm"
               title="목록을 지금 필터로 다시 받습니다. Q·W·E·T 로 필터에 맞지 않게 된 채 남아 있던 줄이 빠집니다. 지금 이미지 줄은 화면의 같은 자리에 두고, 그 이미지가 빠졌으면 바로 다음 줄로 갑니다.">↻ 새로 받기</button>
+    </div>
+    <!-- 지금 목록이 작업 배치 하나로 걸러져 있을 때의 머리줄 (2026-11-23, app.js renderWorkBar) -->
+    <div id="work-bar" class="work-bar hidden">
+      <div class="work-bar-row">
+        <b id="work-bar-name"></b><span class="spacer"></span>
+        <button id="work-bar-list" class="linkbtn" title="'작업 배치' 보기로 — 배치 목록·자동 라벨링·데이터셋에 추가">목록</button>
+        <button id="work-bar-exit" class="linkbtn" title="배치 필터를 풀고 전체 목록으로 돌아갑니다">나가기 ×</button>
+      </div>
+      <div id="work-bar-sub" class="dim work-bar-sub"></div>
+      <button id="work-bar-add" class="btn btn-sm hidden"></button>
     </div>
     <ul id="image-list" class="image-list"></ul>
   </aside>
@@ -317,6 +336,51 @@
       <button id="gs-add-tag" class="btn btn-sm">추가</button>
     </div>
   </aside>
+
+  <!-- ── 작업 배치 (2026-11-23 사용자 요청, work.js · 서버 workbatch.py·upload.py) ── 한 번에 넣은 묶음(영상 캡처의 넣기·
+       이미지 넣기·폴더 스캔)을 '작업 N' 으로 따로 본다. 카드를 누르면 라벨링이 그 배치로 걸러지고, 검수한 장은 배치마다
+       곧바로(승인) 또는 모아서('검수 끝' → 한꺼번에) 데이터셋에 넣는다. 이미지 넣기(웹 올리기)도 여기서 한다 -->
+  <section class="work" id="work">
+    <div class="hc-bar">
+      <b>작업 배치</b>
+      <button id="wk-add" class="btn btn-sm btn-primary"
+              title="이미지 파일을 골라 넣습니다(한 장도 됩니다). 이 화면에 파일이나 폴더를 끌어다 놓아도 됩니다. 넣은 묶음이 작업 배치 하나가 됩니다">＋ 이미지 넣기…</button>
+      <button id="wk-add-dir" class="btn btn-sm" title="폴더를 골라 그 안의 이미지를 전부 넣습니다(하위 폴더까지)">폴더 넣기…</button>
+      <input id="wk-files" type="file" hidden multiple
+             accept="image/*,.jpg,.jpeg,.png,.bmp,.webp,.tif,.tiff,.avif">
+      <input id="wk-dir" type="file" hidden webkitdirectory>
+      <span class="dim">영상에서 뽑아 넣으려면 <button id="wk-go-capture" class="linkbtn">영상 캡처</button></span>
+      <span class="spacer"></span>
+      <button id="wk-reload" class="btn btn-sm" title="배치 목록을 다시 받습니다">↻ 새로 고침</button>
+    </div>
+    <div class="hc-body" id="wk-body">
+      <!-- 이미지 넣기: 고른 파일 → 카메라·이름 → 넣기. 넣기 전에는 unlabeled/ 에 아무것도 가지 않는다 -->
+      <div id="wk-up" class="hc-card wk-up hidden">
+        <div class="hc-h">이미지 넣기 <span id="wk-up-n" class="dim"></span></div>
+        <div id="wk-up-skip" class="cap-note warn"></div>
+        <label class="cap-field wk-field"><span>카메라</span><select id="wk-up-camera"
+               title="이 묶음의 출처(카메라) — train·val·test 분할이 카메라째로 정해져서 출처 없이는 넣지 않습니다. 모르면 '자동' 그대로 두면 이 묶음용 카메라를 등록합니다. 새 카메라는 영상 캡처 탭의 '＋ 새로'"></select></label>
+        <div id="wk-up-cam-note" class="dim cap-note"></div>
+        <label class="cap-field wk-field"><span>배치 이름</span><input id="wk-up-name" maxlength="60" autocomplete="off"
+               placeholder="비워도 됩니다 — 작업 번호와 넣은 시각으로 보입니다"></label>
+        <div class="cap-line">
+          <button id="wk-up-go" class="btn btn-primary">넣기</button>
+          <button id="wk-up-cancel" class="linkbtn">취소</button>
+        </div>
+        <div id="wk-up-progress" class="hidden">
+          <div class="cap-bar"><i id="wk-up-bar"></i></div>
+          <div id="wk-up-text" class="dim cap-note"></div>
+        </div>
+      </div>
+      <div id="wk-result" class="cap-result hidden"></div>
+      <div id="wk-left" class="cap-note warn hidden"></div>
+
+      <div id="wk-list" class="wk-list"></div>
+      <div id="wk-done-head" class="wk-done-head hidden"></div>
+      <div id="wk-done" class="wk-list hidden"></div>
+      <div id="wk-none" class="wk-none dim"></div>
+    </div>
+  </section>
 
   <!-- ── 영상 캡처 (2026-11-10, capture.js · 서버 capture.py) ── 영상을 올려 몇 초마다 한 장 뽑고, 고른 것만
        unlabeled/<카메라>/ 에 넣어 스캔한다. 영상은 서버에 사본으로 올리고(넣거나 닫으면 지운다) 원본은 건드리지 않는다 -->
@@ -559,5 +623,6 @@
 <script src="gallery.js"></script>
 <script src="capture.js"></script>
 <script src="health.js"></script>
+<script src="work.js"></script>
 </body>
 </html>

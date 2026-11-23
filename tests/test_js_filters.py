@@ -30,20 +30,26 @@ def got(tmp_path_factory) -> dict:
         "const $ = (sel) => els[sel] || (els[sel] = { value: '', on: false,",
         "  classList: { toggle: (name, v) => { if (name === 'on') els[sel].on = !!v; } } });",
         "let saveOk = true;",
-        "const log = { lists: [], loaded: [], syncs: 0 };",
+        "const log = { lists: [], loaded: [], syncs: 0, bars: [] };",
         "const S = { filterClasses: new Set(), filterEmpty: false, filterCamera: '', filterDomain: '', filterSplit: '',",
-        "            tagF: { inc: [], exc: [], any: false, none: false }, images: [{ id: 11 }], listAt: null };",
+        "            filterWork: '', tagF: { inc: [], exc: [], any: false, none: false }, images: [{ id: 11 }], listAt: null };",
         "const tagFilter = { render() {} }, syncClassFilter = () => {}, syncListControls = () => { log.syncs++; };",
+        # 목록 위 작업 배치 머리줄 — 필터를 맞출 때마다 다시 그린다(그릴 때의 배치 필터 값을 적는다)
+        "const renderWorkBar = () => { log.bars.push(S.filterWork); };",
         "const saveBeforeLeaving = async () => saveOk;",
         "const loadImage = async (id) => { log.loaded.push(id); };",
         *(js_function(app, name) for name in PARTS),
         # 진짜 loadImageList 처럼: 지금 칸의 조건으로 목록을 받고, 받은 조건을 S.listAt 에 적는다
         "const loadImageList = async () => { log.lists.push(listControls()); S.images = [{ id: 42 }]; S.listAt = listControls(); };",
-        "const show = () => ({ now: listControls(), selects: ['#filter-camera', '#filter-domain', '#filter-split']",
-        "  .map((s) => [$(s).value, $(s).on]), lists: log.lists.length, loaded: [...log.loaded], images: S.images.map((i) => i.id) });",
+        "const show = () => ({ now: listControls(), selects: ['#filter-camera', '#filter-domain', '#filter-split', '#filter-work']",
+        "  .map((s) => [$(s).value, $(s).on]), lists: log.lists.length, loaded: [...log.loaded], images: S.images.map((i) => i.id),",
+        "  bar: log.bars[log.bars.length - 1] });",
         # 화면에서 카메라 칸을 바꾼 것과 같다(#filter-camera 의 onchange)
         "const pickCamera = async (key) => { $('#filter-camera').value = key; S.filterCamera = key;",
         "  $('#filter-camera').classList.toggle('on', !!key); await reloadList(); };",
+        # 작업 배치 칸을 바꾼 것(#filter-work 의 onchange — 머리줄을 먼저 맞추고 목록을 받는다)
+        "const pickWork = async (id) => { $('#filter-work').value = id; S.filterWork = id;",
+        "  $('#filter-work').classList.toggle('on', !!id); renderWorkBar(); await reloadList(); };",
         "(async () => {",
         "  const out = {};",
         "  $('#filter-status').value = 'pending'; $('#filter-order').value = 'recent'; $('#chunk-size').value = '100';",
@@ -62,15 +68,24 @@ def got(tmp_path_factory) -> dict:
         "  saveOk = true;",
         "  clearFilters(); await new Promise((done) => setImmediate(done));",
         "  out.cleared = show();",
+        # 작업 배치 (2026-11-23): 배치를 고르면 그 조건으로 받고, 저장을 못 하면 칸과 머리줄이 받아 둔 목록의 배치로 돌아간다
+        "  await pickWork('7');",
+        "  out.work = show();",
+        "  saveOk = false;",
+        "  await pickWork('9');",
+        "  out.work_blocked = show();",
+        "  saveOk = true;",
+        "  clearFilters(); await new Promise((done) => setImmediate(done));",
+        "  out.work_cleared = show();",
         "  console.log(JSON.stringify(out));",
         "})().catch((err) => { console.error((err && err.stack) || err); process.exit(1); });",
     ])
     return run_node(node, script, tmp_path_factory.mktemp("filters"))
 
 
-def controls(camera="", order="recent", status="pending", classes=(), inc=()):
+def controls(camera="", order="recent", status="pending", classes=(), inc=(), work=""):
     return {"status": status, "classes": list(classes), "empty": False, "camera": camera, "domain": "", "split": "",
-            "tagF": {"inc": list(inc), "exc": [], "any": False, "none": False}, "order": order, "chunk": "100"}
+            "work": work, "tagF": {"inc": list(inc), "exc": [], "any": False, "none": False}, "order": order, "chunk": "100"}
 
 
 def test_a_filter_change_reloads_the_list_and_opens_the_first_image(got):
@@ -92,5 +107,19 @@ def test_clearing_filters_follows_the_same_rule(got):
     """'필터 풀기' 도 같다 — 저장을 못 하면 풀지 않고, 저장이 되면 상태·정렬만 남기고 다 푼다."""
     assert got["blocked_clear"]["now"] == controls("cam-02") and got["blocked_clear"]["lists"] == 2
     cleared = got["cleared"]
-    assert cleared["now"] == controls() and cleared["selects"] == [["", False], ["", False], ["", False]]
+    assert cleared["now"] == controls() and cleared["selects"] == [["", False], ["", False], ["", False], ["", False]]
     assert cleared["lists"] == 3
+
+
+def test_the_work_batch_filter_follows_the_same_rule(got):
+    """작업 배치 필터(2026-11-23)도 목록 필터다 — 고르면 그 조건으로 받고, 저장을 못 하면 칸·머리줄이 받아 둔 목록의 배치로
+    돌아가고, '필터 풀기' 가 함께 푼다. 필터를 새로 만들고 noFilters·filterState·setFilters 에 안 넣으면 여기서 어긋난다."""
+    work = got["work"]
+    assert work["now"] == controls(work="7") and work["selects"][3] == ["7", True]
+    assert (work["lists"], work["bar"]) == (4, "7")
+    blocked = got["work_blocked"]                           # 9 로 바꾸려 했지만 저장을 못 했다 — 목록도 칸도 머리줄도 7 그대로
+    assert blocked["now"] == controls(work="7") and blocked["selects"][3] == ["7", True]
+    assert (blocked["lists"], blocked["bar"]) == (4, "7")
+    cleared = got["work_cleared"]
+    assert cleared["now"] == controls() and cleared["selects"][3] == ["", False]
+    assert (cleared["lists"], cleared["bar"]) == (5, "")
