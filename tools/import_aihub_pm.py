@@ -69,6 +69,9 @@ PM 박스는 '여기에 이 종류의 탈것과 탄 사람이 있다' 는 단서
 `<DB 폴더>/aihub_pm/preview_<시각>_NN.jpg` 를 보인다). `--apply` 면 DB 를 `labeling.db.bak_aihubpm_<시각>` 으로 떠 두고
 카메라 등록 → 그림 쓰기 → DB 순으로 쓴다. 도중에 실패하면 이번에 쓴 그림과 등록을 되돌린다. 목록은
 `runs/aihub_pm/import_<시각>.tsv`. 추론은 기본 CPU 다(`--device 0` 으로 GPU — 학습이 돌고 있으면 쓰지 말 것).
+**DB 가 없으면 멈추고, 넣기(`--apply`) 말고는 DB 를 읽기 전용으로 연다**(`open_store`·`ReadOnlyStore`, 2026-11-23 Gemini 리뷰 —
+전에는 `--config` 를 잘못 주면 빈 DB 를 새로 만들어 '전부 새 것' 이라고 했고, 옛 사본 DB 에는 열을 더했다). 등록 파일에
+`ah-NNNN` 꼴이 아닌 `ah-` 키가 있으면 알린다(`odd_keys` — 고정·점검이 그 카메라를 보지 않는다).
 
 **주의.**
 - `labeler.py label --all` 은 검수 대기 이미지를 모델 예측**만**으로 덮어써 AI Hub 후보를 지운다 — 쓰지 말 것. 웹 UI 의 자동
@@ -100,6 +103,7 @@ import sys
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -116,7 +120,7 @@ from autolabel.grouping import base_name  # noqa: E402
 from autolabel.predictor import build_class_map  # noqa: E402
 from autolabel.provenance import add_camera, load_cameras, remove_cameras, set_splits  # noqa: E402
 from autolabel.scoring import image_uncertainty  # noqa: E402
-from autolabel.store import Store  # noqa: E402
+from autolabel.store import Store, copy_db  # noqa: E402
 from autolabel.yolo_io import Box, iter_images  # noqa: E402
 
 AIHUB_ROOT = Path(r"E:\datasets\120.개인형 이동장치 안전 데이터\01.데이터")
@@ -325,6 +329,9 @@ def plan_hints(pm: list[PM], preds: list[Pred]) -> Hints:
             else:
                 out.added.append((p.kind, *cand))
                 out.notes[f"탈것 후보 ({p.kind})"] += 1
+        # 탄 사람은 탈것처럼 하나씩 짝짓지 않고 PM 박스마다 따로 본다 — 많이 겹친 PM 박스 둘이 모델의 person 박스 하나를 함께
+        # 제 것으로 칠 수 있다(그러면 둘째 사람의 후보가 빠진다). 2026-11-23 Gemini 리뷰에서 알고 그대로 뒀다: 후보는 전부 사람이
+        # 검수하고, 모델이 한 사람만 찾고 그 박스가 두 PM 박스에 다 든 때만 그렇다.
         rider = any(d[0] == "person" and inside(d[2:], p.box) >= RIDER_INSIDE
                     and inter(d[2:], p.box) >= RIDER_MIN_SHARE * area(p.box) for d in preds)
         if rider:
@@ -542,7 +549,12 @@ def orb_match(a: Scene, b: Scene) -> tuple[int, float]:
 
     반복 무늬(횡단보도 줄)는 다른 장소끼리도 열 개 남짓 짝이 맞지만, 그때의 호모그래피는 화면을 뒤집거나 찌그러뜨려 겹치는
     몫이 0 이다 — 2026-11-22 에 밝기 상관만으로 고른 100장의 4,950쌍에서 같은 자리 5쌍은 인라이어 14–139·겹침 0.79–1.00,
-    나머지는 인라이어 13 이하이고 그중 겹침이 반 이상인 쌍은 인라이어 7 이하였다(`runs/aihub_pm/scene_probe.py`)."""
+    나머지는 인라이어 13 이하이고 그중 겹침이 반 이상인 쌍은 인라이어 7 이하였다(`runs/aihub_pm/scene_probe.py`).
+
+    **겹치는 몫은 b 의 화면 기준이라 a·b 를 바꾸면 값이 다르다** — a 가 같은 자리를 더 넓게 찍었으면 1 에 가깝고, 더 당겨 찍었으면
+    작다. 2026-11-23 Gemini 리뷰가 분모를 합집합으로 하자고 했는데 그대로 뒀다: 줌이 다른 같은 자리를 놓치게 되어 `same_camera` 의
+    '넉넉하게 잡는다' 와 반대다(크게 부풀린 엉터리 변환은 인라이어 문턱이 거른다 — 위 실측). 양쪽을 다 재 큰 쪽을 쓰면 더
+    넉넉해지지만, 어느 쪽이든 식을 바꾸면 문턱을 그 스크립트로 다시 잴 것."""
     import cv2
 
     if a.desc is None or b.desc is None or len(a.pts) < 8 or len(b.pts) < 8:
@@ -767,6 +779,22 @@ class Known:
     scene: Scene | None = None      # 화면 지문 — 파일이 남아 있고 읽힐 때만
 
 
+def odd_keys(cfg: Config) -> list[str]:
+    """등록 파일에서 `ah-` 로 시작하지만 `ah-NNNN` 꼴(`KEY_RE`)이 아닌 키 (2026-11-23 Gemini 리뷰). 이 도구의 train 고정
+    (`pin_plan`)·겹침 점검과 '이미 넣은 그림'(`known`)은 `ah-NNNN` 만 보므로, 손으로 등록하다 틀린 키(`ah-101`·`ah-0101a`)의
+    그림은 빠진다 — 그래서 알린다(고치지는 않는다). 밖으로 보내지 않는 규칙(label_qa_claude 의 `local_only`)은 이런 키도 막는다."""
+    return sorted(k for k in load_cameras(cfg.cameras) if k.startswith("ah-") and not KEY_RE.match(k))
+
+
+def warn_odd_keys(cfg: Config) -> list[str]:
+    odd = odd_keys(cfg)
+    if odd:
+        print(f"[알림] ah- 로 시작하지만 ah-NNNN 꼴이 아닌 카메라 {len(odd)}대: {', '.join(odd[:10])}"
+              f"{' …' if len(odd) > 10 else ''} — train 고정·겹침 점검이 이 카메라를 보지 않는다. AI Hub 그림이면 키를 "
+              "ah-NNNN 으로 바꿀 것(검수 화면 카메라 '고치기')")
+    return odd
+
+
 def known(store: Store) -> list[Known]:
     """DB 의 AI Hub 그림들 — 출처가 이 도구(`SOURCE`)이거나 **카메라 키가 `ah-NNNN`** 인 것, 화면 지문과 함께.
 
@@ -858,10 +886,9 @@ def write_sheets(picks: list[Pick], classes: list[str], out_dir: Path, stamp: st
 # ───────────────────────────── 넣기 ─────────────────────────────
 
 def backup(cfg: Config, stamp: str) -> Path:
-    bak = cfg.db.with_name(f"{cfg.db.name}.bak_aihubpm_{stamp}")
-    with sqlite3.connect(cfg.db) as src, sqlite3.connect(bak) as dst:
-        src.backup(dst)
-    return bak
+    """넣기 전에 DB 를 뜬다 — 연결을 닫고, 다 뜬 뒤에야 그 이름이 생긴다(`store.copy_db`, 2026-11-23 Gemini 리뷰: 전의
+    `with sqlite3.connect(…)` 는 연결을 닫지 않고 트랜잭션만 끝냈다)."""
+    return copy_db(cfg.db, cfg.db.with_name(f"{cfg.db.name}.bak_aihubpm_{stamp}"))
 
 
 def apply(cfg: Config, store: Store, picks: list[Pick], version: str, stamp: str) -> tuple[int, Path]:
@@ -954,11 +981,12 @@ def span(keys: list[str]) -> str:
 
 def pin_train(cfg: Config, store: Store, *, write: bool) -> int:
     """`--pin-train` — 고정이 비어 있는 `ah-NNNN` 카메라를 train 으로. 기본은 보기만, write 면 등록 파일을 고친다. → 종료 코드
-    (다른 분할로 고정돼 있거나 막힌 카메라가 있으면 1 — 사람이 볼 것이 남았다)."""
+    (다른 분할로 고정돼 있거나 막힌 카메라, `ah-NNNN` 꼴이 아닌 `ah-` 키(`odd_keys`)가 있으면 1 — 사람이 볼 것이 남았다)."""
     todo, other, blocked = pin_plan(cfg, store)
     n_all = sum(1 for k in load_cameras(cfg.cameras) if KEY_RE.match(k))
     print(f"등록 파일의 ah-* 카메라 {n_all}대: {SPLIT} 고정 {n_all - len(todo) - len(other) - len(blocked)} · "
           f"고정할 것 {len(todo)} · 다른 분할로 고정 {len(other)} · 막힘 {len(blocked)}")
+    odd = warn_odd_keys(cfg)
     for k, s in sorted(other.items()):
         print(f"  [알림] {k} 는 {s} 로 고정돼 있다 — 바꾸지 않았다(전부 {SPLIT} 이라는 결정과 다르다. 손으로 정할 것)")
     for k, have in sorted(blocked.items()):
@@ -972,9 +1000,9 @@ def pin_train(cfg: Config, store: Store, *, write: bool) -> int:
         else:
             print(f"  {SPLIT} 으로 고정할 것 {len(changed)}대: {span(changed)}")
             print(f"\n(보기만 했다. 고치려면 --pin-train --apply — {cfg.cameras} 의 split 줄만 바꾼다)")
-    elif not other and not blocked:
+    elif not other and not blocked and not odd:
         print("  고칠 것이 없다.")
-    return 1 if other or blocked else 0
+    return 1 if other or blocked or odd else 0
 
 
 # ───────────────────────────── 손으로 고른 그림 점검 (--check) ─────────────────────────────
@@ -1044,7 +1072,12 @@ def check_files(store: Store, files: list[Path], log=print) -> list[Checked]:
     - **같은 자리**: 화면 지문이 DB 의 AI Hub 그림과 같은 카메라 자리다(`same_camera` — 넣을 때 건너뛰는 판정과 같다).
     함께 준 파일끼리도 같은 셋을 본다(앞의 파일과). 이름이 AI Hub 꼴이 아니면 영상은 모르고 나머지 둘만 본다.
     바이트가 같은 것은 지문을 재지 않는다(이미 같은 그림이다). 견주는 시간은 (준 수) × (DB 의 AI Hub 그림 수 + 준 수)에
-    비례한다 — 한 쌍 길어야 10ms 쯤."""
+    비례한다 — 한 쌍 길어야 10ms 쯤.
+
+    2026-11-23 Gemini 리뷰로 고친 둘: **함께 준 앞의 파일과 바이트가 같은 파일은 그 파일이 DB 와 겹친 것(같은 영상·같은 자리)을
+    그대로 받는다** — 전에는 '준 것끼리 겹침' 으로만 나와, 앞의 파일('같은 자리')만 빼고 이름을 바꾼 사본을 넣으면 같은 자리가
+    들어갔다. **못 읽는 파일은 '준 것' 으로 세지 않는다** — 넣을 수 없는 그림이라, 같은 영상의 다른 파일을 '준 것끼리 겹침'
+    으로 만들거나 바이트가 같은 다른 깨진 파일을 '못 읽음' 대신 겹침으로 만들지 않게."""
     import cv2
 
     with store.connect() as con:
@@ -1062,6 +1095,7 @@ def check_files(store: Store, files: list[Path], log=print) -> list[Checked]:
     log(f"  {len(have)}장 (화면 지문 {sum(k.scene is not None for k in have)}장, 영상 {len(by_video)}개)")
 
     out: list[Checked] = []
+    given: dict[str, Checked] = {}                  # 함께 준 앞의 파일 가운데 읽힌 것(바이트 색인에 넣은 것) — 경로 → 결과
     given_video: dict[str, list[Path]] = collections.defaultdict(list)
     given_scene: list[tuple[Path, Scene]] = []
     threads = cv2.getNumThreads()                   # choose 와 같은 까닭 — Ultralytics 가 줄여 둔 스레드를 재는 동안만 되돌린다
@@ -1076,20 +1110,34 @@ def check_files(store: Store, files: list[Path], log=print) -> list[Checked]:
             if c.video:
                 c.same_video = list(by_video.get(c.video, ()))
                 c.twin_video = list(given_video[c.video])
-                given_video[c.video].append(f)
-            hit = dup.find(str(f))
-            if hit is not None:
-                if hit["id"] is not None:
-                    c.same_bytes = hit
-                else:
-                    c.twin_bytes = Path(hit["path"])
+            try:
+                hit = dup.find(str(f))
+            except OSError as exc:                  # 바이트를 못 읽는다(권한 등)
+                c.error = str(exc) or type(exc).__name__
                 continue
-            dup.add(str(f), {"id": None, "path": str(f), "status": "(준 것)", "split": None, "camera": None, "n_boxes": 0})
+            if hit is not None and hit["id"] is not None:
+                c.same_bytes = hit                  # DB 의 그림과 바이트가 같다 — 가장 무거운 겹침
+                if c.video:
+                    given_video[c.video].append(f)
+                continue
+            if hit is not None:                     # 함께 준 앞의 파일과 바이트가 같다 — 그 파일이 DB 와 겹친 것도 받는다
+                twin = given[os.path.normcase(hit["path"])]
+                c.twin_bytes = twin.path
+                c.same_video = c.same_video or list(twin.same_video)    # 이름을 바꾼 사본이면 제 이름으로는 영상을 모른다
+                c.same_spot = list(twin.same_spot)
+                c.twin_spot = list(twin.twin_spot)
+                if c.video:
+                    given_video[c.video].append(f)
+                continue
             try:
                 scene = scene_of(f.read_bytes())
             except Exception as exc:
                 c.error = str(exc) or type(exc).__name__
-                continue
+                continue                            # 못 읽는 파일은 '준 것' 에 넣지 않는다(바이트 색인·영상·자리 어디에도)
+            if c.video:
+                given_video[c.video].append(f)
+            dup.add(str(f), {"id": None, "path": str(f), "status": "(준 것)", "split": None, "camera": None, "n_boxes": 0})
+            given[os.path.normcase(str(f))] = c
             c.same_spot = [k for k in have if k.scene is not None and same_camera(scene, k.scene)]
             c.twin_spot = [p for p, s in given_scene if same_camera(scene, s)]
             given_scene.append((f, scene))
@@ -1112,8 +1160,8 @@ def _why(c: Checked) -> str:
     if c.same_bytes:
         b = c.same_bytes
         parts.append(f"바이트가 같은 그림 = {b['camera'] or '카메라 없음'} id {b['id']} {STATUS_KO.get(b['status'], b['status'])}")
-    if c.same_video:
-        parts.append(f"영상 {c.video} = " + ", ".join(_where(k) for k in c.same_video[:4])
+    if c.same_video:                                # 영상 id 는 DB 쪽 이름에서 — 이름을 바꾼 사본은 제 이름으로 모른다
+        parts.append(f"영상 {c.same_video[0].video} = " + ", ".join(_where(k) for k in c.same_video[:4])
                      + (f" 외 {len(c.same_video) - 4}" if len(c.same_video) > 4 else ""))
     spots = [k for k in c.same_spot if k not in c.same_video]
     if spots:
@@ -1159,6 +1207,7 @@ def check_main(cfg: Config, store: Store, paths: list[Path]) -> int:
     if not files:
         print("그림이 없다.")
         return 0
+    warn_odd_keys(cfg)
     results = check_files(store, files)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     listed = check_report(results, index_path(cfg).parent / f"check_{stamp}.tsv")
@@ -1168,6 +1217,35 @@ def check_main(cfg: Config, store: Store, paths: list[Path]) -> int:
     print(f"  같은 자리를 넣는다면 그 카메라 키 폴더에 넣는다(카메라 = 화면 하나). 새 화면은 다음 번호 "
           f"{next_keys(used_keys(cfg, store), 1)[0]} 부터 `ah-NNNN` 으로 등록하고 --pin-train --apply.")
     return 0
+
+
+class ReadOnlyStore(Store):
+    """보기만 하는 실행(`--check`·`--pin-train`·`--apply` 없는 넣기)의 DB — **읽기 전용으로 열고 표를 만들거나 열을 더하지
+    않는다** (2026-11-23 Gemini 리뷰). `Store(…)` 는 열 때마다 스키마를 맞춰(없는 표 만들기·옛 DB 에 열 더하기·WAL), 옛 사본
+    DB 에 돌리면 '아무것도 쓰지 않는다' 가 틀렸다. 이 실행들이 부르는 것은 `connect`·`camera_counts` 뿐이고, 쓰려 들면 sqlite 가
+    막는다(attempt to write a readonly database). DB 파일은 그대로지만, WAL 로 쓰는 DB(진짜 DB)를 아무도 열고 있지 않을 때
+    읽으면 옆에 `-shm`·빈 `-wal` 이 남는다 — sqlite 가 읽기 전용 연결로는 지우지 못한다(그날 진짜 DB 로 봤다. 해롭지 않고, 다음에
+    쓰는 연결 — 검수 서버 — 이 닫으며 치운다)."""
+
+    def __init__(self, db_path: Path):              # Store.__init__ 를 부르지 않는다 — 스키마를 건드리지 않게
+        self.db_path = Path(db_path)
+
+    @contextmanager
+    def connect(self):
+        con = sqlite3.connect(f"{self.db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=30.0)
+        con.row_factory = sqlite3.Row
+        try:
+            yield con
+        finally:
+            con.close()
+
+
+def open_store(cfg: Config, *, write: bool) -> Store:
+    """이 도구가 여는 DB. **없으면 멈춘다** (2026-11-23 Gemini 리뷰 — `Store` 는 없는 DB 를 새로 만들어서, `--config` 를 잘못
+    주면 빈 DB 와 견줘 '전부 새 것' 이라고 했다). DB 에 쓰는 것은 넣기(`--apply`)뿐이라 그때만 `Store`, 나머지는 읽기 전용."""
+    if not cfg.db.is_file():
+        raise SystemExit(f"DB 가 없습니다: {cfg.db} — --config 를 확인할 것(이 도구는 DB 를 새로 만들지 않는다)")
+    return Store(cfg.db) if write else ReadOnlyStore(cfg.db)
 
 
 def main() -> int:
@@ -1190,7 +1268,8 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = Config.load(args.config)
-    store = Store(cfg.db)
+    # DB 에 쓰는 것은 넣기(--apply)뿐이다 — --pin-train --apply 는 등록 파일만 고친다
+    store = open_store(cfg, write=args.apply and not args.pin_train and not args.check)
     if args.pin_train:
         return pin_train(cfg, store, write=args.apply)
     if args.check:
@@ -1199,6 +1278,7 @@ def main() -> int:
     if loose or other or blocked:
         print(f"[알림] {SPLIT} 으로 고정되지 않은 ah-* 카메라 {len(loose) + len(other) + len(blocked)}대 — "
               "`--pin-train` 으로 볼 것(AI Hub 그림은 전부 train 이다)")
+    warn_odd_keys(cfg)
     classes = store.get_classes()
     label_root = args.root / "1.Training" / "라벨링데이터"
     image_root = args.root / "1.Training" / "원천데이터"

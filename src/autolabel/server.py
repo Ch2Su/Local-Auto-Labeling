@@ -411,11 +411,15 @@ class _DailyBackup:
     docs/next.md 6번). 변경 요청 앞이면 충분하다 — 그 전까지 DB 는 어제 끝 상태 그대로다(자정을 넘겨 도는 자동 라벨링
     작업이 쓰는 몫만 다음 변경 요청 때의 사본에 섞인다). 동시에 들어온 요청에도 하나만 뜨게 잠근다. 실패해도 검수는
     되어야 하므로 알리기만 하고 그날은 다시 시도하지 않는다(디스크가 찼을 때 저장마다 사본을 뜨려 들지 않게).
+
+    **`day` 는 사본을 다 뜬(또는 실패한) 뒤에 바꾼다 (2026-11-23 Gemini 리뷰).** 뜨기 전에 바꾸면, 뜨는 동안 들어온 다른 변경
+    요청이 `due()` 에서 '오늘 것은 끝났다' 를 보고 잠금을 기다리지 않은 채 DB 에 써 버렸다 — 날이 바뀐 뒤의 변경이 그날 사본에
+    섞일 수 있었다. 지금은 그 요청도 `run` 의 잠금에서 기다렸다가, 앞의 것이 끝난 것을 보고 지나간다.
     """
 
     def __init__(self, store: Store, keep: int, label: str) -> None:
         self.store, self.keep, self.label = store, keep, label
-        self.day = None                         # 마지막으로 사본을 확인한 날 (date)
+        self.day = None                         # 마지막으로 사본을 뜬(또는 뜨다 실패한) 날 (date)
         self.lock = threading.Lock()
 
     def due(self) -> bool:
@@ -428,12 +432,13 @@ class _DailyBackup:
             now = datetime.now()
             if now.date() == self.day:          # 같이 기다리던 요청 — 앞의 것이 이미 떴다
                 return None
-            self.day = now.date()
             try:
                 made = self.store.backup_daily(self.keep, now=now)
             except Exception as exc:  # noqa: BLE001
                 print(f"[{self.label}] DB 백업 실패 (검수는 계속됩니다): {exc}")
                 return None
+            finally:
+                self.day = now.date()           # 끝난 뒤에야 — 그 전까지 다른 변경 요청은 due() 가 참이라 잠금에서 기다린다
         if made:
             print(f"[{self.label}] DB 백업{why}: {made}")
         return made

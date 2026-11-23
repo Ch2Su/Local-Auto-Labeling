@@ -14,6 +14,10 @@ missing 후보는 '모델은 확신하는데 라벨이 없는 곳'이다. 눈으
 을 만든다. 크기는 후보의 짧은 변 분포를 따른다. Claude 는 어느 것이 대조군인지 모른다.
 대조군 성적이 곧 이 필터를 믿어도 되는지에 대한 근거다. (음성 대조가 우연히 라벨 없는
 객체에 떨어질 수 있어서, 대조군 오답은 시트로 눈으로 확인할 것.)
+**가릴 영역(M — 사람이 '애매해서 라벨하지 않는다' 고 덮은 자리)은 대조군에서 뺀다 (2026-11-23 Gemini 리뷰).** 영역이 반 넘게
+덮은 라벨(학습 라벨에서 빠지는 것 — `masks.covered` ≥ `DROP`)은 양성으로 쓰지 않고, 음성은 영역이 `NEG_MASK` 도 덮지 않는
+곳에만 둔다 — 그 자리의 애매한 물체를 Claude 가 'missing' 이라고 해도 틀린 답이 아니라, 대조군 성적을 흐린다. 분할과 상관없이
+모든 영역을 본다(학습 세트가 test 에 영역을 적용하지 않는 것과 달리, 여기서는 '애매한 자리' 라는 표시로 쓴다).
 
 **보내는 것:** 후보 주변 크롭(깨끗한 것 + 박스 그린 것, 512px)과 전체 장면 축소본(긴 변
 512px) 세 장. 벽화·포스터처럼 '사람 그림'인지는 장면을 봐야 알 수 있어서 축소본을 넣었다.
@@ -26,7 +30,7 @@ missing 후보는 '모델은 확신하는데 라벨이 없는 곳'이다. 눈으
 주소로 잡혀 있어, SDK 기본 동작대로면 API 키가 그쪽으로 간다. `--base-url` 로만 바꾼다.
 
 **밖으로 보내면 안 되는 그림은 뺀다 (2026-11-23).** 이 도구는 그림을 PC 밖(Claude API)으로 보낸다.
-AI Hub 에서 받은 그림(source `aihub_pm`, 카메라 `ah-NNNN`)은 약관이 승인 없는 제3자 제공을 막고
+AI Hub 에서 받은 그림(source `aihub_pm`, 카메라 키 `ah-*`)은 약관이 승인 없는 제3자 제공을 막고
 국외 반출에 합의를 요구해서(docs/provenance.md '공개 데이터셋') 사용자가 'Claude 는 AI Hub 그림을
 열지 않는다' 고 정했다. 그래서 그 그림의 후보는 건너뛰고 대조군으로도 쓰지 않는다 — `--dry-run` 도
 그 크롭을 만들지 않는다. 끄는 옵션은 없다(`local_only`). 그 후보는 사람이 직접 본다.
@@ -46,13 +50,14 @@ import sqlite3
 import sys
 import threading
 import time
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
 from autolabel.config import Config, resolve
+from autolabel.masks import DROP, covered, from_row
 from autolabel.yolo_io import display_size
 
 # USD / 1M 토큰 (입력, 출력). 2026-09-18 platform.claude.com/docs/en/about-claude/pricing
@@ -64,12 +69,16 @@ PRICES = {
 VERDICTS = ["missing", "already_labeled", "depiction", "not_object", "unsure"]
 CROP = 512
 SIDE_BUCKETS = [(0, 32, "<32px"), (32, 64, "32-64px"), (64, 10**9, ">=64px")]
+NEG_MASK = 0.02         # 음성 대조는 가릴 영역이 박스 넓이의 이만큼도 덮지 않는 곳에만 둔다 (머리말 — 라벨과는 IoU 0.02)
+_Norm = namedtuple("_Norm", "cx cy w h")    # masks.covered 가 읽는 박스 꼴(정규화)
 
-# 밖으로 보내면 안 되는 그림 (머리말 — 2026-11-23 사용자 결정). 넣는 도구 `tools/import_aihub_pm.py` 의 `SOURCE`·`KEY_RE` 와
-# 같아야 한다(tests/test_label_qa_claude.py 가 견준다). 출처와 카메라 키 **어느 쪽이든** 걸리면 뺀다 — 몇 장만 다른 카메라로
-# 옮기면 키는 바뀌고 출처는 남는다.
+# 밖으로 보내면 안 되는 그림 (머리말 — 2026-11-23 사용자 결정). 넣는 도구 `tools/import_aihub_pm.py` 의 `SOURCE` 와 같고, 키는
+# 그 도구의 `KEY_RE`(`ah-NNNN`)가 잡는 것을 **전부 잡고 더 넓게** `ah-` 로 시작하는 키는 모두 잡는다(tests/test_label_qa_claude.py
+# 가 견준다). 같은 날 Gemini 리뷰 — 문서는 'AI Hub 그림 = `ah-*`' 인데 `ah-NNNN` 만 잡아서, 손으로 등록하다 키를 `ah-101` 처럼
+# 틀리면(scan 은 출처를 collected 로 적는다) 그 그림이 밖으로 나갈 수 있었다. 더 막는 쪽으로 틀리는 것은 괜찮다.
+# 출처와 카메라 키 **어느 쪽이든** 걸리면 뺀다 — 몇 장만 다른 카메라로 옮기면 키는 바뀌고 출처는 남는다.
 LOCAL_ONLY_SOURCES = frozenset({"aihub_pm"})
-LOCAL_ONLY_CAMERA = re.compile(r"^ah-\d{4,}$")
+LOCAL_ONLY_CAMERA = re.compile(r"^ah-")
 
 
 def local_only(source: str | None, camera: str | None) -> bool:
@@ -80,12 +89,17 @@ SYSTEM_TMPL = """You audit bounding-box labels of an object-detection dataset. M
 Label classes: {classes}.
 Every real instance of these classes should have its own box. Riders get their own person box separate from the vehicle."""
 
-# 이름만으로 뜻이 갈리지 않는 클래스의 설명. 차량 셋은 CLAUDE.md '차량 클래스 판정 순서' 를 따른다.
+# 이름만으로 뜻이 갈리지 않는 클래스의 설명. 차량 셋은 CLAUDE.md '차량 클래스 판정 순서' 를, responder·cone(11-09)은
+# docs/label-rules.md '출동 차량·라바콘' 을 따른다(2026-11-23 Gemini 리뷰 — 둘을 붙인 뒤로 설명이 없었다).
 CLASS_NOTES = {
     "scooter": "stand-up e-scooter / kick scooter",
     "pickup": "open cargo bed separate from the cab, up to 1-ton class",
     "truck": "larger open bed, or a closed box body on a cab-chassis",
     "car": "passenger cars, SUVs, minivans and one-box vans",   # 11-02 에 van 을 car 로 합쳤다
+    "responder": "emergency or road-service vehicle with a visible light bar, emergency livery or markings: fire engine, "
+                 "ambulance, police car, highway patrol, tow truck, vehicle with an LED arrow board; "
+                 "if none of that is visible, use its body type instead",
+    "cone": "conical traffic cone, also knocked over; not cylindrical drums, bollards or posts",
 }
 
 # 클래스 목록은 DB 에서 읽어 `set_classes()` 가 채운다. 예전에는 7개가 박혀 있어서
@@ -99,9 +113,9 @@ Image 2: the same crop; green boxes are existing labels, the red box is the regi
 Image 3: the whole image, downscaled, with the red box.
 
 What does the red box contain?
-- missing: a real person or vehicle from the class list fills roughly the red box and has no green box of its own. Partly visible objects (cut by the image edge or occluded) count if you can clearly identify them.
+- missing: a real object from the class list (a person, a vehicle or a traffic cone) fills roughly the red box and has no green box of its own. Partly visible objects (cut by the image edge or occluded) count if you can clearly identify them.
 - already_labeled: that object already has its own green box (maybe drawn a bit differently).
-- depiction: a picture of a person or vehicle, not a real one: painting, mural, poster, statue, mannequin, screen, reflection, toy.
+- depiction: a picture of such an object, not a real one: painting, mural, poster, statue, mannequin, screen, reflection, toy.
 - not_object: none of the classes - background, bags, furniture, signs, poles, animals, etc.
 - unsure: too small, dark or blurry to tell.
 object_class: the class of the object for missing / already_labeled / depiction, otherwise null.
@@ -177,6 +191,14 @@ def iou(a, b) -> float:
     return inter / union if union > 0 else 0.0
 
 
+def mask_cover(b, im: dict, rects: list) -> float:
+    """픽셀 xyxy 박스 b(화면 기준)를 가릴 영역들이 덮는 몫 — 학습 세트가 박스를 뺄 때와 같은 식(`masks.covered`). 없으면 0."""
+    if not rects:
+        return 0.0
+    W, H = im["W"], im["H"]
+    return covered(_Norm((b[0] + b[2]) / 2 / W, (b[1] + b[3]) / 2 / H, (b[2] - b[0]) / W, (b[3] - b[1]) / H), rects)
+
+
 def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
     """후보 + 대조군. 박스는 원본 픽셀 xyxy. hide_gt 는 초록으로 그리지 않을 라벨 번호.
 
@@ -209,6 +231,16 @@ def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
             continue
         gt[iid].append((names[c], [(cx - w / 2) * im["W"], (cy - h / 2) * im["H"],
                                    (cx + w / 2) * im["W"], (cy + h / 2) * im["H"]]))
+    masks = defaultdict(list)       # 가릴 영역(정규화, 화면 기준 — 박스와 같은 좌표) — 대조군을 그 자리에 두지 않는다(머리말)
+    try:
+        mcols = {r[1] for r in con.execute("PRAGMA table_info(masks)")}
+        poly = "m.poly" if "poly" in mcols else "NULL"      # 다각형 열(11-19) 전의 DB — 읽기 전용이라 열을 더하지 않는다
+        for iid, *row in con.execute(f"SELECT m.image_id, m.x1, m.y1, m.x2, m.y2, {poly} FROM masks m"
+                                     " ORDER BY m.image_id, m.id"):
+            if iid in images:
+                masks[iid].append(from_row(*row))
+    except sqlite3.OperationalError:                        # masks 표가 생기기 전(11-09)의 DB
+        pass
     con.close()
 
     listed = [r for r in csv.DictReader(open(qa_dir / "candidates.csv", encoding="utf-8-sig"))
@@ -234,9 +266,10 @@ def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
     pool = [i for i in images if i not in cand_ids and Path(images[i]["path"]).exists()]
     sides = [float(r["side_px"]) for r in cands]
 
-    # 양성: 후보와 짧은 변이 비슷한 기존 라벨을 숨겨서 보여 준다
+    # 양성: 후보와 짧은 변이 비슷한 기존 라벨을 숨겨서 보여 준다 — 가릴 영역이 반 넘게 덮은 라벨은 빼고(머리말)
     all_gt = [(iid, j, c, b, min(b[2] - b[0], b[3] - b[1]))
-              for iid in pool for j, (c, b) in enumerate(gt[iid])]
+              for iid in pool for j, (c, b) in enumerate(gt[iid])
+              if mask_cover(b, images[iid], masks[iid]) < DROP]
     used = set()
     made = tries = 0
     while made < n_controls and tries < 50 * n_controls:
@@ -254,7 +287,7 @@ def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
     if made < n_controls:
         print(f"  [알림] 양성 대조를 {n_controls}개 중 {made}개만 만들었습니다 — 후보와 크기가 비슷한 라벨이 모자랍니다.")
 
-    # 음성: 후보 하나의 박스 크기를 빌려 라벨과 안 겹치는 곳에 놓는다
+    # 음성: 후보 하나의 박스 크기를 빌려 라벨·가릴 영역과 안 겹치는 곳에 놓는다
     n = tries = 0
     while n < n_controls and pool and tries < 200 * n_controls:     # 놓을 곳이 없으면 끝없이 돌지 않게
         tries += 1
@@ -268,7 +301,7 @@ def build_items(cfg: Config, qa_dir: Path, n_controls: int, seed: int):
         for _ in range(100):
             x, y = rng.uniform(0, im["W"] - bw), rng.uniform(0, im["H"] - bh)
             b = [x, y, x + bw, y + bh]
-            if all(iou(b, g) < 0.02 for _, g in gt[iid]):
+            if all(iou(b, g) < 0.02 for _, g in gt[iid]) and mask_cover(b, im, masks[iid]) < NEG_MASK:
                 used.add(iid)
                 items.append({"key": f"neg{n:03d}", "group": "control_neg", "image_id": iid, "box": b,
                               "cls": donor["pred_cls"], "conf": float(donor["conf"]), "hide_gt": None,

@@ -414,3 +414,28 @@ def test_set_splits_stops_whole_on_an_entry_it_cannot_edit(tmp_path):
         set_splits(p, {"cam-01": "train", "flow-1": "train"})
     assert p.read_bytes() == original and not list(tmp_path.glob("*.tmp"))
     assert set_splits(p, {"cam-01": "train"}) == ["cam-01"] and splits_of(p) == {"cam-01": "train", "flow-1": None}
+
+
+def test_hand_written_number_keys_can_be_pinned_edited_and_removed(tmp_path):
+    """2026-11-23 Gemini 리뷰 — 손으로 따옴표 없이 쓴 숫자 키(`101:`)는 YAML 이 수로 읽는다. `load_cameras` 는 글자로 바꾸는데
+    고친 뒤 다시 읽어 견주는 쪽은 그러지 않아, 고정·고치기·빼기가 '기대와 다르다' 로 거절됐다(쓰지 않는 쪽으로만 틀렸다)."""
+    p = tmp_path / "cameras.yaml"
+    p.write_text("cameras:\n  101:\n    kind: cctv\n    place: 가\n    split:\n"
+                 "  hw-01:\n    kind: cctv\n    place: 나\n    split:\n", "utf-8")
+    assert set(load_cameras(p)) == {"101", "hw-01"}
+    assert set_splits(p, {"101": "train"}) == ["101"] and splits_of(p) == {"101": "train", "hw-01": None}
+    cam, _ = edit_camera(p, "101", {"place": "다"})
+    assert cam.place == "다" and load_cameras(p)["hw-01"].place == "나"
+    assert remove_cameras(p, ["101"]) == ["101"] and set(load_cameras(p)) == {"hw-01"}
+    assert p.read_text("utf-8") == "cameras:\n  hw-01:\n    kind: cctv\n    place: 나\n    split:\n"
+
+
+def test_keys_that_read_the_same_as_text_stop_the_edit(tmp_path):
+    """글자로 바꾸면 같아지는 키 둘(`101:` 과 `'101':`)은 무엇을 견줄지 모르니 아무것도 쓰지 않는다."""
+    p = tmp_path / "cameras.yaml"
+    p.write_text("cameras:\n  101:\n    kind: cctv\n    place: 가\n  '101':\n    kind: cctv\n    place: 나\n"
+                 "  hw-01:\n    kind: cctv\n    place: 다\n    split:\n", "utf-8")
+    original = p.read_bytes()
+    with pytest.raises(ValueError):
+        set_splits(p, {"hw-01": "train"})
+    assert p.read_bytes() == original and not list(tmp_path.glob("*.tmp"))

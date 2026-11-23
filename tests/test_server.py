@@ -417,3 +417,47 @@ def test_daily_backup_once_under_concurrent_writes(store, clock, monkeypatch):
     for t in threads:
         t.join()
     assert made == [datetime(2026, 11, 20, 0, 10, 0)] and not daily.due()
+
+
+def test_writes_that_arrive_while_the_daily_backup_copies_wait_for_it(store, clock, monkeypatch):
+    """2026-11-23 Gemini 리뷰 — `run` 이 사본을 뜨기 **전에** 오늘 날짜를 적어서, 뜨는 동안 들어온 변경 요청은 `due()` 에서
+    '오늘 것은 끝났다' 를 보고 기다리지 않은 채 DB 에 썼다(날이 바뀐 뒤의 변경이 그날 사본에 섞일 수 있었다). 위의 테스트는
+    `run` 만 불러 이 길(`_BackupOnWrite` → `due()`)을 지나지 않는다 — 여기서는 미들웨어를 두 요청으로 부른다."""
+    import asyncio
+
+    from autolabel import store as store_mod
+    from autolabel.server import _BackupOnWrite, _DailyBackup
+
+    copying, release = threading.Event(), threading.Event()
+    events: list[str] = []
+
+    def slow(self, keep=14, now=None):
+        events.append("사본 시작")
+        copying.set()
+        assert release.wait(5)
+        events.append("사본 끝")
+
+    async def app(scope, receive, send):                    # 변경 요청이 DB 에 쓰는 자리
+        events.append(f"쓰기 {scope['path']}")
+
+    monkeypatch.setattr(store_mod.Store, "backup_daily", slow)
+    daily = _DailyBackup(store, 14, "시험")
+    daily.day = datetime(2026, 11, 19).date()               # 켤 때 뜬 것 — 어제
+    clock.t = datetime(2026, 11, 20, 0, 10, 0)
+    guard = _BackupOnWrite(app, daily)
+
+    def put(path):
+        asyncio.run(guard({"type": "http", "method": "PUT", "path": path}, None, None))
+
+    first = threading.Thread(target=put, args=("/a",))
+    first.start()
+    assert copying.wait(5)                                  # 자정 뒤 첫 변경이 사본을 뜨는 중에
+    second = threading.Thread(target=put, args=("/b",))
+    second.start()
+    time.sleep(0.2)                                         # 기다리지 않는다면 이 사이에 쓴다
+    assert "쓰기 /b" not in events
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert events == ["사본 시작", "사본 끝", "쓰기 /a", "쓰기 /b"] or events == ["사본 시작", "사본 끝", "쓰기 /b", "쓰기 /a"]
+    assert not daily.due()

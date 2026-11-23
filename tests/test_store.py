@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -462,3 +464,44 @@ def test_backup_daily_once_a_day_keeps_latest(store):
         "labeling_20261118_090000.db", "labeling_20261119_090000.db", "labeling_20261120_090000.db",
         "labeling_camrename_20261101_000000.db"]
     assert store.backup_daily(0, now=datetime(2026, 11, 21, 9, 0, 0)) is None
+
+
+def test_failed_backup_leaves_no_file_and_the_same_day_tries_again(store, monkeypatch):
+    """2026-11-23 Gemini 리뷰 — 사본을 사본 이름에 바로 떠서, 뜨다 실패하면(디스크가 참) 덜 뜬 파일이 남았다. 그 파일이 '그날
+    것' 으로 쳐져 디스크를 비우고 다시 켜도 그날은 뜨지 않았고, 보관 개수(keep)도 한 칸 차지했다. 이제 임시 이름에 뜨고 다 뜬
+    뒤에야 바꿔 끼운다(`store.copy_db`)."""
+    real = sqlite3.connect
+
+    class HalfWay:                      # 원본 쪽 연결 — 사본에 조금 쓰다가 디스크가 찬다
+        def __init__(self, con):
+            self.con = con
+
+        def backup(self, out, *a, **kw):
+            out.execute("CREATE TABLE half(x)")
+            out.commit()
+            raise sqlite3.OperationalError("database or disk is full")
+
+        def close(self):
+            self.con.close()
+
+    def connect(path, *a, **kw):
+        con = real(path, *a, **kw)
+        return HalfWay(con) if Path(str(path)) == store.db_path else con
+
+    d = store.db_path.parent / "backups"
+    with monkeypatch.context() as m:
+        m.setattr(sqlite3, "connect", connect)
+        with pytest.raises(sqlite3.OperationalError, match="disk is full"):
+            store.backup_daily(14, now=datetime(2026, 11, 20, 9, 0, 0))
+        with pytest.raises(sqlite3.OperationalError):
+            store.backup_to(d / "labeling_camrename_20261120_090000.db")
+    assert sorted(p.name for p in d.iterdir()) == []                        # 덜 뜬 사본도 임시 파일도 없다
+    made = store.backup_daily(14, now=datetime(2026, 11, 20, 10, 0, 0))     # 같은 날 — 다시 뜬다
+    assert made is not None and made.name == "labeling_20261120_100000.db"
+    con = real(made)
+    try:
+        assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert con.execute("SELECT COUNT(*) FROM classes").fetchone()[0] == len(store.get_classes())
+    finally:
+        con.close()
+    assert sorted(p.name for p in d.iterdir()) == [made.name]

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -403,6 +404,37 @@ def _list_where(
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def copy_db(src: Path, dst: Path) -> Path:
+    """DB 를 dst 로 뜬다(sqlite backup — 다른 연결이 쓰는 중이어도 일관된 사본). **다 뜬 뒤에야 dst 이름이 생긴다**
+    (2026-11-23 Gemini 리뷰): 같은 폴더의 `<dst 이름>.tmp` 에 뜨고 연결을 닫은 뒤 바꿔 끼우고, 도중에 실패하면(디스크가 참·
+    잠금) 그 임시 파일을 지운다. 전에는 dst 에 바로 떠서 덜 뜬(0바이트일 수도 있는) 파일이 남았다 — 하루 사본이면 그날의
+    사본으로 쳐져 그날은 다시 뜨지 않았고, 보관 개수(keep)도 한 칸 차지했다. src 가 없으면 FileNotFoundError(빈 DB 를 만들지
+    않는다). 임시 파일 이름(`….db.tmp`)은 하루 사본의 이름 꼴(`….db`)에 걸리지 않는다."""
+    src, dst = Path(src), Path(dst)
+    if not src.is_file():
+        raise FileNotFoundError(f"DB 가 없습니다: {src}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".tmp")
+    try:
+        con = sqlite3.connect(src, timeout=30.0)
+        try:
+            out = sqlite3.connect(tmp)
+            try:
+                con.backup(out)
+            finally:
+                out.close()
+        finally:
+            con.close()
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass                                # 못 지우면 둔다 — `.tmp` 는 사본으로 치지 않는다
+        raise
+    return dst
 
 
 class Store:
@@ -916,16 +948,9 @@ class Store:
         return templates
 
     def backup_to(self, dst: Path) -> Path:
-        """DB 를 dst 로 뜬다(sqlite backup — 서버가 쓰는 중이어도 일관된 사본). 카메라 키 바꾸기처럼 행을 많이 바꾸기 전에."""
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        src = sqlite3.connect(self.db_path, timeout=30.0)
-        out = sqlite3.connect(dst)
-        try:
-            src.backup(out)
-        finally:
-            out.close()
-            src.close()
-        return dst
+        """DB 를 dst 로 뜬다(`copy_db` — 서버가 쓰는 중이어도 일관된 사본, 다 뜬 뒤에야 dst 가 생긴다). 카메라 키 바꾸기처럼
+        행을 많이 바꾸기 전에."""
+        return copy_db(self.db_path, dst)
 
     def next_image_id(self, current_id: int, status: str = "pending") -> int | None:
         """현재 이미지 다음으로 검수할 이미지. 목록과 같은 정렬 기준을 쓴다."""
@@ -1488,6 +1513,7 @@ class Store:
         켤 때만). now 는 그 '지금'(없으면 지금 시각)으로, 날짜와 파일 이름을 정한다. sqlite 의 backup() 이라 다른 서버가
         쓰는 중이어도 일관된 사본이 나온다. **가장 최근 `keep` 개만 남기고 그보다 오래된 사본은 지운다**
         (이 함수가 만든 `backups/<DB 이름>_날짜_시각.db` 만 대상이다). keep=0 이면 끈다.
+        뜨다 실패하면 아무 파일도 남기지 않는다(`copy_db`, 2026-11-23) — 덜 뜬 파일이 '그날 것' 으로 쳐지지 않게.
         """
         if keep <= 0 or not self.db_path.exists():
             return None
@@ -1496,15 +1522,7 @@ class Store:
         now = now or datetime.now()
         if any(d.glob(f"{stem}_{now:%Y%m%d}_*.db")):
             return None
-        d.mkdir(exist_ok=True)
-        dst = d / f"{stem}_{now:%Y%m%d_%H%M%S}.db"
-        src = sqlite3.connect(self.db_path, timeout=30.0)
-        out = sqlite3.connect(dst)
-        try:
-            src.backup(out)
-        finally:
-            out.close()
-            src.close()
+        dst = copy_db(self.db_path, d / f"{stem}_{now:%Y%m%d_%H%M%S}.db")
         for old in sorted(d.glob(f"{stem}_????????_??????.db"))[:-keep]:
             old.unlink()
         return dst

@@ -118,6 +118,18 @@ def tz_text(tz: tzinfo) -> str:
     return f"{sign}{abs(total) // 60:02d}:{abs(total) % 60:02d}"
 
 
+def _raw_cameras(text: str) -> dict:
+    """등록 파일 글의 `cameras:` 아래 사전 그대로 — **키만 글자로**(`load_cameras` 처럼). 고친 뒤 다시 읽어 '그 카메라만 바뀌었나'
+    를 견줄 때 쓴다. 따옴표 없이 쓴 `101:` 은 YAML 이 수로 읽어서, 전에는 글자 키(`'101'`)와 어긋나 멀쩡한 고치기·빼기도
+    '기대와 다르다' 로 거절됐다 (2026-11-23 Gemini 리뷰 — 손으로 쓴 숫자 키만 그렇다: 더하기는 그런 키를 따옴표로 적는다).
+    글자로 바꾸면 같아지는 키가 둘이면(`101:` 과 `'101':`) ValueError. 글은 먼저 `load_cameras` 로 읽힌 것이어야 한다."""
+    raw = (yaml.safe_load(text) or {}).get("cameras") or {}
+    out = {str(k): v for k, v in raw.items()}
+    if len(out) != len(raw):
+        raise ValueError("등록 파일에 글자로는 같은 키가 둘 있습니다(따옴표만 다른 키) — 손으로 고칠 것")
+    return out
+
+
 def load_cameras(path: Path) -> dict[str, Camera]:
     """cameras.yaml 을 읽어 {키: Camera}. 잘못된 항목이 있으면 전부 모아 ValueError.
 
@@ -227,7 +239,7 @@ def add_camera(path: Path, key: str, attrs: dict, *, backup_dir: Path | None = N
         before = load_cameras(path)                    # 깨진 파일이면 ValueError — 손대지 않는다
         if key in before:
             raise CameraExists(f"카메라 '{key}' 는 이미 등록돼 있습니다")
-        raw_before = (yaml.safe_load(old) or {}).get("cameras") or {}
+        raw_before = _raw_cameras(old)
         new = _append_camera_text(old, key, written, comment)
         tmp = path.with_name(f"{path.name}.{secrets.token_hex(3)}.tmp")
         try:
@@ -235,7 +247,7 @@ def add_camera(path: Path, key: str, attrs: dict, *, backup_dir: Path | None = N
             tmp.write_text(new, encoding="utf-8", newline="")
             try:
                 after = load_cameras(tmp)
-                raw_after = (yaml.safe_load(new) or {}).get("cameras") or {}
+                raw_after = _raw_cameras(new)
             except (ValueError, yaml.YAMLError) as exc:
                 raise ValueError(f"덧붙인 결과를 읽지 못해 아무것도 쓰지 않았습니다 — {exc}") from exc
             same_old = (set(after) == set(before) | {key}
@@ -270,14 +282,14 @@ def remove_cameras(path: Path, keys: list[str], *, backup_dir: Path | None = Non
         missing = [k for k in keys if k not in before]
         if missing:
             raise CameraMissing(f"등록돼 있지 않은 카메라: {', '.join(missing)}")
-        raw_before = (yaml.safe_load(old) or {}).get("cameras") or {}
+        raw_before = _raw_cameras(old)
         new = _remove_camera_text(old, keys)
         tmp = path.with_name(f"{path.name}.{secrets.token_hex(3)}.tmp")
         try:
             tmp.write_text(new, encoding="utf-8", newline="")
             try:
                 after = load_cameras(tmp)
-                raw_after = (yaml.safe_load(new) or {}).get("cameras") or {}
+                raw_after = _raw_cameras(new)
             except (ValueError, yaml.YAMLError) as exc:
                 raise ValueError(f"뺀 결과를 읽지 못해 아무것도 쓰지 않았습니다 — {exc}") from exc
             gone = set(keys)
@@ -434,7 +446,7 @@ def edit_camera(path: Path, key: str, values: dict, *, new_key: str | None = Non
             raise CameraMissing(f"등록돼 있지 않은 카메라: {key}")
         if new_key is not None and new_key in before:
             raise CameraExists(f"카메라 '{new_key}' 는 이미 등록돼 있습니다")
-        raw_before = (yaml.safe_load(old) or {}).get("cameras") or {}
+        raw_before = _raw_cameras(old)
         cur = dict(raw_before.get(key) or {})
         edits: dict[str, str | None] = {}
         for f in _FIELD_ORDER:
@@ -476,7 +488,7 @@ def edit_camera(path: Path, key: str, values: dict, *, new_key: str | None = Non
             tmp.write_text(new, encoding="utf-8", newline="")
             try:
                 after = load_cameras(tmp)
-                raw_after = (yaml.safe_load(new) or {}).get("cameras") or {}
+                raw_after = _raw_cameras(new)
             except (ValueError, yaml.YAMLError) as exc:
                 raise ValueError(f"고친 결과를 읽지 못해 아무것도 쓰지 않았습니다 — {exc}") from exc
             others = set(before) - {key}
@@ -529,7 +541,7 @@ def set_splits(path: Path, splits: dict[str, str | None], *, backup_dir: Path | 
         changed = [k for k, s in want.items() if before[k].split != s]
         if not changed:
             return []
-        raw_before = (yaml.safe_load(old) or {}).get("cameras") or {}
+        raw_before = _raw_cameras(old)
         new = old
         for k in changed:
             new = _edit_camera_text(new, k, {"split": want[k]}, None)
@@ -538,7 +550,7 @@ def set_splits(path: Path, splits: dict[str, str | None], *, backup_dir: Path | 
             tmp.write_text(new, encoding="utf-8", newline="")
             try:
                 after = load_cameras(tmp)
-                raw_after = (yaml.safe_load(new) or {}).get("cameras") or {}
+                raw_after = _raw_cameras(new)
             except (ValueError, yaml.YAMLError) as exc:
                 raise ValueError(f"고친 결과를 읽지 못해 아무것도 쓰지 않았습니다 — {exc}") from exc
             moved = set(changed)

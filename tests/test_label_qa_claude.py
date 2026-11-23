@@ -138,21 +138,58 @@ def test_the_rule_is_source_or_camera_key():
     assert lqc.local_only("aihub_pm", "cam-09")             # 다른 카메라로 옮긴 장
     assert lqc.local_only("aihub_pm", None)
     assert lqc.local_only("collected", "ah-0042")
+    # 손으로 등록하다 틀린 키도 막는다(2026-11-23 Gemini 리뷰 — 전에는 그 도구의 꼴 `ah-NNNN` 만 막아 이런 그림이 나갈 수 있었다)
+    assert lqc.local_only("collected", "ah-12")
+    assert lqc.local_only("collected", "ah-0101a")
     assert not lqc.local_only("collected", "hw-04")
-    assert not lqc.local_only("collected", "ah-12")         # 그 도구의 키 꼴(네 자리 이상)이 아니다
+    assert not lqc.local_only("collected", "xah-0001")
     assert not lqc.local_only("legacy", None)
     assert not lqc.local_only(None, None)
 
 
 def test_the_rule_names_what_the_import_tool_writes():
-    """넣는 도구가 출처 이름이나 키 꼴을 바꾸면 여기서 어긋난다 — 규칙을 두 곳에 적어 둔 값이다."""
+    """넣는 도구가 출처 이름이나 키 꼴을 바꾸면 여기서 어긋난다 — 출처는 같은 값, 키는 그 도구가 쓰는 꼴을 전부 막고 더 넓다."""
     import import_aihub_pm as ah
 
     assert ah.SOURCE in lqc.LOCAL_ONLY_SOURCES
     for key in ah.next_keys(set(), 3) + ah.next_keys({"ah-9999"}, 2):       # ah-0001 … 과 다섯 자리로 넘어간 뒤
         assert ah.KEY_RE.match(key) and lqc.LOCAL_ONLY_CAMERA.match(key), key
-    for key in ("ah-001", "ah-0001x", "xah-0001", "hw-01", "vid-07", ""):
+    for key in ("ah-001", "ah-0001x", "ah-x"):                               # 그 도구의 꼴은 아니지만 막는다
+        assert not ah.KEY_RE.match(key) and lqc.LOCAL_ONLY_CAMERA.match(key), key
+    for key in ("xah-0001", "hw-01", "vid-07", ""):
         assert not ah.KEY_RE.match(key) and not lqc.LOCAL_ONLY_CAMERA.match(key), key
+
+
+def test_controls_stay_off_masked_places(cfg, store, data, qa):
+    """2026-11-23 Gemini 리뷰 — 대조군이 가릴 영역(사람이 '애매해서 라벨하지 않는다' 고 덮은 자리)을 몰랐다: 음성 대조가 그 위에,
+    양성 대조가 반 넘게 덮인 라벨로 뽑힐 수 있었다(그 자리의 물체를 'missing' 이라고 해도 틀린 답이 아니라 대조군 성적을 흐린다).
+    보내도 되는 그림마다 오른쪽 라벨(가운데 x 0.7)을 통째로 덮는 영역을 두고, 씨앗 여덟 개로 뽑아 본다."""
+    W, H = SIZE
+    for iid in data.open:
+        store.set_masks(iid, [(0.45, 0.0, 1.0, 1.0)])
+
+    def cover(b):                                           # 박스 넓이 가운데 영역(x ≥ 0.45W)이 덮는 몫
+        ov = max(0.0, min(b[2], W) - max(b[0], 0.45 * W)) * max(0.0, min(b[3], H) - max(b[1], 0.0))
+        return ov / ((b[2] - b[0]) * (b[3] - b[1]))
+
+    for seed in range(8):
+        items, _, _, _ = lqc.build_items(cfg, qa, 2, seed)
+        groups = Counter(it["group"] for it in items)
+        assert groups == {"candidate": 2, "control_pos": 2, "control_neg": 2}, seed
+        for it in items:
+            if it["group"] == "control_pos":
+                assert cover(it["box"]) < 0.5, (seed, it)
+            elif it["group"] == "control_neg":
+                assert cover(it["box"]) < lqc.NEG_MASK, (seed, it)
+
+
+def test_every_class_whose_name_is_not_enough_has_a_note():
+    """2026-11-23 Gemini 리뷰 — responder·cone(11-09)을 붙인 뒤로 설명이 없었고, 판정 문구가 '사람이나 차량' 만 말해 라바콘을
+    'missing' 으로 부를 길이 없었다."""
+    lqc.set_classes(CLASSES)
+    for name in ("responder", "cone", "scooter", "pickup", "truck", "car"):
+        assert f"{name} (" in lqc.SYSTEM, name
+    assert "a person, a vehicle or a traffic cone" in lqc.INSTRUCTION
 
 
 def test_build_items_leaves_local_only_images_out(cfg, data, qa, capsys):

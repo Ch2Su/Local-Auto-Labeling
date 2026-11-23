@@ -7,9 +7,11 @@ AI Hub 의 PM 박스는 탄 사람 + 탈것을 한 박스로 그린다. 그대�
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 import random
+import sqlite3
 import sys
 import zipfile
 from pathlib import Path
@@ -493,6 +495,7 @@ def test_pin_train_shows_first_and_writes_only_when_told(cfg, store, registry, c
     said = capsys.readouterr().out
     assert "ah-* 카메라 5대: train 고정 1 · 고정할 것 2 · 다른 분할로 고정 1 · 막힘 1" in said
     assert "ah-0003 는 test 로 고정" in said and "ah-0004 의 이미지가 이미 val 1장" in said and "보기만 했다" in said
+    assert "ah-NNNN 꼴이 아닌 카메라 1대: ah-x" in said                         # 고정하지 않고 알린다(2026-11-23 리뷰)
 
     assert ah.pin_train(cfg, store, write=True) == 1
     assert pins(registry) == {"hw-01": None, "ah-0001": "train", "ah-0002": "train", "ah-0003": "test",
@@ -651,6 +654,91 @@ def test_check_writes_nothing_but_its_list(cfg, store, stock, picked, monkeypatc
     assert rows[0].split("\t")[:3] == ["file", "verdict", "video"] and len(rows) == 14
     row = next(r.split("\t") for r in rows if aihub_name(77) in r)
     assert row[1:6] == ["같은 자리", "T000077", "", "", f"ah-0002:{stock.b}"]
+
+
+BROKEN = b"jpeg \xff\xd8 not really"
+
+
+def test_check_byte_copies_take_the_findings_and_unreadable_files_are_not_twins(cfg, store, stock, tmp_path):
+    """2026-11-23 Gemini 리뷰 — (가) 함께 준 앞의 파일과 바이트가 같은 파일은 지문을 재지 않고 '준 것끼리 겹침' 으로만 나왔다:
+    앞의 파일이 DB 와 '같은 자리'·'같은 영상' 이어도 그랬다(이름을 바꾼 사본이면 영상도 모른다). 앞의 것만 빼고 사본을 넣으면
+    같은 자리가 들어간다. (나) 못 읽는 파일도 바이트 색인·영상 목록에 먼저 들어가, 같은 영상의 읽히는 파일이 '준 것끼리 겹침',
+    바이트가 같은 다른 깨진 파일이 '못 읽음' 대신 겹침으로 나왔다."""
+    d = tmp_path / "picked-twins"
+    d.mkdir()
+    files = {
+        aihub_name(1, 20): frame_bytes(1, 3),           # ah-0001 과 같은 영상(이름)·같은 자리
+        aihub_name(77): frame_bytes(2, 1, True),        # ah-0002 와 같은 자리
+        aihub_name(83): BROKEN,                         # 못 읽는다
+        aihub_name(83, 20): frame_bytes(24, 0),         # 바로 위와 같은 영상인데 읽힌다 — 새 것
+        "zz_a.jpg": frame_bytes(2, 1, True),            # T000077 을 이름만 바꾼 사본
+        "zz_b.jpg": frame_bytes(1, 3),                  # T000001_000_0020 을 이름만 바꾼 사본
+        "zz_c.jpg": BROKEN,                             # 깨진 파일의 사본
+    }
+    for name, data in files.items():
+        (d / name).write_bytes(data)
+    got = by_name(ah.check_files(store, ah.gather([d]), log=lambda *_: None))
+    assert {name: c.verdict for name, c in got.items()} == {
+        aihub_name(1, 20): "같은 영상", aihub_name(77): "같은 자리", aihub_name(83): "못 읽음", aihub_name(83, 20): "새 것",
+        "zz_a.jpg": "같은 자리", "zz_b.jpg": "같은 영상", "zz_c.jpg": "못 읽음"}
+
+    copy_a = got["zz_a.jpg"]
+    assert copy_a.twin_bytes.name == aihub_name(77) and [(k.id, k.camera) for k in copy_a.same_spot] == [(stock.b, "ah-0002")]
+    copy_b = got["zz_b.jpg"]
+    assert copy_b.video is None and copy_b.twin_bytes.name == aihub_name(1, 20)
+    assert [k.id for k in copy_b.same_video] == [stock.a] and [k.id for k in copy_b.same_spot] == [stock.a]
+    assert ah._why(copy_b).startswith(f"영상 T000001 = ah-0001 id {stock.a} 검수 대기")   # 영상 id 는 DB 쪽 이름에서
+    assert got[aihub_name(83, 20)].twin_video == []                        # 못 읽는 같은 영상 파일은 세지 않는다
+    assert got["zz_c.jpg"].error and got["zz_c.jpg"].twin_bytes is None
+
+    listed = ah.check_report(list(got.values()), tmp_path / "check.tsv", log=lambda *_: None)
+    row = next(r.split("\t") for r in listed.read_text("utf-8-sig").splitlines() if r.split("\t")[0].endswith("zz_a.jpg"))
+    assert row[1:6] == ["같은 자리", "", "", "", f"ah-0002:{stock.b}"] and row[6] == aihub_name(77)
+
+
+def test_a_missing_database_stops_instead_of_becoming_an_empty_one(cfg, tmp_path, monkeypatch):
+    """2026-11-23 Gemini 리뷰 — `Store(…)` 가 없는 DB 를 새로 만들어서, `--config` 를 잘못 주면 빈 DB 와 견줘 '전부 새 것' 이라고
+    했다(점검의 답이 거꾸로 '안전' 이 된다). 이제 어느 실행이든 DB 가 없으면 멈추고 아무것도 만들지 않는다."""
+    import yaml
+
+    raw = copy.deepcopy(cfg.raw)
+    raw["data"]["db"] = str(tmp_path / "nowhere" / "labeling.db")
+    path = tmp_path / "typo.yaml"
+    path.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    picked_dir = tmp_path / "some"
+    picked_dir.mkdir()
+    (picked_dir / aihub_name(80)).write_bytes(frame_bytes(24, 0))
+    for extra in (["--check", str(picked_dir)], ["--pin-train"], ["--pin-train", "--apply"], []):
+        monkeypatch.setattr(sys, "argv", ["import_aihub_pm.py", "--config", str(path), "--root", str(tmp_path / "none"),
+                                          *extra])
+        with pytest.raises(SystemExit, match="DB 가 없습니다"):
+            ah.main()
+    assert not (tmp_path / "nowhere").exists()
+
+
+def test_runs_that_only_look_leave_an_old_database_as_it_is(cfg, store, stock, picked, monkeypatch, capsys):
+    """2026-11-23 Gemini 리뷰 — 보기만 하는 실행도 `Store(…)` 로 열어 스키마를 맞췄다(옛 사본 DB 에 열을 더했다). 이제 넣기
+    (`--apply`) 말고는 읽기 전용으로 연다 — 다각형 열(11-19)이 생기기 전의 DB 를 주어도 그대로다."""
+    import yaml
+
+    cfg.path.write_text(yaml.safe_dump(cfg.raw, allow_unicode=True), encoding="utf-8")
+    con = sqlite3.connect(cfg.db)
+    con.execute("ALTER TABLE masks DROP COLUMN poly")
+    con.commit()
+    con.close()
+    for extra in (["--check", str(picked)], ["--pin-train"], ["--pin-train", "--apply"]):
+        monkeypatch.setattr(sys, "argv", ["import_aihub_pm.py", "--config", str(cfg.path), "--root", str(picked / "none"),
+                                          *extra])
+        assert ah.main() == 0
+    monkeypatch.setattr(sys, "argv", ["import_aihub_pm.py", "--config", str(cfg.path), "--root", str(picked / "none")])
+    with pytest.raises(SystemExit, match="원천데이터"):                       # 넣는 실행도 보기만일 때는 — 폴더가 없어 멈출 때까지
+        ah.main()
+    con = sqlite3.connect(cfg.db)
+    try:
+        assert "poly" not in {r[1] for r in con.execute("PRAGMA table_info(masks)")}
+    finally:
+        con.close()
+    assert "준 그림 13장" in capsys.readouterr().out
 
 
 def test_images_added_by_hand_under_an_ah_camera_count_as_already_in(cfg, store, aihub, tmp_path):

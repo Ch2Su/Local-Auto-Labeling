@@ -162,7 +162,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-23 에 500개·65초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-23 에 509개·67초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
@@ -238,8 +238,10 @@ width/height 는 회전 전 원시 크기다**(`labeler.py check` 도 원시 크
   단서로 넣은 후보(출처 `aihub`)라 전부 사람이 봐야 한다. **카메라 키는 '화면이 다른 것만 골랐다' 는 어림이다** — 이 데이터에는
   카메라 번호가 없고 같은 장소를 여러 자리에서 찍었다. **그래서 AI Hub 그림은 전부 train 에 둔다 (11-23 사용자 결정)** — 그날
   등록 파일의 `ah-*` 100대를 `split: train` 으로 고정했고(`import_aihub_pm.py --pin-train --apply`), 도구가 새로 등록하는
-  카메라도 train 으로 적는다. 사용자가 손으로 더 넣을 수 있다 — **카메라 키를 `ah-NNNN` 으로 등록해야** '열지 않는다'·
-  `local_only`·train 고정이 걸리고(scan 은 출처를 `collected` 로 넣는다), 등록한 뒤 `--pin-train` 을 다시 돌린다. 넣기 전에
+  카메라도 train 으로 적는다. 사용자가 손으로 더 넣을 수 있다 — **카메라 키를 `ah-NNNN` 으로 등록해야** train 고정·겹침
+  점검이 걸리고(scan 은 출처를 `collected` 로 넣는다), 등록한 뒤 `--pin-train` 을 다시 돌린다. `ah-` 로 시작하는데 그 꼴이
+  아닌 키(`ah-101`)는 고정·점검에서 빠지니 그 도구가 알린다 — 밖으로 보내지 않는 규칙(`local_only`)만은 `ah-` 로 시작하는
+  키를 전부 막는다(11-23 Gemini 리뷰). 넣기 전에
   겹침(같은 그림·같은 영상·같은 자리)은 `import_aihub_pm.py --check <폴더>` 로 잰다 — Claude 가 그림을 못 보니 이 숫자가 전부다
   (docs/provenance.md 의 그 항목). **고정한 그림도 분할 비율에 든다** — AI Hub 가 전부 승인되면 직접 모은 그림의 train 몫이
   66% → 55% 로 준다(사본 실측, docs/next.md 5번): 첫 분할 때 사용자와 정할 것.
