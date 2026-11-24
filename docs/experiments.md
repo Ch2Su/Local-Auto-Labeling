@@ -1241,7 +1241,7 @@ cos_lr / optimizer auto / seed 0 이다. 다른 것은 셋이다: 클래스 10�
     cone 은 train 842개(가려짐 포함)가 거의 다 CCTV 다.
 - 시간은 epoch 1 이 107초, 그 뒤 평균 73초, 합계 124분이다. 같은 사본에서 batch 10 으로 띄운 첫 실행은 epoch 2–5 가 약 82초였다.
   batch 16 의 VRAM 은 같은 날 저녁에 따로 띄워 epoch 1 동안 쟀다(3초 간격 22표본, 정지 파일로 멈춤 — 그 실행 폴더는 사용자 결정으로 지웠고 로그 `runs\train_20261124_214205.out.log` 만 남겼다). 학습 프로세스 전용 VRAM 은 최대 9.5GB · 평균 8.7GB, GPU 전체는 최대 11.2/16.3GB 였다. epoch 1 이 102초라 넘침은 없었다(batch 10 은 학습 프로세스 6.3GB, GPU 전체 9.3GB).
-- 첫 실행(`runs\review_old`, batch 10, 39장 없음)은 39장을 넣느라 epoch 5(val 0.4322)에서 정지 파일로 멈췄다.
+- 첫 실행(`runs\review_old`, batch 10, 39장 없음)은 39장을 넣느라 epoch 6 도중에 정지 파일로 멈췄다(best epoch 5, val 0.4321). 그 폴더는 사용자 결정으로 지웠고 로그 `runs\train_20261124_133218.out.log` 만 남겼다.
 - **best = epoch 88 (val mAP50-95 0.6099, 마지막 검증 0.6102).** 10클래스 평균이라 11-08 의 0.693 과 견주지 않는다. val 의 공통
   8클래스 평균은 0.713 이지만, 그새 사용자가 라벨을 고쳐 이것도 같은 잣대가 아니다.
 - 가중치는 사본의 `models\best.pt`(sha256 `f280d1ca…`), 결과 폴더는 `runs\review_old-2` 다(모두 git 밖).
