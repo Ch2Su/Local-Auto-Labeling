@@ -104,6 +104,10 @@
   `model.val`(yolo26n·Ultralytics 예제 그림 bus.jpg·CPU)로도 돌려 영역이 없으면 mAP50 0.995, 왼쪽 반을 덮으면 그 자리의 예측이
   빠지는 것을 봤다(스크래치 스크립트 — 모델이 필요해 테스트로 두지 않았다). **Ultralytics 를 올리면 이 테스트도 볼 것** —
   `update_metrics`·예측 사전 꼴·`scale_boxes` 에 기댄다(꼴이 다르면 검증기가 멈춘다).
+- `tests/test_its_incident_clips.py`(11-24)는 `tools/its_incident_clips.py` 의 고르기를 네트워크·키 없이 본다 — 반경 안 가장
+  가까운 카메라, 칸(약 2km)보다 넓은 반경, 돌발과 같은 도로 유형의 카메라만, 드문 유형·최근 것 먼저, 같은 카메라는 한 번,
+  끝난 돌발·현장이 없는 돌발(정체·이동 작업) 빼기, 좌표·주소 없는 줄 버리기, 오류 글에서 키 지우기, mp4 가 아닌 응답은 파일을
+  남기지 않기(`urlopen` 을 대역으로).
 - `tests/test_eval_test.py`(11-15)는 `wsl/eval_test.py` 의 `at_conf`(놓침·헛 박스)가 conf 0.25·IoU 0.45 로 세어지는지 본다 —
   Ultralytics 8.4.212 의 검증기는 혼동 행렬을 val 의 conf 0.001·IoU 0.5 로 세서, 같은 119장에서 헛 박스가 에러 없이 20 → 988 이
   됐다(mAP 는 8.4.142 와 같았다 — docs/experiments.md '새 풀 프레임 데이터'). **Ultralytics 를 올리면 이 테스트부터 볼 것.** val 에

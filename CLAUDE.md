@@ -154,7 +154,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 
 도구마다 하는 일·옵션·조심할 것은 [tools/CLAUDE.md](tools/CLAUDE.md) 의 표에 있다(2026-11-17 에 이 파일에서 옮겼다 — `tools/` 의
 파일을 다룰 때는 저절로 읽힌다). **도구를 돌리기만 할 때도 먼저 그 표에서 그 도구의 줄을 읽을 것.** 있는 도구:
-`test_baseline`·`label_qa`·`label_qa_claude`·`merge_class`·`import_o365`·`import_virat`·`import_aihub_pm`·`import_roadplus`·`ovd_propose`·`import_proposals`·`crop_images`·`mask_images`·`finetune`·`probe_scale`·`extract_frames`·`auto_capture`·`legacy_groups`·`domain_review`·`prune_seed_json`·`build_subset_dataset`·`scheduled_stop`. 늘 지킬 것:
+`test_baseline`·`label_qa`·`label_qa_claude`·`merge_class`·`import_o365`·`import_virat`·`import_aihub_pm`·`import_roadplus`·`ovd_propose`·`import_proposals`·`crop_images`·`mask_images`·`finetune`·`probe_scale`·`extract_frames`·`auto_capture`·`its_incident_clips`·`legacy_groups`·`domain_review`·`prune_seed_json`·`build_subset_dataset`·`scheduled_stop`. 늘 지킬 것:
 - **VIRAT·Objects365·AI Hub(`import_aihub_pm`)를 넣은 뒤 `labeler.py label --all` 금지**(넣어 둔 박스를 예측으로 덮는다).
 - 그림 파일을 바꾸는 도구(`crop_images`·`import_virat --recrop`)를 돌린 뒤에는 검수 화면을 새로 고칠 것.
 - `import_proposals --apply` 는 승인 이미지를 검수 대기로 돌린다. `mask_images` 는 11-24 부터 test 이미지에도 넣는다(아래 '가릴 영역').
