@@ -25,7 +25,8 @@ DB 는 읽기 전용으로 열고(`mode=ro`) 아무것도 고치지 않는다. �
 **가릴 영역(검수 화면 `M`)이 덮은 자리는 견주지 않는다 (2026-11-16).** 영역이 넓이의 반 이상을 덮은 라벨은 학습 라벨에서
 빠지는 박스이고(`masks.drops` — 학습 세트와 같은 판정), 그 자리의 예측은 사람이 '애매해서 안 그린다' 고 덮어 둔 물체다. 전에는
 영역을 몰라서 덮어 둔 자리의 남은 자동 라벨 박스가 `unseen` 으로, 모델이 거기서 찾은 물체가 `missing` 으로 쏟아졌다(2026-11-15 의
-DB 는 승인 박스 1,277개 중 619개가 가려진 박스였다). test 분할 이미지는 영역을 적용하지 않으니 그대로 견준다(`masks.applies_to`).
+DB 는 승인 박스 1,277개 중 619개가 가려진 박스였다). **test 분할도 같다**(2026-11-24 — test 의 영역은 칠하지 않고 채점에서 빼는
+자리다, masks.py. 그 전에는 test 는 영역을 적용하지 않아 그대로 견줬다).
 전부 견주려면 `--keep-masked`.
 
 **모델이 모르는 클래스의 라벨은 견주지 않는다 (2026-11-16).** 검수 화면의 예측 비교(P, app.js `computeFindings`)와 같은 규칙이다 —
@@ -55,7 +56,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
 from autolabel.config import Config, resolve
-from autolabel.masks import applies_to, drops, from_row
+from autolabel.masks import drops, from_row
 from autolabel.predictor import build_class_map
 
 _Box = namedtuple("_Box", "cx cy w h")      # masks.drops 가 읽는 꼴(정규화)
@@ -111,9 +112,9 @@ def load_db(db: Path):
 
 
 def applied_rects(images: list[dict], masks) -> dict[int, list]:
-    """가릴 영역을 **적용하는** 이미지의 영역 {이미지 id: [영역(사각형·다각형)]} — 학습 세트와 같은 규칙이다(`masks.applies_to`):
-    test 분할은 평가라 칠하지도, 박스를 빼지도 않으니 여기서도 영역이 없는 것으로 본다."""
-    return {im["id"]: masks[im["id"]] for im in images if masks.get(im["id"]) and applies_to(im["split"])}
+    """영역이 있는 이미지의 영역 {이미지 id: [영역(사각형·다각형)]} — 분할과 상관없다(2026-11-24 부터 test 도: 라벨 파일에서
+    빠지고 그 자리의 예측은 채점에서 빠지는 자리다 — masks.py 'test 의 영역')."""
+    return {im["id"]: masks[im["id"]] for im in images if masks.get(im["id"])}
 
 
 def unmasked_labels(gt_rows: list, rects) -> list:

@@ -380,7 +380,8 @@ async function bulkTag(tagId, on) {
 
 /* 가릴 영역 템플릿 (2026-11-10, 사용자 요청) — 고른 이미지 모두에 템플릿 영역을 더하거나 뺀다(app.js 의 템플릿 칸에서
  * 만든 것, S.mtpls). 서버가 이미지마다 이력을 남기는 일괄 수정 묶음이라 상단 '변경 기록' → '일괄 수정 묶음' 에서 묶음째
- * 되돌린다. 더하기는 test 이미지·화면 비율이 템플릿과 다른 이미지를 서버가 건너뛰고 그 장수를 알려 준다. 학습 라벨이
+ * 되돌린다. 더하기는 화면 비율이 템플릿과 다른 이미지를 서버가 건너뛰고 그 장수를 알려 준다(test 이미지에도 더한다 — 그 영역은
+ * 칠하지 않고 채점에서 뺀다, 2026-11-24). 학습 라벨이
  * 바뀌는 일이라 장수와 상관없이 한 번 묻는다. */
 const GS_MTPL_KEY = `gsMtpl:${BASE}`;     // 고른 템플릿 — 탭(프로젝트)마다 템플릿 번호가 따로라 주소별로
 
@@ -418,7 +419,7 @@ async function bulkMaskTemplate(mode) {
   if (!confirm(`고른 ${ids.length.toLocaleString()}장${mode === "add" ? "에" : "에서"} 템플릿 '${t.name}' 의 가릴 영역`
     + ` ${t.rects.length}개를 ${mode === "add" ? "더합니다" : "뺍니다"}.\n`
     + (mode === "add"
-      ? "test 이미지와, 화면 비율이 템플릿을 만든 그림과 다른 이미지는 건너뜁니다. 이미 같은 자리에 있는 영역은 다시 넣지 않습니다.\n"
+      ? "화면 비율이 템플릿을 만든 그림과 다른 이미지는 건너뜁니다. 이미 같은 자리에 있는 영역은 다시 넣지 않습니다.\n"
       : "템플릿과 좌표가 같은 영역만 뺍니다 — 손으로 옮긴 영역은 남습니다.\n")
     + "상단 '변경 기록' → '일괄 수정 묶음' 에서 묶음째 되돌릴 수 있습니다. 계속할까요?")) return;
   // 라벨링 쪽 지금 이미지의 저장부터 끝낸다 — 늦게 끝난 그 저장이 서버에서 바꾼 영역을 덮지 않게
@@ -435,7 +436,6 @@ async function bulkMaskTemplate(mode) {
     }
     const skip = [
       r.unchanged && `이미 ${mode === "add" ? "있음" : "없음"} ${r.unchanged.toLocaleString()}`,
-      r.blocked && `test ${r.blocked.toLocaleString()}`,
       r.aspect && `비율 다름 ${r.aspect.toLocaleString()}`,
       r.full && `영역 ${MASK_MAX}개 넘음 ${r.full.toLocaleString()}`,
       r.unreadable && `파일 못 엶 ${r.unreadable.toLocaleString()}`,

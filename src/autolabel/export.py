@@ -29,7 +29,7 @@ from pathlib import Path
 import yaml
 
 from .config import ROOT, Config, resolve
-from .masks import applies_to, split_boxes, write_masked
+from .masks import IGNORE_DIR, paints, split_boxes, write_ignore, write_masked
 from .split import SPLITS
 from .store import Store
 from .yolo_io import write_yolo_txt
@@ -54,7 +54,8 @@ class ExportReport:
     unassigned: int = 0         # DB 에 분할이 아직 없어 목록에서 뺀 장수 (다음 학습·split 때 배정된다)
     masked: int = 0             # 가릴 영역을 칠해 내보낸 이미지 (masks.py — 이미지를 함께 내보낼 때만)
     mask_dropped: int = 0       # 그 영역에 반 넘게 가려져 라벨에서 뺀 박스
-    masked_raw: int = 0         # 영역이 있지만 칠하지 않고 DB 박스 그대로 쓴 이미지 (라벨만 내보냄·test)
+    masked_raw: int = 0         # 영역이 있지만 칠하지 않고 DB 박스 그대로 쓴 train·val 이미지 (라벨만 내보냄)
+    masked_test: int = 0        # 영역이 있는 test 이미지 — 칠하지 않고 반 넘게 가려진 박스만 뺐다(그 자리는 ignore/, 11-24)
 
     def summary(self) -> str:
         lines = [
@@ -72,12 +73,15 @@ class ExportReport:
                              "(라벨은 labels/ 에 있다 — 다음 학습이나 labeler.py split 때 배정된다)")
         elif self.images:
             lines.append("  DB 에 분할(train·val·test)이 없어 data.yaml 의 train·val 이 모두 images/ 입니다")
-        if self.masked:
+        if self.masked or self.masked_test:
             lines.append(f"가릴 영역  : {self.masked}장을 회색(114)으로 칠해 내보냈고, 반 넘게 가려진 박스 "
                          f"{self.mask_dropped}개는 라벨에서 뺐습니다")
+        if self.masked_test:
+            lines.append(f"  test {self.masked_test}장은 칠하지 않았습니다 — 그 자리는 채점에서 뺄 곳으로 {IGNORE_DIR}/ 에 "
+                         "그림으로 남겼습니다(wsl/eval_test.py 가 읽는다)")
         if self.masked_raw:
             lines.append(f"  가릴 영역이 있는 {self.masked_raw}장은 칠하지 않고 DB 박스 그대로 썼습니다 "
-                         "(이미지를 함께 내보내지 않았거나 test 라서)")
+                         "(이미지를 함께 내보내지 않아서)")
         return "\n".join(lines)
 
 
@@ -110,7 +114,7 @@ def _prepare(out_dir: Path, cfg: Config) -> bool:
                 f"{out_dir} 는 다른 DB 의 내보내기입니다 (표식의 DB: {prev_db or '읽지 못함'}, 지금 DB: {cfg.db}). "
                 "다른 프로젝트의 결과를 지우지 않게 멈췄습니다 — 다른 폴더를 고르거나, 필요 없는 폴더면 직접 비우세요."
             )
-        for sub in ("labels", "images"):
+        for sub in ("labels", "images", IGNORE_DIR):
             if (out_dir / sub).exists():
                 # 못 지우면 멈춘다 — 지난번 라벨이 섞여 남으면 지금 승인되지 않은 이미지가 따라간다.
                 shutil.rmtree(out_dir / sub)
@@ -162,7 +166,7 @@ def export_yolo(
     lists: dict[str, list[str]] = {s: [] for s in SPLITS}
 
     seen: set[str] = set()
-    masks = store.masks_by_image()      # 가릴 영역 (masks.py) — 이미지를 함께 내보낼 때만 칠한다
+    masks = store.masks_by_image()      # 가릴 영역 (masks.py) — train·val 은 이미지를 함께 내보낼 때만 칠한다, test 는 늘 안 칠한다
     # 박스는 연결 하나로 한꺼번에 읽는다 — 예전에는 이미지마다 get_boxes() 가 연결을 새로 열었다(2026-11-05).
     for row, boxes in store.approved_with_boxes(tuple(statuses)):
         src = Path(row["path"])
@@ -176,9 +180,13 @@ def export_yolo(
 
         suffix = src.suffix
         rects = masks.get(row["id"])
-        if rects and (not with_images or not applies_to(row.get("split"))):
-            # 라벨만 내보내면 받는 쪽은 원본을 쓴다 — 칠하지 않은 그림에서 박스만 빼면 그 사람들이 배경이 된다.
-            # test 는 실제 화면 그대로(masks.py). 둘 다 DB 박스를 그대로 쓴다.
+        ignore = None
+        if rects and not paints(row.get("split")):
+            # test — 그림은 실제 화면 그대로, 반 넘게 가려진 박스는 빼고 그 자리는 ignore/ 그림으로(masks.py 'test 의 영역')
+            boxes, dropped = split_boxes(boxes, rects)
+            ignore, rects = rects, None
+        elif rects and not with_images:
+            # 라벨만 내보내면 받는 쪽은 원본을 쓴다 — 칠하지 않은 그림에서 박스만 빼면 그 사람들이 배경이 된다(DB 박스 그대로).
             report.masked_raw += 1
             rects = None
         if with_images:                  # 이미지를 먼저 — 복사가 안 되면 라벨도 쓰지 않는다
@@ -196,6 +204,11 @@ def export_yolo(
                 boxes, dropped = split_boxes(boxes, rects)
                 report.masked += 1
                 report.mask_dropped += len(dropped)
+        if ignore:                      # 이미지를 못 내보내 건너뛴 장은 세지 않는다(위의 continue)
+            report.masked_test += 1
+            report.mask_dropped += len(dropped)
+            if src.exists():
+                write_ignore(src, out_dir / IGNORE_DIR / f"{stem}.png", ignore)
         seen.add(stem.lower())
         write_yolo_txt(labels_dir / f"{stem}.txt", boxes)
         report.images += 1
@@ -223,8 +236,11 @@ def export_yolo(
         head.append("# 이미지를 함께 내보내지 않았다(images/ 가 비어 있다) — 그대로는 학습할 수 없다.")
     if report.masked:
         head.append(f"# 가릴 영역이 있는 {report.masked}장은 그 자리를 회색(114)으로 칠한 JPEG 이고, 반 넘게 가려진 박스는 라벨에서 뺐다.")
+    if report.masked_test:
+        head.append(f"# test 에서 가릴 영역이 있는 {report.masked_test}장은 칠하지 않았고, 그 자리는 채점에서 뺄 곳으로 "
+                    f"{IGNORE_DIR}/ 에 그림이 있다(반 넘게 가려진 박스는 라벨에서 뺐다 — wsl/eval_test.py 가 읽는다).")
     if report.masked_raw:
-        head.append(f"# 가릴 영역이 있는 {report.masked_raw}장은 칠하지 않고 DB 박스 그대로다(라벨만 내보냈거나 test).")
+        head.append(f"# 가릴 영역이 있는 {report.masked_raw}장은 칠하지 않고 DB 박스 그대로다(라벨만 내보냈다).")
     (out_dir / "data.yaml").write_text(
         "\n".join(head) + "\n"
         + yaml.safe_dump({**spec, "names": dict(enumerate(classes))}, allow_unicode=True, sort_keys=False),

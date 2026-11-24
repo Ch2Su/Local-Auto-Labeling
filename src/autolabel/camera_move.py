@@ -15,7 +15,6 @@
 - **분할** — 분할이 이미 정해진 이미지를 옮기면 그 카메라가 두 분할에 걸치게 되는 때(새 카메라의 고정 분할이나 이미 있는
   이미지의 분할과 다르다). 분할은 split.py 만 바꾸고 정한 분할은 옮기지 않는다 — 학습한 이미지가 test 카메라로 들어가면
   평가가 샌다. 미배정 이미지는 막지 않는다(다음 분할 때 새 카메라의 묶음을 따라간다).
-- 가릴 영역이 있는 이미지를 test 로 고정한 카메라로(server.mask_block 과 같은 규칙).
 - 새 경로에 이미 파일이 있거나 DB 의 다른 이미지가 쓰거나, 옮길 것끼리 새 이름이 겹친다.
 
 순서는 camera_rename.py 와 같다 — **DB 행이 없는 파일을 가리키는 때가 없게**: 새 이름을 하드링크로 만들고(안 되는 디스크면
@@ -133,11 +132,6 @@ def plan_move(cfg, store, ids: list[int], new: str, cameras: dict) -> MovePlan:
             raise MoveBlocked(f"옮기면 카메라 '{new}' 가 두 분할에 걸칩니다(옮길 이미지: {_split_text(have)}"
                               + (f", 그 카메라: {_split_text(there)}" if there else "") + ") — 분할이 정해진 이미지는 같은 "
                               "분할의 카메라로만 옮길 수 있습니다(학습한 이미지가 평가 쪽으로 새지 않게).")
-    if target.split == "test":
-        masked = [r["id"] for r in moving if r["masked"]]
-        if masked:
-            raise MoveBlocked(f"가릴 영역이 있는 이미지(id {_ids_text(masked)})는 test 로 고정한 카메라 '{new}' 로 옮길 수 없습니다 — "
-                              "test 이미지에는 가릴 영역을 둘 수 없습니다(먼저 지울 것).")
 
     for r in moving:
         got = _target(cfg, r["path"], r["camera"], new)

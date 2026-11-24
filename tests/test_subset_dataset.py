@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -89,15 +90,16 @@ def test_builds_only_what_matches_and_keeps_the_source_untouched(source, tmp_pat
     assert list(spec["names"].values()) == CLASSES[:8]             # responder·cone 은 목록에서도 빠진다
     assert Path(spec["path"]) == ds and spec["test"] == "images/test"
 
-    # 가릴 영역: train 은 칠하고 반 넘게 가려진 박스를 뺀다, test 는 실제 화면·박스 그대로
+    # 가릴 영역: train 은 칠하고 반 넘게 가려진 박스를 뺀다, test 는 칠하지 않고(실제 화면) 박스만 뺀다 — 그 자리는 ignore/
     assert [row[0] for row in labels(ds / "labels" / "train", "a")] == [str(PERSON)]
-    assert (info["masked"], info["mask_dropped"], info["masked_test"]) == (1, 1, 1)
+    assert (info["masked"], info["mask_dropped"], info["masked_test"]) == (1, 2, 1)
     (painted,) = [p for p in (ds / "images" / "train").iterdir() if p.stem.startswith("a__")]
     with Image.open(painted) as im:
         assert all(abs(v - GRAY) <= 6 for v in im.getpixel((32, 6))) and im.getpixel((32, 40))[0] > 150
     (kept,) = (ds / "images" / "test").iterdir()
     assert kept.read_bytes() == (source["root"] / "img" / "c.jpg").read_bytes()
-    assert len(labels(ds / "labels" / "test", "c")) == 1
+    assert labels(ds / "labels" / "test", "c") == []                     # 2026-11-24 — 전에는 박스 그대로였다
+    assert (ds / "ignore" / "test" / f"{kept.stem}.png").is_file()
 
     # 사본에는 고른 이미지만, 원본은 바이트까지 그대로
     copy = Store(out / "labeling.db")
@@ -152,12 +154,19 @@ def test_test_only_set_for_unseen_data(source, tmp_path):
     ds = out / "dataset"
     assert (info["train"], info["val"], info["test"]) == (0, 0, 4)
     assert stems(ds / "images" / "test") == {"a", "b", "c", "plaza"}
-    assert len(labels(ds / "labels" / "test", "a")) == 2                # 가릴 영역이 있어도 박스를 빼지 않는다
+    # 가릴 영역은 채점에서 뺄 자리 — 그림은 원본 그대로, 반 넘게 가려진 박스는 빼고 그 자리를 ignore/ 그림으로(2026-11-24.
+    # 전에는 박스까지 그대로라 그 자리의 물체를 찾은 예측이 전부 헛 박스로 세어졌다)
+    assert [row[0] for row in labels(ds / "labels" / "test", "a")] == [str(PERSON)]
     (raw,) = [p for p in (ds / "images" / "test").iterdir() if p.stem.startswith("a__")]
     assert raw.read_bytes() == (source["root"] / "img" / "a.jpg").read_bytes()
+    assert {p.stem for p in (ds / "ignore" / "test").iterdir()} == {raw.stem} | {
+        p.stem for p in (ds / "images" / "test").iterdir() if p.stem.startswith("c__")}
+    assert (info["masked"], info["mask_dropped"]) == (2, 2)
     spec = yaml.safe_load((ds / "data.yaml").read_text(encoding="utf-8"))
     assert spec["train"] == spec["val"] == spec["test"] == "images/test"
     assert (out / "dataset.tar").stat().st_size == info["tar_bytes"] > 0
+    with tarfile.open(out / "dataset.tar") as tf:                     # pod 로 보내는 묶음에도 그 자리 그림이 들어간다
+        assert any(n.startswith("dataset/ignore/test/a__") for n in tf.getnames())
 
 
 def test_test_only_set_can_paint_masks(source, tmp_path):

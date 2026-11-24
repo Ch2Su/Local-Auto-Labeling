@@ -535,29 +535,6 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         return store.set_boxes(image_id, boxes, uncertainty=score_of(boxes), source=source, batch=batch,
                                masks=masks)
 
-    def mask_block(row, cams: dict | None = None) -> str | None:
-        """이 이미지에 가릴 영역을 둘 수 없는 이유, 둘 수 있으면 None (2026-11-09, masks.py).
-
-        test 는 평가용이라 실제 화면 그대로여야 한다 — 분할이 test 이거나, 아직 미배정이어도 cameras.yaml 에서 test 로
-        고정한 카메라면 막는다. 학습 세트도 test 분할은 칠하지 않으니 여기를 빠져나간 영역이 평가를 바꾸지는 않는다.
-        **이 규칙은 여기 한 곳에만 둔다** — 여러 장을 다루는 store(apply_mask_template·revert_batch)에는 이 함수를 넘긴다
-        (mask_blocker — 등록 파일을 장마다 다시 읽지 않게 cams 를 한 번 읽어 준다). row 는 split·camera 만 있으면 된다.
-        """
-        if row["split"] == "test":
-            return "test 이미지에는 가릴 영역을 둘 수 없습니다 — 평가는 실제 화면 그대로여야 합니다."
-        if cams is None:
-            cams = _cameras()[0]
-        cam = cams.get(row["camera"]) if row["camera"] else None
-        if cam is not None and cam.split == "test":
-            return (f"test 로 고정한 카메라({row['camera']})의 이미지에는 가릴 영역을 둘 수 없습니다"
-                    " — 평가는 실제 화면 그대로여야 합니다.")
-        return None
-
-    def mask_blocker():
-        """여러 장에 쓸 mask_block — 카메라 등록 파일을 지금 한 번만 읽는다."""
-        cams = _cameras()[0]
-        return lambda row: mask_block(row, cams)
-
     def check_mask_count(masks_in: list[MaskIn]) -> None:
         """한 장 한도(MAX_MASKS)와 다각형 꼭짓점 한도(MAX_POINTS) — 넘으면 400 (화면 app.js 도 같은 한도로 막는다)."""
         if len(masks_in) > MAX_MASKS:
@@ -566,14 +543,12 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             raise HTTPException(400, f"다각형의 꼭짓점은 {MAX_POINTS}개까지입니다.")
 
     def clean_mask_input(row, masks_in: list[MaskIn] | None) -> list | None:
-        """요청의 영역을 정리한다. 너무 많으면 400, test 이미지에 영역을 남기려 하면 409(지우기만은 받는다)."""
+        """요청의 영역을 정리한다. 너무 많으면 400. test 이미지도 받는다 — 그 영역은 칠하지 않고 채점에서 뺀다(masks.py 'test 의
+        영역', 2026-11-24 사용자 결정. 그 전에는 409 로 막았다)."""
         if masks_in is None:
             return None
         check_mask_count(masks_in)
-        masks = clean_masks([m.value() for m in masks_in])
-        if masks and (why := mask_block(row)):
-            raise HTTPException(409, why + " 이 이미지의 가릴 영역을 모두 지워야 저장됩니다.")
-        return masks
+        return clean_masks([m.value() for m in masks_in])
 
     # ------------------------------------------------------------- 상태 / 목록
 
@@ -930,7 +905,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     def bulk_mask_template(payload: BulkMaskTemplateIn) -> dict:
         """고른 이미지들에 템플릿 영역을 더하거나(add) 뺀다(remove). 바뀐 장수와 건너뛴 이유별 장수를 돌려준다.
 
-        더하기는 test 이미지(mask_block — store 가 쓰는 순간의 행으로 본다)와, 화면 비율이 템플릿을 만든 그림과 1% 넘게
+        더하기는 화면 비율이 템플릿을 만든 그림과 1% 넘게
         다른 이미지를 건너뛴다(다른 카메라·크기의 그림을 엉뚱하게 덮지 않게). **비율은 파일을 열어 EXIF 회전을 적용한 화면
         크기로 본다** — DB 의 크기는 회전 전 원시 크기라, 원시 비율은 템플릿과 같은데 90도 돌려 보는 사진(16:9 로 찍은 폰
         세로 사진)을 가려내지 못한다. 2026-11-16 전에는 DB 비율이 맞으면 파일을 열지 않았다(1천 장에 2초를 아끼려고) — 그런
@@ -965,7 +940,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         verb = "더하기" if payload.mode == "add" else "빼기"
         batch = (f"{datetime.now():%m-%d %H:%M:%S} 가릴 영역 템플릿 '{tpl['name']}' {verb}"
                  f" (고른 {len(payload.ids)}장) #{secrets.token_hex(2)}")
-        res = store.apply_mask_template(ids, tpl["rects"], mode=payload.mode, batch=batch, blocked=mask_blocker())
+        res = store.apply_mask_template(ids, tpl["rects"], mode=payload.mode, batch=batch)
         return {**res, "aspect": n_aspect, "unreadable": n_unreadable,
                 "batch": batch if res["changed"] else None}
 
@@ -997,9 +972,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             "camera_place": _camera_place(row["camera"]),
             "domain": row["domain"],
             "tags": store.image_tag_ids(image_id),
-            # 가릴 영역(사각형 [x1, y1, x2, y2]·다각형 [[x, y], …])과, 둘 수 없으면 그 이유(test 이미지) — masks.py
+            # 가릴 영역(사각형 [x1, y1, x2, y2]·다각형 [[x, y], …]) — masks.py. test 이미지도 둔다(채점에서 뺄 자리, 11-24)
             "masks": [to_wire(m) for m in store.get_masks(image_id)],
-            "mask_block": mask_block(row),
             # 이 서버는 다각형을 안다 (2026-11-19) — 화면은 이것이 참일 때만 다각형을 그리게 한다. 서버를 다시 켜기 전에
             # 페이지만 새로 고친 화면(새 app.js + 옛 서버)이 다각형을 옛 서버로 보내 바깥 사각형으로 바뀌지 않게
             "mask_poly": True,
@@ -1104,8 +1078,6 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             raise HTTPException(400, "지금 없는 클래스 번호가 들어 있어 되돌릴 수 없습니다.")
         # 그 저장에서 가릴 영역도 바뀌었으면 영역도 그때로 (아니면 None — 지금 영역을 그대로 둔다)
         masks = entry[f"masks_{which}"]
-        if masks and (why := mask_block(store.get_image(image_id))):
-            raise HTTPException(409, why)
         n_before, n_after = save_boxes(image_id, boxes, source="restore", masks=masks)
         return {"ok": True, "n_boxes": n_after, "n_before": n_before,
                 "n_history": store.history_count(image_id),
@@ -1169,7 +1141,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     def revert_batch(payload: BatchIn) -> dict:
         """일괄 수정 한 묶음을 되돌린다. 그 뒤 또 고친 이미지는 건너뛴다."""
         try:
-            reverted, skipped = store.revert_batch(payload.batch, score=score_of, mask_blocked=mask_blocker())
+            reverted, skipped = store.revert_batch(payload.batch, score=score_of)
         except ValueError as exc:   # 되돌리면 목록에 없는 클래스가 생긴다 (클래스를 합쳐 뺀 묶음)
             raise HTTPException(409, str(exc)) from exc
         if not reverted and not skipped:
@@ -1552,9 +1524,6 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             if want != old.split and use["assigned"]:
                 raise HTTPException(409, f"'{key}' 의 이미지 {use['assigned']}장이 이미 분할에 들어가 있어 고정 분할을 바꿀 수 "
                                          "없습니다 — 바꾸면 이 카메라가 두 분할로 갈립니다(정한 분할은 옮기지 않는다).")
-            if want == "test" and want != old.split and use["masked"]:
-                raise HTTPException(409, f"'{key}' 의 이미지 {use['masked']}장에 가릴 영역이 있어 test 로 고정할 수 없습니다 — "
-                                         "test 이미지에는 가릴 영역을 둘 수 없습니다(먼저 지울 것).")
         return use
 
     def _edit_camera(key: str, values: dict, new_key: str | None, *, dry_run: bool = False):

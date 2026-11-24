@@ -252,12 +252,10 @@ def test_an_image_whose_boxes_are_all_masked_counts_as_empty(store, add_image):
     assert (rep(store, drop=False)["empty"], rep(store, drop=False)["boxes"]) == (0, 1)
 
 
-def test_boxes_under_masks_on_test_images_are_not_dropped(store, add_image):
-    """test 분할은 학습 세트·내보내기가 칠하지도, 박스를 빼지도 않는다(trainer.build_dataset·export_yolo 의 split == "test").
-
-    영역은 검수하며 먼저 덮고 분할은 나중에 정해지므로 영역이 있는 이미지가 test 로 갈 수 있다. 2026-11-15 리뷰에서 고침:
-    전에는 분할을 안 보고 빼서 test 의 박스가 labels/test 보다 적게 세어지고 'test 에 박스가 없는 클래스' 가 잘못 떴다.
-    """
+def test_boxes_under_masks_on_test_images_are_dropped_too(store, add_image):
+    """2026-11-24 사용자 결정 — test 의 가릴 영역은 칠하지 않고 채점에서 빼는 자리라, 반 넘게 덮인 test 박스도 라벨에서 빠진다
+    (학습 세트·내보내기·평가 세트가 함께 — masks.drops). 그 전(11-15 리뷰 ~ 11-23)에는 test 는 칠하지도 빼지도 않아 여기서도
+    test 박스를 세었다. 영역이 있는 test 이미지 수는 따로 알린다."""
     tr = add_image("tr.jpg", camera="cam-01", boxes=[box(CAR)])
     te = add_image("te.jpg", camera="cam-02", boxes=[box(CAR)])
     add_image("va.jpg", camera="cam-03", boxes=[box(CAR)], split="val")
@@ -267,20 +265,19 @@ def test_boxes_under_masks_on_test_images_are_not_dropped(store, add_image):
 
     r = rep(store)
     car = by_name(r["classes"])["car"]
-    assert (r["boxes"], car["boxes"], car["masked_out"]) == (2, 2, 1)         # train 의 한 개만 빠진다
-    assert car["split"] == {"train": 0, "val": 1, "test": 1, "none": 0}
-    assert r["splits"]["boxes"] == {"train": 0, "val": 1, "test": 1, "none": 0}
-    assert r["masks"] == {"images": 2, "rects": 2, "dropped": 1, "test_images": 1}
+    assert (r["boxes"], car["boxes"], car["masked_out"]) == (1, 1, 2)         # train·test 둘 다 빠진다
+    assert car["split"] == {"train": 0, "val": 1, "test": 0, "none": 0}
+    assert r["splits"]["boxes"] == {"train": 0, "val": 1, "test": 0, "none": 0}
+    assert r["masks"] == {"images": 2, "rects": 2, "dropped": 2, "test_images": 1}
     cams = {row["key"]: (row["masked"], row["masked_out"], row["boxes"]) for row in r["cameras"]}
-    assert cams == {"cam-01": (1, 1, 0), "cam-02": (1, 0, 1), "cam-03": (0, 0, 1)}
+    assert cams == {"cam-01": (1, 1, 0), "cam-02": (1, 1, 0), "cam-03": (0, 0, 1)}
     notes = [n["text"] for n in r["notes"]]
-    assert not any(t.startswith("test 에 박스가 없는 클래스") for t in notes)
-    assert any("가릴 영역이 있는 test 이미지 1장" in t for t in notes)
+    assert any("가릴 영역이 있는 test 이미지 1장" in t and "채점에서 뺍니다" in t for t in notes)
 
     snap = store.health_snapshot()
-    assert health.masked_out(snap) == [True, False, False]                     # 박스 순서 = 이미지 id 순서(tr, te, va)
+    assert health.masked_out(snap) == [True, True, False]                      # 박스 순서 = 이미지 id 순서(tr, te, va)
     centre = (health.GRID[1] // 2) * health.GRID[0] + health.GRID[0] // 2
-    assert health.heatmap(snap)["cells"][centre] == 2
+    assert health.heatmap(snap)["cells"][centre] == 1
     assert health.heatmap(snap, drop_masked=False)["cells"][centre] == 3
 
 

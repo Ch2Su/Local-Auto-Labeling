@@ -47,6 +47,7 @@ from autolabel.tiling import RAW_CONF, RAW_IOU, RAW_MAXDET, merge, merge_cross, 
 from test_baseline import DOMAINS as BASELINE_DOMAINS
 from test_baseline import (DOMAIN_RULE, build_split, check_class_order, class_names, fill_domains, registry,
                            sha256, write_yaml)
+from eval_test import drop_ignored, ignore_validator, load_ignore  # noqa: E402  — test_baseline 이 wsl/ 를 길에 넣는다
 
 IOUV = np.linspace(0.5, 0.95, 10)
 MAP_CONF, MAP_IOU, MAP_MAXDET = RAW_CONF, RAW_IOU, RAW_MAXDET   # 성분 추론(tiling)과 mAP 합치기가 같은 기준이다
@@ -262,6 +263,7 @@ def main():
             comps[c], ctime[c] = run_component(model, img, c, overlap=args.overlap, edge_px=args.edge_px,
                                                imgsz=imgsz, device=cfg.device)
         gt = read_gt(lab_dir / f"{Path(it['img']).stem}.txt", w, h)
+        ignore = load_ignore(it["img"])     # 가릴 영역 = 채점에서 뺄 자리 (test_baseline 머리말 — 정답은 build_split 이 뺐다)
         doms = {k for k, (_, keep) in DOMAINS.items() if keep(it)}
         for v in variants:
             d = compose(v, comps, w, h)
@@ -274,6 +276,9 @@ def main():
                                    group=vehicles if args.class_iou else None, iou_class=args.class_iou or 0.0)
             else:
                 d_map, d_op = merge(d, map_iou, MAP_MAXDET, 0.0), merge(d, op_iou, 100, args.op_conf)
+            if ignore is not None:
+                d_map = d_map[np.asarray(drop_ignored(d_map[:, :4].tolist(), ignore, (h, w)), dtype=bool)]
+                d_op = d_op[np.asarray(drop_ignored(d_op[:, :4].tolist(), ignore, (h, w)), dtype=bool)]
             recs[v["name"]].append((eval_image(d_map, d_op, gt, w, h, imgsz, known), doms))
         if n % 100 == 0 or n == len(items):
             print(f"  {n}/{len(items)}장 ({time.perf_counter() - t_start:.0f}초)", flush=True)
@@ -300,7 +305,7 @@ def main():
         listing = out / f"{args.split}_all.txt"
         listing.write_text("\n".join(str(it["img"]) for it in items if DOMAINS["all"][1](it)) + "\n", encoding="utf-8")
         res = model.val(data=str(write_yaml(out / "data_all.yaml", out, listing.name, names)), split="val", imgsz=imgsz,
-                        device=cfg.device, workers=0, plots=False, verbose=False,
+                        device=cfg.device, workers=0, plots=False, verbose=False, validator=ignore_validator(),
                         project=str(out.parent), name=f"{out.name}_val", exist_ok=True)
         mine = next((a for n, a, _ in [(v["name"], aggregate([r for r, d in recs[v["name"]] if "all" in d], known), 0)
                                        for v in variants] if n == "full"), None)

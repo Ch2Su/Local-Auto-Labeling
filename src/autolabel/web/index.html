@@ -183,7 +183,7 @@
       <button id="btn-to-pending" class="btn hidden" title="승인됨·건너뜀·휴지통 이미지를 검수 대기로 되돌리고 다음 이미지로 넘어갑니다. 박스는 그대로이고, 승인됨이었으면 다시 승인할 때까지 학습에서 빠집니다. 누르면 한 번 묻습니다.">검수 대기로</button>
       <button id="btn-purge"   class="btn btn-danger hidden" title="휴지통을 비웁니다. 원본 파일까지 영구 삭제됩니다.">휴지통 비우기</button>
       <button id="btn-sam" class="btn" title="SAM 클릭 모드 (C). 객체를 한 번 찍으면 박스가 생기고, 끌면 그 범위를 다듬습니다. 이 모드에서는 모든 좌클릭이 SAM 으로 갑니다 — 박스를 고르거나 옮기려면 B 모드나 오른쪽 목록을 쓰세요.">SAM 클릭 <kbd>C</kbd></button>
-      <button id="btn-mask" class="btn" title="가릴 영역 (M). 사람을 포함해 라벨하기 애매한 물체(가를 수 없는 무리·조각만 보이는 사람 등)를 덮으면, 학습 세트를 만들 때만 그 자리를 회색으로 칠합니다(원본 그림은 그대로). 끌면 사각형, 누르기만 하면 다각형 꼭짓점입니다 — 첫 점을 누르거나 마지막 점을 한 번 더 누르거나 Enter 로 닫고, Esc 로 버리고, Backspace 로 한 점 지웁니다. 그리는 동안 W·A·S·D 를 누르고 있으면 그쪽으로 화면이 옮겨 갑니다(Shift 와 함께면 빠르게). 그리는 동안 Q·E(도메인)·T(태그) 키는 막힙니다. 반 넘게 가려진 박스는 학습 라벨에서 빠집니다. 라벨된 박스와 조금 겹치는 것은 괜찮지만, 물체를 크게 덮으면 그 물체에 회색 조각이 붙은 채로 배웁니다. 이 모드에서는 영역만 고르고 옮깁니다(우클릭·Del = 지우기, 고른 다각형은 꼭짓점 끌기·변 가운데 끌어 더하기·꼭짓점 우클릭 지우기). test 이미지에는 둘 수 없습니다.">가릴 영역 <kbd>M</kbd></button>
+      <button id="btn-mask" class="btn" title="가릴 영역 (M). 사람을 포함해 라벨하기 애매한 물체(가를 수 없는 무리·조각만 보이는 사람 등)를 덮으면, 학습 세트를 만들 때만 그 자리를 회색으로 칠합니다(원본 그림은 그대로). 끌면 사각형, 누르기만 하면 다각형 꼭짓점입니다 — 첫 점을 누르거나 마지막 점을 한 번 더 누르거나 Enter 로 닫고, Esc 로 버리고, Backspace 로 한 점 지웁니다. 그리는 동안 W·A·S·D 를 누르고 있으면 그쪽으로 화면이 옮겨 갑니다(Shift 와 함께면 빠르게). 그리는 동안 Q·E(도메인)·T(태그) 키는 막힙니다. 반 넘게 가려진 박스는 학습 라벨에서 빠집니다. 라벨된 박스와 조금 겹치는 것은 괜찮지만, 물체를 크게 덮으면 그 물체에 회색 조각이 붙은 채로 배웁니다. 이 모드에서는 영역만 고르고 옮깁니다(우클릭·Del = 지우기, 고른 다각형은 꼭짓점 끌기·변 가운데 끌어 더하기·꼭짓점 우클릭 지우기). test 이미지에도 둡니다 — 그림은 칠하지 않고, 그 자리의 라벨과 예측을 채점에서 뺍니다.">가릴 영역 <kbd>M</kbd></button>
       <button id="btn-pred" class="btn" title="예측 비교 (P). 운영 모델을 이 이미지에 돌려, 라벨과 다르게 본 곳을 점선으로 겹쳐 보여 줍니다. 오른쪽 목록에서 받아들이거나 무시합니다. A = 맨 위 항목 받기">예측 비교 <kbd>P</kbd></button>
       <span class="spacer"></span>
       <span id="mode-badge" class="mode-badge box">새 박스</span>
@@ -302,7 +302,7 @@
     <div class="panel-head"><span>가릴 영역 템플릿</span><span id="gs-mtpl-n" class="dim"></span></div>
     <div class="gs-mtpl">
       <select id="gs-mtpl-sel" title="고른 이미지에 더하거나 뺄 템플릿 (라벨링 화면 오른쪽에서 만듭니다)"></select>
-      <button id="gs-mtpl-add" class="btn btn-sm" title="고른 이미지 모두에 이 템플릿의 가릴 영역을 더합니다. test 이미지와 화면 비율이 다른 이미지는 건너뛰고, 이미 같은 자리에 있는 영역은 다시 넣지 않습니다">더하기</button>
+      <button id="gs-mtpl-add" class="btn btn-sm" title="고른 이미지 모두에 이 템플릿의 가릴 영역을 더합니다. 화면 비율이 다른 이미지는 건너뛰고, 이미 같은 자리에 있는 영역은 다시 넣지 않습니다">더하기</button>
       <button id="gs-mtpl-remove" class="btn btn-sm" title="고른 이미지 모두에서 이 템플릿과 좌표가 같은 가릴 영역을 뺍니다 (손으로 옮긴 영역은 남습니다)">빼기</button>
     </div>
     <!-- 칸: 고른 이미지 모두에 붙어 있으면 ✓, 일부면 −. 누르면 모두에 붙이고, 모두에 붙어 있었으면 모두에서 뗀다.
@@ -389,7 +389,7 @@
             <option value="drone">drone — 드론</option>
             <option value="handheld">handheld — 손에 듦</option>
           </select></label>
-          <label class="cap-field" title="같은 카메라는 train·val·test 중 한쪽에만 들어갑니다. 비우면 자동(카메라째 계층화). test 로 고정하면 평가 전용이 되고 가릴 영역을 둘 수 없습니다"><span>분할</span><select id="cc-split">
+          <label class="cap-field" title="같은 카메라는 train·val·test 중 한쪽에만 들어갑니다. 비우면 자동(카메라째 계층화). test 로 고정하면 평가 전용이 됩니다(가릴 영역은 칠하지 않고 채점에서 뺍니다)"><span>분할</span><select id="cc-split">
             <option value="">자동</option>
             <option value="train">train 고정</option>
             <option value="val">val 고정</option>
@@ -478,7 +478,7 @@
           <option value="approved">승인만</option>
           <option value="all">휴지통만 빼고 전부</option>
         </select></label>
-      <label class="hc-ctl" title="가릴 영역이 넓이의 반 이상을 덮은 박스는 학습 라벨에서 빠집니다(DB 에는 그대로). 빼고 세면 학습이 보는 것과 같고, 넣고 세면 DB 의 박스 전부입니다. test 분할 이미지는 학습 세트가 칠하지 않아 어느 쪽이든 그대로 셉니다">가려진 박스
+      <label class="hc-ctl" title="가릴 영역이 넓이의 반 이상을 덮은 박스는 학습 라벨에서 빠집니다(DB 에는 그대로). 빼고 세면 학습이 보는 것과 같고, 넣고 세면 DB 의 박스 전부입니다. test 분할도 같습니다 — 그림은 칠하지 않지만 그 박스는 채점에서 뺍니다">가려진 박스
         <select id="hc-masked">
           <option value="drop">빼고 셈 (학습과 같게)</option>
           <option value="keep">넣고 셈 (DB 전부)</option>

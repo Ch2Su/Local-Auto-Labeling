@@ -2,7 +2,8 @@
 
 가릴 영역(검수 화면 `M`)이 넓이의 반 이상을 덮은 라벨은 학습 라벨에서 빠지고, 그 자리의 물체는 사람이 일부러 안 그린 것이다.
 도구가 영역을 모르던 때는 덮어 둔 자리에 남은 자동 라벨 박스가 `unseen` 으로, 모델이 거기서 찾은 물체가 `missing` 으로 나왔다.
-판정은 학습 세트와 같은 함수(`masks.drops`·`masks.applies_to`)라 test 분할은 그대로 견준다.
+판정은 학습 세트와 같은 함수(`masks.drops`)이고, 2026-11-24 부터 test 분할도 같다(test 의 영역은 채점에서 빼는 자리 —
+그 전에는 test 는 영역을 적용하지 않아 그대로 견줬다).
 
 모델은 돌리지 않는다 — 예측 파일(`preds.jsonl`)을 손으로 써 두고 `--reuse` 로 분석만 한다.
 """
@@ -70,11 +71,11 @@ def test_masked_places_are_not_compared(cfg, tmp_path, monkeypatch, data, capsys
     rows = run(cfg, tmp_path, monkeypatch, data)
     assert kinds(rows, data) == {
         "train": [], "none": [],                    # 덮인 자리의 차(unseen)·사람(missing)은 후보가 아니다
-        "test": ["missing", "unseen"],              # test 는 영역을 적용하지 않는다 — 평가가 보는 대로 견준다
+        "test": [],                                # test 도 같다(2026-11-24 — 그 자리는 평가에서도 뺀다)
         "plain": ["missing", "unseen"],             # 영역이 없는 장은 전과 같다
     }
     said = capsys.readouterr().out
-    assert "가릴 영역이 있는 2장에서 덮인 라벨 2개·예측 2개" in said and "--keep-masked" in said
+    assert "가릴 영역이 있는 3장에서 덮인 라벨 3개·예측 3개" in said and "--keep-masked" in said
 
 
 def test_keep_masked_compares_everything(cfg, tmp_path, monkeypatch, data, capsys):
@@ -171,8 +172,8 @@ def test_reuse_reads_the_model_classes_left_at_prediction_time(cfg, tmp_path, mo
     out.mkdir()
     (out / "meta.json").write_text(json.dumps({"weights": "x.pt", "model_classes": [PERSON, TRUCK]}), encoding="utf-8")
     rows = run(cfg, tmp_path, monkeypatch, data)
-    # 모델이 car 를 모른다 — 덮이지 않은 두 장(test·plain)의 차 라벨은 unseen 이 아니다. 사람(missing)은 그대로
-    assert kinds(rows, data) == {"train": [], "none": [], "test": ["missing"], "plain": ["missing"]}
+    # 모델이 car 를 모른다 — 덮이지 않은 장(plain)의 차 라벨은 unseen 이 아니다. 사람(missing)은 그대로
+    assert kinds(rows, data) == {"train": [], "none": [], "test": [], "plain": ["missing"]}
     assert "모델이 모르는 클래스" in capsys.readouterr().out
 
     (out / "meta.json").unlink()

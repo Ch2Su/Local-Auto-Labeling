@@ -24,7 +24,7 @@ from typing import Callable
 import yaml
 
 from .config import Config, resolve
-from .masks import applies_to, split_boxes, write_masked
+from .masks import IGNORE_DIR, paints, split_boxes, write_ignore, write_masked
 from .split import SplitReport, ensure_splits
 from .store import Store
 from .yolo_io import write_yolo_txt
@@ -42,7 +42,7 @@ class BuildReport:
     split: SplitReport | None = None
     masked: int = 0             # 가릴 영역을 칠해 쓴 이미지 (masks.py)
     mask_dropped: int = 0       # 그 영역에 반 넘게 가려져 학습 라벨에서 뺀 박스
-    masked_test: int = 0        # 영역이 있지만 test 라 칠하지 않은 이미지 (평가는 실제 화면 그대로)
+    masked_test: int = 0        # 영역이 있는 test 이미지 — 칠하지 않고 그 자리를 채점에서 뺀다(ignore/ 그림, 11-24)
     classes: list[str] = field(default_factory=list)                    # DB 의 클래스 목록(박스가 없는 클래스도 알리려고)
     per_split: dict[str, dict[str, int]] = field(default_factory=dict)  # 클래스 → {train, val, test} 라벨 파일에 쓴 박스 수
     val_borrowed: bool = False  # val 이 비어 train 한 장을 빌려 썼다(아래 build_dataset) — val 에 없는 클래스는 따지지 않는다
@@ -88,11 +88,12 @@ class BuildReport:
         ]
         if self.missing:
             lines.append(f"  원본이 사라진 이미지 {len(self.missing)}장은 건너뜀")
-        if self.masked:
+        if self.masked or self.masked_test:
             lines.append(f"가릴 영역: {self.masked}장을 회색(114)으로 칠해 썼고, 반 넘게 가려진 박스 "
-                         f"{self.mask_dropped}개는 학습 라벨에서 뺐습니다 (DB 박스는 그대로)")
+                         f"{self.mask_dropped}개는 라벨에서 뺐습니다 (DB 박스는 그대로)")
         if self.masked_test:
-            lines.append(f"  test 이미지 {self.masked_test}장의 가릴 영역은 칠하지 않았습니다 (평가는 실제 화면 그대로)")
+            lines.append(f"  test 이미지 {self.masked_test}장은 칠하지 않고 그 자리를 채점에서 뺍니다 "
+                         f"({IGNORE_DIR}/test/ — 평가는 실제 화면 그대로)")
         if self.split is not None:
             lines.append(self.split.summary())
         lines.extend(self.class_gaps())
@@ -154,20 +155,24 @@ def build_dataset(cfg: Config, store: Store) -> BuildReport:
         split = assign[row["id"]]
 
         rects = masks.get(row["id"])
-        if rects and not applies_to(split):     # test — 평가는 실제 화면 그대로: 칠하지도, 박스를 빼지도 않는다 (masks.py)
-            report.masked_test += 1
-            rects = None
         if rects:
-            # 가릴 영역을 회색으로 칠한 JPEG(원본은 그대로)과, 반 넘게 가려진 박스를 뺀 라벨
+            # 반 넘게 가려진 박스는 어느 분할이든 라벨에서 뺀다(masks.drops). 그림은 train·val 만 칠하고, test 는 원본 그대로
+            # 두고 칠할 자리를 ignore/ 그림으로 남긴다 — 평가가 그 자리의 예측을 세지 않는다(masks.py 'test 의 영역', 11-24)
             boxes, dropped = split_boxes(boxes, rects)
-            try:
-                write_masked(src, root / "images" / split / f"{stem}.jpg", rects)
-            except (OSError, SyntaxError, ValueError) as exc:
-                raise RuntimeError(f"가릴 영역을 칠하지 못했습니다 (id {row['id']}): {src}: {exc}") from exc
-            report.masked += 1
             report.mask_dropped += len(dropped)
-        else:
-            _link_or_copy(src, root / "images" / split / f"{stem}{src.suffix}", hardlink=hardlink)
+        try:
+            if rects and paints(split):
+                write_masked(src, root / "images" / split / f"{stem}.jpg", rects)
+                report.masked += 1
+            else:
+                _link_or_copy(src, root / "images" / split / f"{stem}{src.suffix}", hardlink=hardlink)
+                if rects:
+                    write_ignore(src, root / IGNORE_DIR / split / f"{stem}.png", rects)
+                    report.masked_test += 1
+        except (OSError, SyntaxError, ValueError) as exc:
+            if not rects:
+                raise
+            raise RuntimeError(f"가릴 영역을 칠하지 못했습니다 (id {row['id']}): {src}: {exc}") from exc
         write_yolo_txt(root / "labels" / split / f"{stem}.txt", boxes)
 
         if split == "val":

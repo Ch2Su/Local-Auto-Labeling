@@ -14,6 +14,15 @@ test 분할을 재는 도구라, 실험용으로 따로 만든 세트(`tools/bui
   (batch 4 와 8 은 mAP 넷째 자리가 다르고 어느 쪽이 어느 값인지는 PC 마다 반대였다 — PC 가 다른 기록끼리는 넷째 자리를
   견주지 말 것. `at_conf` 는 batch 와 상관없이 같았다. 11-12 기록은 batch 4, docs/experiments.md '새 풀 프레임 데이터').
 
+**채점에서 뺄 자리 (2026-11-24 사용자 결정 — `src/autolabel/masks.py` 머리말 'test 의 영역').** test 이미지의 가릴 영역은
+칠하지 않는다(평가는 실제 화면 그대로). 대신 세트를 만드는 쪽이 반 넘게 덮인 정답 박스를 라벨에서 빼고, 영역이 칠할 픽셀을
+`ignore/<분할>/<이름>.png`(라벨 파일 자리에 `labels` 대신 `ignore`) 흰색으로 남긴다. 여기서는 그 그림이 있는 이미지의 예측 가운데
+**박스 안 픽셀의 반 이상이 흰색인 것**을 셈에서 뺀다(`IgnoreValidator` — mAP·`at_conf` 둘 다). 그 자리의 애매한 물체를 모델이
+잡아도 헛 박스로 세지 않는다는 뜻이다(COCO 의 iscrowd·VOC 의 difficult 와 같은 생각). 프로젝트 코드를 import 하지 않으려고
+영역 좌표 대신 그림을 읽는다 — 그래서 경계에서는 픽셀 한 칸만큼 정답 쪽 판정(`masks.covered`, 정확한 넓이)과 다를 수 있다.
+뺀 수는 기록의 `ignore`(그림이 있던 장수·`at_conf` 문턱 위에서 뺀 예측 수)로 남긴다 — 덮어서 점수를 올리는 일이 숫자로 보이게.
+`tools/test_baseline.py`·`test_tiles.py`(로컬 test 측정)도 이 파일의 `ignore_validator`·`drop_ignored` 를 쓴다 — 한 곳에 둔다.
+
   python3 eval_test.py --weights a.pt b.pt --data set1=/root/datasets/x/dataset/data.yaml --imgsz 640 1280 --out out.jsonl
 """
 
@@ -23,11 +32,113 @@ import argparse
 import hashlib
 import inspect
 import json
+import math
 import sys
 import time
 from pathlib import Path
 
 MATCH_IOU = 0.45        # 혼동 행렬에서 예측과 정답을 짝짓는 IoU — 11-12 기록(Ultralytics 8.4.142)이 이 값으로 센 것이다
+IGNORE_DIR = "ignore"   # 채점에서 뺄 자리 그림의 폴더 — src/autolabel/masks.py 의 IGNORE_DIR 와 같아야 한다(고치면 둘 다)
+IGNORE_COVER = 0.5      # 예측 박스의 이만큼 이상이 그 자리면 뺀다 — masks.DROP(정답 박스를 라벨에서 빼는 문턱)과 같다
+
+
+def ignore_path(im_file) -> Path | None:
+    """그림 경로 → 그 그림의 '채점에서 뺄 자리' 그림 경로(없을 수 있다). Ultralytics 가 라벨을 찾는 규칙(경로의 마지막
+    `images` 를 `labels` 로)과 같은 자리에 `ignore`, 확장자 .png. 경로에 `images` 폴더가 없으면 None."""
+    parts = list(Path(im_file).parts)
+    for i in range(len(parts) - 2, -1, -1):
+        if parts[i] == "images":
+            parts[i] = IGNORE_DIR
+            return Path(*parts).with_suffix(".png")
+    return None
+
+
+def load_ignore(im_file):
+    """그 그림의 채점에서 뺄 자리 — bool 배열(줄, 칸), 없으면 None."""
+    p = ignore_path(im_file)
+    if p is None or not p.is_file():
+        return None
+    import numpy as np
+    from PIL import Image
+
+    with Image.open(p) as im:
+        return np.asarray(im.convert("1"), dtype=bool)
+
+
+def covered_px(bitmap, box, shape) -> float:
+    """원본 픽셀 xyxy 박스 안에서 뺄 자리 픽셀의 몫 — 픽셀 중심이 박스 안인 칸으로 센다(masks.poly_pixels 와 같은 뜻).
+    shape 는 원본 (높이, 폭) — 그림 크기가 달라도 비율로 맞춘다. 중심을 하나도 안 품는 아주 작은 박스는 가운데 칸으로 본다."""
+    H, W = bitmap.shape
+    sx, sy = W / float(shape[1]), H / float(shape[0])
+    x1, y1, x2, y2 = box[0] * sx, box[1] * sy, box[2] * sx, box[3] * sy
+    c0, c1 = max(0, math.ceil(x1 - 0.5)), min(W, math.ceil(x2 - 0.5))
+    r0, r1 = max(0, math.ceil(y1 - 0.5)), min(H, math.ceil(y2 - 0.5))
+    if c1 <= c0 or r1 <= r0:
+        cx = min(W - 1, max(0, int((x1 + x2) / 2)))
+        cy = min(H - 1, max(0, int((y1 + y2) / 2)))
+        return float(bitmap[cy, cx])
+    return float(bitmap[r0:r1, c0:c1].mean())
+
+
+def drop_ignored(boxes, bitmap, shape) -> list[bool]:
+    """박스(원본 픽셀 xyxy 의 목록)마다 남길지 — 뺄 자리가 IGNORE_COVER 이상 덮으면 False. bitmap 이 None 이면 전부 남긴다."""
+    if bitmap is None:
+        return [True] * len(boxes)
+    return [covered_px(bitmap, b, shape) < IGNORE_COVER for b in boxes]
+
+
+def ignore_validator():
+    """`model.val(validator=…)` 에 줄 검증기 클래스 — 채점에서 뺄 자리에 반 넘게 든 예측을 mAP·혼동 행렬 전에 뺀다(머리말).
+
+    Ultralytics 의 `DetectionValidator.update_metrics` 앞에서 예측(입력 크기 좌표)을 원본 좌표로 되돌려(`ops.scale_boxes` —
+    정답 박스를 원본으로 돌릴 때와 같은 함수) 거른다. 예측의 꼴(이미지마다 bboxes·conf·cls 사전)이 다른 버전이면 조용히
+    다르게 세지 않고 멈춘다. 마지막으로 만든 검증기는 `cls.last` — 뺀 수(`ignore_images`·`ignored_conf`)를 거기서 읽는다."""
+    import torch
+    from ultralytics.models.yolo.detect import DetectionValidator
+    from ultralytics.utils import ops
+
+    class IgnoreValidator(DetectionValidator):
+        last = None
+
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.ignore_maps: dict[str, object] = {}
+            self.ignore_images = 0          # 뺄 자리 그림이 있던 장수
+            self.ignored_conf: list[float] = []     # 뺀 예측의 신뢰도 — 문턱 위의 수는 부르는 쪽이 센다
+            type(self).last = self
+
+        def _map(self, im_file):
+            if im_file not in self.ignore_maps:
+                bm = self.ignore_maps[im_file] = load_ignore(im_file)
+                self.ignore_images += bm is not None
+            return self.ignore_maps[im_file]
+
+        def update_metrics(self, preds, batch):
+            for si, pred in enumerate(preds):
+                if not isinstance(pred, dict) or not {"bboxes", "conf", "cls"} <= set(pred):
+                    raise SystemExit("[중단] 이 Ultralytics 의 예측 꼴(이미지마다 bboxes·conf·cls 사전)이 달라 채점에서 뺄 "
+                                     "자리를 적용할 수 없습니다 — wsl/eval_test.py 의 ignore_validator")
+                bm = self._map(batch["im_file"][si])
+                if bm is None or not len(pred["bboxes"]):
+                    continue
+                shape = batch["ori_shape"][si]
+                boxes = ops.scale_boxes(batch["img"].shape[2:], pred["bboxes"].clone(), shape, batch["ratio_pad"][si])
+                keep = torch.tensor(drop_ignored(boxes.tolist(), bm, shape), dtype=torch.bool, device=pred["bboxes"].device)
+                if bool(keep.all()):
+                    continue
+                self.ignored_conf.extend(pred["conf"][~keep].tolist())
+                preds[si] = {k: (v[keep] if hasattr(v, "shape") and len(v) == len(keep) else v) for k, v in pred.items()}
+            super().update_metrics(preds, batch)
+
+    return IgnoreValidator
+
+
+def ignore_summary(validator_cls, conf: float) -> dict:
+    """기록에 남길 '채점에서 뺀 것' — 뺄 자리 그림이 있던 장수와, conf 이상에서 뺀 예측 수."""
+    v = getattr(validator_cls, "last", None)
+    if v is None:
+        return {}
+    return {"images": v.ignore_images, "preds_at_conf": sum(1 for c in v.ignored_conf if c >= conf)}
 
 
 def pin_confusion_thresholds(conf: float, match_iou: float = MATCH_IOU) -> None:
@@ -115,6 +226,7 @@ def main() -> int:
     from ultralytics import YOLO
 
     pin_confusion_thresholds(args.conf, args.match_iou)
+    validator = ignore_validator()
     sets = []
     for item in args.data:
         name, sep, path = item.partition("=")
@@ -135,11 +247,12 @@ def main() -> int:
                 t0 = time.time()
                 res = model.val(data=data, split=args.split, imgsz=sz, batch=args.batch, device=args.device,
                                 iou=args.iou, plots=True, verbose=False, project=args.project,
-                                name=f"{wp.stem}_{name}_{sz}", exist_ok=True)
+                                name=f"{wp.stem}_{name}_{sz}", exist_ok=True, validator=validator)
                 rec = {"weights": wp.name, "sha256": digest, "set": name, "split": args.split, "imgsz": sz,
                        "seconds": round(time.time() - t0, 1), "note": args.note, "batch": args.batch,
                        "ultralytics": ultralytics.__version__, "torch": torch.__version__,
-                       **summarize(res, model.names, args.conf, args.match_iou)}
+                       **summarize(res, model.names, args.conf, args.match_iou),
+                       "ignore": ignore_summary(validator, args.conf)}
                 with open(out, "a", encoding="utf-8") as f:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 a = rec.get("at_conf", {})
