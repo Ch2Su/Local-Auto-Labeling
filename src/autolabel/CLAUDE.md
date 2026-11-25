@@ -344,7 +344,10 @@
   비어 train 한 장을 빌린 때(`val_borrowed`)는 val 줄을 내지 않는다. 수치는 `health.report` 의 분할별 수와 같아야 한다
   (`tests/test_health_dataset.py`).
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
-  가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
+  가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). **작게 나오면(짧은 변 `sam.crop_below` 64px 미만) 클릭
+  주변 정사각형만 잘라 한 번 더 묻는다**(2026-11-25 사용자 결정 — 측정과 규칙은 segmenter.py 머리말·docs/experiments.md 'SAM 클릭
+  모델 비교', 같은 규칙의 측정 `runs/sam_click_bench/bench.py --variant thybrid` 와 함께 고칠 것). 잘라 넣은 뒤에는 다음 클릭이
+  통째 그림을 다시 인코딩한다(`_cur` 를 비움). `C` 모드에서는
   모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).
 - '드문 클래스 먼저'·'태그 순'(11-10, `_list_by_tag`) 정렬·클래스 필터는 목록과 **같은 WHERE**(`_list_where`·`count_images`)로 센다 — 어긋나면 목록 묶음이 틀어진다.
   카메라·도메인·분할 필터도 같은 WHERE 에 있다. **분할 필터는 보기만 한다**(`/api/splits`) — 웹 UI 에 분할을 바꾸는 길을 넣지 말 것

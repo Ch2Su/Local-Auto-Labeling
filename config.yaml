@@ -218,6 +218,11 @@ sam:
   # 인코딩 9배 — docs/experiments.md 'SAM 클릭 모델 비교'). 가중치는 weights/ 에 있다(약 80MB).
   enabled: true
   model: weights/sam2.1_t.pt
+  # 작게 나오면 주변만 잘라 다시 묻는다(2026-11-25 — segmenter.py 머리말). 통째 그림에서 나온 박스의
+  # 짧은 변이 crop_below(원본 px) 미만이면 클릭 주변 crop_size 정사각형(박스면 박스 긴 변 x2 와 큰 쪽)만
+  # 넣어 한 번 더 묻는다. 같은 측정에서 클릭·거친 박스 모두 IoU +0.02~0.03. 0 이면 끈다.
+  crop_below: 64
+  crop_size: 512
 
 wsl:
   # 웹 UI 'WSL 학습' 버튼. DB 로 data/visible/dataset 을 만들어 WSL 홈으로 복사한 뒤

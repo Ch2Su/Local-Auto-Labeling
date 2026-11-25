@@ -27,7 +27,17 @@ DB 는 마스크를 저장하지 않고 박스만 들고 있으므로(`store.py`
 sam2.1_s 는 거친 박스가 t 와 같고 클릭은 -0.03 이다. SAM 3.1(`sam3.1_multiplex.pt`, 클릭용 SAM3Predictor)은 작은 물체만
 낫고 큰 물체는 못하며 인코딩 9배·VRAM 4배라 t 를 그대로 둔다. 작은 물체를 막는 것은 모델 크기가 아니라 해상도다(2560 폭을
 1024 로 줄여 넣는다) — t 가 짧은 변 64px 미만으로 낸 것만 프롬프트 주변 512 칸을 잘라 다시 물으면 세 프롬프트 모두
-+0.02–0.03 이었다(`runs/sam_click_bench/` 의 thybrid — 아직 넣지 않았다).
++0.02–0.03 이었다(`runs/sam_click_bench/` 의 thybrid). 그래서 같은 날 넣었다(사용자 '네, 넣기') — 아래.
+
+## 작게 나오면 주변만 잘라 다시 묻는다 (2026-11-25)
+
+통째 그림에 물은 결과의 짧은 변이 `sam.crop_below`(원본 px, 기본 64 — 0 이면 끔) 미만이거나 마스크가 안 나오면, 프롬프트
+주변 정사각형만 잘라 한 번 더 묻는다(`_ask_crop`). 칸은 점이면 한 변 `sam.crop_size`(512), 박스가 있으면 max(512, 박스 긴 변
+× 2) 이고 그림 안으로 민다. 잘라 낸 결과가 칸 가장자리(2px)에 닿으면 물체가 칸에 잘린 것이라 통째 결과를 쓴다. **고르는
+기준은 t 가 낸 박스 크기다**(정답은 모른다). 잘라 넣으면 predictor 가 물고 있던 통째 그림의 특징이 바뀌므로 `_cur` 를 비워
+다음 클릭이 통째 그림을 다시 인코딩한다(이 PC 67ms — 그림 읽기 포함). 잘라 낼 그림은 Ultralytics 가 경로로 읽을 때와
+같은 함수(`ultralytics.utils.patches.imread`)로 읽는다 — 회전·크기가 통째 마스크와 같아야 좌표가 맞는다. 측정의
+`bench.py --variant thybrid` 와 같은 규칙이다 — 고치면 그쪽도 볼 것. `tests/test_segmenter.py`.
 
 ## 한계 (알고 쓸 것)
 
@@ -50,6 +60,17 @@ from .config import Config, pretrained_path
 from .yolo_io import Box
 
 DEFAULT_MODEL = "sam2.1_t.pt"
+CROP_BELOW = 64      # 원본 px — 통째 결과의 짧은 변이 이보다 작으면 잘라 다시 묻는다 (sam.crop_below, 0 이면 끔)
+CROP_SIZE = 512      # 점 프롬프트의 칸 한 변 (sam.crop_size). 박스는 max(이 값, 박스 긴 변 × 2)
+CROP_EDGE = 2        # 잘라 낸 결과가 칸 가장자리 이 px 안에 닿으면 물체가 칸에 잘린 것으로 본다
+
+
+def crop_window(cx: float, cy: float, side: float, width: int, height: int) -> tuple[int, int, int]:
+    """(x0, y0, 한 변) — (cx, cy) 를 가운데 둔 정사각형을 그림 안으로 민다. 한 변은 그림의 짧은 변을 넘지 않는다."""
+    side = int(min(side, width, height))
+    x0 = int(round(min(max(cx - side / 2, 0), width - side)))
+    y0 = int(round(min(max(cy - side / 2, 0), height - side)))
+    return x0, y0, side
 
 # 프로세스에 올라와 있는 SAM 하나. 프로젝트 탭마다 Segmenter 가 있어도 VRAM 에는
 # 하나만 둔다 (2026-09-21). `_load` 가 새로 올리기 전에 이전 것을 내린다.
@@ -68,7 +89,8 @@ class Segmenter:
         self._model = None
         self._pred = None
         self._device: str | None = None               # 지금 올라가 있는 장치
-        self._cur: tuple[str, float] | None = None   # (경로, mtime) — 인코딩해 둔 이미지
+        self._cur: tuple[str, float] | None = None   # (경로, mtime) — 인코딩해 둔 이미지 (잘라 넣으면 None)
+        self._arr: tuple[tuple[str, float], object] | None = None  # ((경로, mtime), BGR 배열) — 잘라 낼 그림
         self._lock = threading.Lock()
         self._failed: str | None = None              # 로드 실패 사유를 기억해 재시도 폭주를 막는다
 
@@ -82,6 +104,15 @@ class Segmenter:
     def model_name(self) -> str:
         # weights/ 에 있으면 거기서 연다. 이름만 주면 Ultralytics 가 실행 폴더에 받아 둔다.
         return pretrained_path(str(self.cfg.get("sam.model") or DEFAULT_MODEL))
+
+    @property
+    def crop_below(self) -> float:
+        v = self.cfg.get("sam.crop_below", CROP_BELOW)
+        return float(CROP_BELOW if v is None else v)
+
+    @property
+    def crop_size(self) -> int:
+        return int(self.cfg.get("sam.crop_size") or CROP_SIZE)
 
     def status(self) -> dict:
         return {
@@ -145,6 +176,75 @@ class Segmenter:
         self._pred.set_image(str(path))
         self._cur = key
 
+    def _ask(self, point, box):
+        """`self._lock` 을 쥔 채로 — 지금 set_image 한 그림의 픽셀 좌표 프롬프트로 묻는다.
+
+        → (x1, y1, x2, y2, 점수, (마스크 높이, 너비)) — 좌표는 그 그림의 픽셀, 마스크가 없거나 비면 None.
+        """
+        kw: dict = {}
+        if box is not None:
+            kw["bboxes"] = [list(box)]
+        if point is not None:
+            kw["points"] = [list(point)]
+            kw["labels"] = [1]
+        results = self._pred(**kw)
+        if not results or results[0].masks is None or not len(results[0].masks.data):
+            return None
+        res = results[0]
+        mask = res.masks.data[0].cpu().numpy()
+        ys, xs = mask.nonzero()
+        if not len(xs):
+            return None
+        score = 0.0
+        try:
+            score = float(res.boxes.conf[0]) if res.boxes is not None else 0.0
+        except Exception:
+            pass
+        h, w = mask.shape[-2:]
+        return float(xs.min()), float(ys.min()), float(xs.max() + 1), float(ys.max() + 1), score, (int(h), int(w))
+
+    def _image_array(self, path: Path):
+        """잘라 낼 원본(BGR) — Ultralytics 가 경로로 읽을 때와 같은 함수라 회전·크기가 통째 마스크와 같다. 같은 그림이면 다시 읽지 않는다."""
+        key = (str(path), path.stat().st_mtime)
+        if self._arr is None or self._arr[0] != key:
+            from ultralytics.utils.patches import imread
+
+            arr = imread(str(path))
+            self._arr = (key, arr) if arr is not None else None
+            return arr
+        return self._arr[1]
+
+    def _ask_crop(self, path: Path, point, box):
+        """`self._lock` 을 쥔 채로 — 프롬프트 주변 정사각형만 넣고 다시 묻는다(머리말 '작게 나오면 …').
+
+        → `_ask` 와 같은 꼴(좌표는 원본 그림의 픽셀, 크기는 원본 그림) 또는 None — 칸이 그림 전체와 같거나, 마스크가 없거나,
+        결과가 칸 가장자리에 닿으면(물체가 칸에 잘림) None 이라 부른 쪽이 통째 결과를 쓴다.
+        """
+        arr = self._image_array(path)
+        if arr is None:
+            return None
+        H, W = arr.shape[:2]
+        if box is not None:
+            side = max(self.crop_size, 2 * max(box[2] - box[0], box[3] - box[1]))
+            cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        else:
+            side, (cx, cy) = self.crop_size, point
+        x0, y0, side = crop_window(cx, cy, side, W, H)
+        if side >= W and side >= H:
+            return None
+        self._pred.reset_image()
+        self._cur = None                      # 통째 그림의 특징을 버린다 — 다음 클릭이 다시 인코딩
+        self._pred.set_image(arr[y0:y0 + side, x0:x0 + side])
+        lp = None if point is None else (point[0] - x0, point[1] - y0)
+        lb = None if box is None else (box[0] - x0, box[1] - y0, box[2] - x0, box[3] - y0)
+        hit = self._ask(lp, lb)
+        if hit is None:
+            return None
+        x1, y1, x2, y2, score, _ = hit
+        if x1 <= CROP_EDGE or y1 <= CROP_EDGE or x2 >= side - CROP_EDGE or y2 >= side - CROP_EDGE:
+            return None
+        return x1 + x0, y1 + y0, x2 + x0, y2 + y0, score, (int(H), int(W))
+
     def release(self) -> None:
         """VRAM 을 돌려준다. 학습을 시작하기 전에 부르면 좋다."""
         global _active
@@ -163,6 +263,7 @@ class Segmenter:
         self._model = self._pred = None
         self._device = None
         self._cur = None
+        self._arr = None
         try:
             import torch
 
@@ -200,31 +301,14 @@ class Segmenter:
             device = "cpu" if gpu_busy() else self.cfg.device
             self._load(device)
             self._ensure_image(path)
-            kw: dict = {}
-            if box is not None:
-                kw["bboxes"] = [list(box)]
-            if point is not None:
-                kw["points"] = [list(point)]
-                kw["labels"] = [1]
-            results = self._pred(**kw)
+            hit = self._ask(point, box)
+            below = self.crop_below
+            if below > 0 and (hit is None or min(hit[2] - hit[0], hit[3] - hit[1]) < below):
+                hit = self._ask_crop(path, point, box) or hit
 
-        if not results or results[0].masks is None or not len(results[0].masks.data):
+        if hit is None:
             raise SegmenterUnavailable("SAM 이 마스크를 만들지 못했습니다.")
-
-        res = results[0]
-        mask = res.masks.data[0].cpu().numpy()
-        ys, xs = mask.nonzero()
-        if not len(xs):
-            raise SegmenterUnavailable("마스크가 비어 있습니다.")
-
-        h, w = mask.shape[-2:]
-        x1, x2 = float(xs.min()), float(xs.max() + 1)
-        y1, y2 = float(ys.min()), float(ys.max() + 1)
-        score = 0.0
-        try:
-            score = float(res.boxes.conf[0]) if res.boxes is not None else 0.0
-        except Exception:
-            pass
+        x1, y1, x2, y2, score, (h, w) = hit
 
         return (
             Box(
