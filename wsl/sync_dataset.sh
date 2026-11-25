@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Windows 프로젝트가 만든 YOLO 데이터셋을 WSL 홈으로 복사한다 (이미지 + 라벨만).
+# Windows 프로젝트가 만든 YOLO 데이터셋을 WSL 홈으로 복사한다 (이미지 + 라벨 + test 의 ignore/ 그림만).
 #
 #   bash /mnt/e/local_auto_labeling/wsl/sync_dataset.sh                  # 가시광
 #   bash /mnt/e/local_auto_labeling/wsl/sync_dataset.sh <원본 dataset> <WSL 폴더>   # 다른 프로젝트
@@ -41,6 +41,16 @@ for sub in images labels; do
   rsync -a --delete --info=progress2 --exclude='*.npy' --exclude='*.cache' \
         "$SRC/$sub"/ "$DST/$sub"/
 done
+# ignore/ — test 의 가릴 영역(채점에서 뺄 자리 그림, 2026-11-24). wsl/eval_test.py 가 라벨 폴더 옆의 이 폴더를 읽는다.
+# 안 가져오면 WSL 사본으로 잰 test 는 그 자리의 예측을 에러 없이 전부 헛 박스로 센다(2026-11-25 Gemini 리뷰 — 전에는
+# images·labels 만 맞췄다). 원본에 없으면(영역이 있는 test 이미지가 없다) 사본의 것도 비운다 — 옛 그림이 남으면
+# 영역을 지운 뒤에도 그 자리를 빼고 잰다. 위와 같이 --delete 는 이 하위 폴더에만 건다.
+mkdir -p "$DST/ignore"
+if [ -d "$SRC/ignore" ]; then
+  rsync -a --delete "$SRC/ignore"/ "$DST/ignore"/
+else
+  find "$DST/ignore" -mindepth 1 -delete
+fi
 cp "$SRC/data.yaml" "$DST/data.yaml"
 
 # data.yaml 의 path 는 Windows 절대경로(E:\...)로 적혀 있다. WSL 경로로 바꾼다.
@@ -55,4 +65,6 @@ for s in train val test; do
   echo "  $s : 이미지 $ni / 라벨 $nl"
 done
 du -sh "$DST" | awk '{print "  용량 : "$1}'
+ng=$(find "$DST/ignore" -type f -name '*.png' | wc -l)
+[ "$ng" -gt 0 ] && echo "  ignore : 채점에서 뺄 자리 그림 $ng (test 의 가릴 영역)"
 echo "  data.yaml path -> $(grep '^path:' "$DST/data.yaml")"

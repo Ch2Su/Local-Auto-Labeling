@@ -130,5 +130,19 @@
   Ultralytics 8.4.212 의 검증기는 혼동 행렬을 val 의 conf 0.001·IoU 0.5 로 세서, 같은 119장에서 헛 박스가 에러 없이 20 → 988 이
   됐다(mAP 는 8.4.142 와 같았다 — docs/experiments.md '새 풀 프레임 데이터'). **Ultralytics 를 올리면 이 테스트부터 볼 것.** val 에
   `conf=0.25` 를 넘겨 고치지 말 것(mAP 까지 0.25 위에서만 센다) — 혼동 행렬이 받는 값만 바꾼다(`pin_confusion_thresholds`).
+- **Gemini 리뷰 묶음 6 (2026-11-25)** — 전부 고치기 전 코드로 돌려 실패하는 것을 봤다. `tests/test_workbatch.py` 의 꺼진 넣기
+  다시 하기(`cut_short_session` — 프레임의 일부·전부를 unlabeled 로 옮겨 두고 상태가 `committing` 인 세션을 손으로 만든다:
+  전부 옮긴 때도 스캔하는가, `registered`·`other_new`·배치 장수, 이미 등록된 이름뿐이면 스캔하지 않는가), `tests/test_js_capture.py`
+  의 `capShowResult`(옮겨 둔 프레임을 등록한 결과를 '넣은 것이 없습니다' 로 적지 않는가), `tests/test_upload.py` 의 받는 중인
+  파일(넣기 409 · 확인하는 사이에 다 받은 파일이 묶음에 드는가 · 늦게 닿은 파일의 이름 예약 · 도중에 죽은 요청),
+  `tests/test_capture_commit.py` 의 영상 올리기 상한, `tests/test_store.py`·`tests/test_split.py` 의 '라벨에 남는 박스로 세기'
+  (분할 쪽은 가려진 박스 20개짜리 장이 라벨 있는 두 장을 한 분할로 모는 네 장짜리 경우 — 라벨에 남는 수는 테스트가
+  `masks.split_boxes` 로 따로 센다), `tests/test_health.py` 의 고정 분할 카메라, `tests/test_predictor.py` 의 타일 모드
+  (`tiling.run_component` 만 정해 둔 검출로 갈아 끼운다), `tests/test_yolo_io.py` 의 그림 열기(패키지에 `Image.open` 을 직접
+  부르는 줄이 없는가 — **주석·문서 글에도 그 글자를 여는 괄호까지 쓰면 걸린다**, 그리고 새 프로세스로 `import autolabel` 의
+  `YOLO_AUTOINSTALL` 기본값), `tests/test_its_incident_clips.py` 의 번호·주소 거르기. **본문을 그대로 받는 처리 함수는
+  `helpers.post_endpoint` 로 꺼내 `helpers.StreamBody` 를 넘겨 직접 부른다** — TestClient 는 본문을 한 번에 줘서 '몇 조각째에서
+  멈췄나'·'도중에 취소됐다' 를 만들 수 없다. `wsl/sync_dataset.sh` 의 `ignore/` 맞추기는 테스트가 없다(WSL 의 임시 폴더에서
+  손으로 돌려 봤다 — 복사 · 지운 그림 걷기 · 원본에 폴더가 없을 때 비우기).
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.

@@ -170,6 +170,12 @@ class AutoLabeler:
         # 통째의 차량 겹침 정리에 쓸 묶음 — 모델의 클래스 이름 가운데 tiling.VEHICLES 에 든 번호. 프로젝트 클래스로 옮겨지는
         # 것만 넣는다: 아래에서 버려질(dropped_unknown_class) 박스가 남을 박스를 지우지 않게
         group = frozenset(i for i in tiling.vehicle_ids(model.names) if i in cmap) if class_iou > 0 else frozenset()
+        # 타일 모드의 차량 겹침 정리(tiling.detect 안)에도 같은 규칙을 준다 — 프로젝트 클래스로 옮겨지는 이름만 넘긴다
+        # (2026-11-25, Gemini 리뷰 묶음 6: 전에는 타일 쪽만 모델의 차량 클래스를 전부 묶어, 저장 단계에서 버려질 박스가
+        # 같은 자리의 남을 박스를 먼저 지울 수 있었다)
+        names = model.names
+        mapped_names = {int(i): n for i, n in (names.items() if hasattr(names, "items") else enumerate(names or []))
+                        if int(i) in cmap}
         if group:
             print(f"차량 겹침 정리: 차량 클래스끼리는 클래스가 달라도 IoU {class_iou} 이상 겹치면 신뢰도 높은 하나만 남긴다"
                   " (predict.class_iou)", flush=True)
@@ -206,7 +212,7 @@ class AutoLabeler:
                         report.errors.append(f"{path.name}: 그림을 읽지 못함")
                         continue
                     det, used = tiling.detect(model, img, imgsz=imgsz, device=self.cfg.device, conf=conf, iou=iou,
-                                              max_det=max_det, **tile_cfg)
+                                              max_det=max_det, names=mapped_names, **tile_cfg)
                     ih, iw = img.shape[:2]
                     found = [((x1 + x2) / 2 / iw, (y1 + y2) / 2 / ih, (x2 - x1) / iw, (y2 - y1) / ih, c, cf)
                              for x1, y1, x2, y2, cf, c, *_ in det.tolist()]

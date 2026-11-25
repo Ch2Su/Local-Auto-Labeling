@@ -52,6 +52,9 @@
 .venv/Scripts/python.exe -m pip install torch==2.14.0+cu130 torchvision==0.29.0+cu130 --index-url https://download.pytorch.org/whl/cu130
 ```
 
+**`autolabel` 패키지를 import 하면 `YOLO_AUTOINSTALL=false` 가 기본으로 놓인다 (11-25).** Ultralytics 가 모자란 패키지를 만나도
+이 `.venv`(다른 프로젝트도 쓴다)에 스스로 깔지 않는다 — 필요한 것은 `requirements.txt` 로 깐다. 켜려면 환경 변수를 `true` 로.
+
 블루스크린(09-12 `0x133 DPC_WATCHDOG_VIOLATION`, Ultralytics `val` 무렵)과 버그체크 0 종료(09-16, WSL 학습을 정상 중단한
 뒤)가 있었다 — 원인은 모르고, 같은 작업을 그 뒤 여러 번 돌렸을 때는 문제없었다.
 
@@ -162,7 +165,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-25 작업 배치를 합친 뒤 628개·67초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-25 Gemini 리뷰 묶음 6 까지 663개·73초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
@@ -258,7 +261,7 @@ width/height 는 회전 전 원시 크기다**(`labeler.py check` 도 원시 크
 **묶음 단위 계층화 3분할 (2026-09-16, `split.py`·`grouping.py`).**
 - **test(15%)는 학습에도 best.pt 고르기에도 쓰지 않는다** — 모델끼리 비교는 test 로 한다(`tools/test_baseline.py`).
 - **같은 장면(dHash·이름 연번 묶음)은 통째로 한쪽에만 넣는다.** 계층화는 클래스 비중만 맞추고 출처는 보지 않으니 도메인 쏠림은
-  따로 볼 것. **기존 이미지는 움직이지 않는다** — 새 이미지만 자기 묶음을 따르거나 계층화로 들어가고, 두 분할의 묶음을 이어
+  따로 볼 것(비중은 **라벨 파일에 들어갈 박스**로 센다 — 가릴 영역이 반 넘게 덮은 박스는 뺀다, 11-25). **기존 이미지는 움직이지 않는다** — 새 이미지만 자기 묶음을 따르거나 계층화로 들어가고, 두 분할의 묶음을 이어
   붙이는 새 이미지가 나오면 옮기지 않고 `[알림] … 두 분할에 걸칩니다` 만 띄운다(`moved` 는 reset 이 아니면 0 이어야 한다).
 - **손으로 옮길 때는 val·test → train 방향만** — 반대면 학습한 이미지가 평가셋에 들어간다.
 - **이름 계열은 카메라 안에서만 잇는다**(다른 카메라끼리는 dHash 로만 — 묶는 규칙의 나머지는 `grouping.py` 머리말). 누수는
@@ -321,8 +324,8 @@ docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운�
 - **WSL 버튼은 Windows 학습 버튼과 같은 인자로 학습한다**(`trainer.train_args(cfg)` → `train_wsl.py --bare --hyp KEY=VALUE`,
   `--dry-run` 으로 확인). `train_wsl.py` 는 Windows 프로젝트 코드를 import 하지 않는다. `wsl.exe` 가 명령줄을 bash 로 넘기므로
   값은 영숫자와 `_ . + - =` 만 넘긴다(`wsl_train.hyp_tokens`).
-- **DB 는 WSL 로 가져가지 않는다** — `/mnt/e` 로는 SQLite 잠금이 안 먹어 검수 서버와 함께 쓰면 손상될 수 있다. 이미지·라벨만
-  복사한다. 프로젝트를 늘리면 WSL 데이터셋 폴더를 **반드시 다르게** 둘 것(`--delete` 동기화가 서로 덮는다).
+- **DB 는 WSL 로 가져가지 않는다** — `/mnt/e` 로는 SQLite 잠금이 안 먹어 검수 서버와 함께 쓰면 손상될 수 있다. 이미지·라벨(과 test 의
+  `ignore/` 그림 — 11-25 부터)만 복사한다. 프로젝트를 늘리면 WSL 데이터셋 폴더를 **반드시 다르게** 둘 것(`--delete` 동기화가 서로 덮는다).
 - **서버를 죽여도 WSL 학습은 계속 돈다** — 그때는 STOP 파일을 직접 만든다. `--stop-at N` 은 N epoch 을 마치면 정지 파일처럼
   멈춘다(lr 스케줄은 그대로, `--resume` 으로 잇는다).
 - 'WSL 이어하기' 는 train_wsl.py 가 쓸 수 있는 resume.pt·last.pt 만 띄우고, `--resume` 은 results.csv 를 체크포인트 epoch
@@ -458,7 +461,8 @@ docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운�
 목록·수치·경위는 [docs/next.md](docs/next.md) 로 옮겼다(2026-11-17 — 이 파일을 줄이느라. 번호는 그대로다). **다음 일을 고르거나
 학습·데이터 수집·분할·Runpod·자동 캡처를 손대기 전에 읽을 것.** 늘 지킬 것만:
 - **첫 학습 전에 분할을 사용자와 정할 것** — 11-16 에 DB 사본으로 미리 돌리니 val 이 카메라 한 대였고 val·test 에 박스가
-  하나도 없는 클래스가 여럿이었다(5번).
+  하나도 없는 클래스가 여럿이었다(5번). 11-25 에 분할이 세는 박스를 고친 뒤 다시 돌린 수치와 남은 결정(고정한 AI Hub 카메라를
+  비율에 넣을지 · scooter 는 지금 val·test 둘 다에 들어갈 수 없다)도 5번.
 - **Runpod 로 x·1280 을 재 보는 일은 사용자가 다시 꺼내기 전에는 띄우자고 권하지 말 것**(6번).
 - 새로 모은 사진은 C: 백업에 없다 — 새 날짜 폴더로 뜨기 전에 물을 것(5번).
 - `tools/auto_capture.py` 는 진짜 서버·진짜 DB 로는 아직 안 돌렸다 — 사용자가 한다(7번).

@@ -91,6 +91,7 @@ class Session:
         self.name = name                   # 작업 배치 이름 (없으면 화면이 종류·시각으로 적는다)
         self.files: list[dict] = []        # 받은 것 [{name, size, width, height}]
         self.reserved: set[str] = set()    # 쓰는 중이거나 받은 이름(소문자) — 같은 이름을 둘이 쓰지 않게
+        self.inflight: set[str] = set()    # 그 가운데 아직 쓰는 중인 이름(reserve ~ accept·reject) — 있으면 넣지 않는다
         self.state = "open"                # open | committing
         self.deleted = False
         self.created = datetime.now()
@@ -101,7 +102,8 @@ class Session:
         with self.lock:
             return {"sid": self.sid, "camera": self.camera, "name": self.name, "state": self.state,
                     "created": self.created.isoformat(timespec="seconds"),
-                    "n": len(self.files), "bytes": sum(f["size"] for f in self.files)}
+                    "n": len(self.files), "bytes": sum(f["size"] for f in self.files),
+                    "receiving": len(self.inflight)}
 
 
 class UploadManager:
@@ -223,17 +225,20 @@ class UploadManager:
                 k += 1
                 final = f"{stem}_{k}.{ext}"
             s.reserved.add(final.lower())
+            s.inflight.add(final.lower())
             s.touched = time.monotonic()
         return s, s.files_dir / final, final
 
     def reject(self, s: Session, path: Path) -> None:
-        """받다 만 파일을 지우고 자리를 돌려준다."""
+        """받다 만 파일을 지우고 자리를 돌려준다. **자리를 잡은(`reserve`) 쪽은 어떻게 끝나든 `accept` 나 이것을 부른다** —
+        안 부르면 그 이름이 '쓰는 중' 으로 남아 이 묶음을 넣을 수 없다(commit 의 409)."""
         try:
             path.unlink(missing_ok=True)
         except OSError:
             pass
         with s.lock:
             s.reserved.discard(path.name.lower())
+            s.inflight.discard(path.name.lower())
 
     def accept(self, s: Session, path: Path, written: int, size: int | None) -> dict:
         """다 쓴 파일을 확인하고 묶음에 넣는다. 크기가 다르거나 이미지로 열리지 않으면 지우고 UploadError."""
@@ -249,19 +254,22 @@ class UploadManager:
         except _UNREADABLE as exc:
             self.reject(s, path)
             raise UploadError(415, f"{path.name}: 이미지로 읽을 수 없습니다 ({type(exc).__name__}).") from None
+        except BaseException:
+            self.reject(s, path)                     # 뜻밖의 오류에도 자리는 돌려준다('쓰는 중' 으로 남지 않게)
+            raise
         item = {"name": path.name, "size": written, "width": int(w), "height": int(h)}
         with s.lock:
-            if s.deleted or s.state != "open":       # 쓰는 사이 버렸거나 넣기 시작했다
+            if s.deleted or s.state != "open":       # 쓰는 사이 버렸다(넣기는 쓰는 중인 파일이 있으면 시작하지 않는다)
                 gone = True
             else:
                 gone = False
                 s.files.append(item)
+                s.inflight.discard(path.name.lower())
                 s.touched = time.monotonic()
         if gone:
-            try:
-                path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            # 자리도 돌려준다 — 2026-11-25 전에는 파일만 지워서, 넣기가 실패해 묶음이 다시 열리면(reopen) 그 이름이
+            # 예약된 채 남았다(같은 이름을 다시 올리면 `_2` 가 붙고 장수 한도를 한 자리 먹는다)
+            self.reject(s, path)
             raise UploadError(409, "이 묶음은 넣는 중이거나 이미 닫혔습니다.")
         return item
 
@@ -313,15 +321,23 @@ class UploadManager:
     def commit(self, sid: str) -> dict:
         """받은 파일을 unlabeled/<카메라>/up<세션 시각>/ 로 옮기고 스캔한다(작업 배치 하나). 결과 dict 를 돌려준다."""
         s = self.get(sid)
+
+        def receiving() -> None:
+            """쓰는 중인 파일이 있으면 넣지 않는다 (2026-11-25, Gemini 리뷰 묶음 6). 전에는 다 받은 것만 옮기고 세션 폴더를
+            지웠다 — 쓰던 파일은 묶음에서 빠지고(그 요청은 409), Windows 에서는 열린 파일 때문에 폴더도 다 못 지웠다.
+            s.lock 을 쥔 채 부른다."""
+            if s.inflight:
+                raise UploadError(409, f"아직 받는 중인 파일이 {len(s.inflight)}개 있습니다 — 다 받은 뒤 넣으세요.")
+
         with self.commit_lock:
             with s.lock:
                 if s.deleted:
                     raise UploadError(404, "이 묶음은 이미 넣었거나 버렸습니다.")
                 if s.state != "open":
                     raise UploadError(409, "넣는 중입니다.")
-                files = [dict(f) for f in s.files]
-            if not files:
-                raise UploadError(400, "넣을 이미지가 없습니다.")
+                receiving()
+                if not s.files:
+                    raise UploadError(400, "넣을 이미지가 없습니다.")
             why = self.blocker()
             if why:
                 raise UploadError(409, why)
@@ -332,6 +348,10 @@ class UploadManager:
             with s.lock:
                 if s.deleted or s.state != "open":
                     raise UploadError(409, "그사이 넣기를 시작했거나 버렸습니다.")
+                receiving()                      # 위의 확인 뒤에 새로 받기 시작한 파일
+                # 넣을 목록은 상태를 바꾸는 바로 이 자리에서 뜬다 — 위에서 떠 두면 그사이 다 받은 파일이 목록에서 빠진 채
+                # (받았다는 응답은 이미 나갔다) 세션 폴더와 함께 지워진다
+                files = [dict(f) for f in s.files]
                 s.state = "committing"           # 그동안 파일을 더 받거나 버리지 않게
 
             def reopen(note: str | None = None) -> None:

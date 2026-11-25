@@ -303,8 +303,12 @@ class CaptureManager:
                 s.save()
             elif s.state == "committing":
                 s.state = "stopped"
-                s.note = ("넣는 도중 서버가 꺼졌습니다 — 이미 옮긴 프레임은 unlabeled 에 있으니 '폴더 스캔' 으로 등록하고, "
-                          "남은 프레임만 다시 넣으세요(같은 이름은 건너뜁니다)")
+                # 다시 넣으면 남은 프레임을 옮기고, 앞에서 옮기기만 한 프레임도 같은 작업 배치로 등록한다(commit 의 stranded,
+                # 2026-11-25 — 전에는 '폴더 스캔 으로 등록하고 남은 것만 다시 넣으라' 고 했다: 전부 옮긴 뒤 꺼진 넣기는
+                # 다시 넣어도 스캔하지 않았다)
+                s.note = ("넣는 도중 서버가 꺼졌습니다 — 이미 옮긴 프레임은 unlabeled 에 있습니다. 같은 프레임을 골라 다시 "
+                          "넣으면 남은 것만 옮기고(같은 이름은 덮지 않습니다) 옮겨 둔 것까지 함께 등록합니다. "
+                          "'폴더 스캔' 으로 등록해도 됩니다")
                 s.save()
             self.sessions[s.sid] = s
 
@@ -649,6 +653,14 @@ class CaptureManager:
         except (ValueError, OSError) as exc:
             print(f"[캡처] 자동 등록한 카메라 {key} 를 되돌리지 못했습니다(빈 등록이 남음): {exc}")
 
+    def _unregistered(self, paths: list[Path]) -> list[Path]:
+        """이 파일들 가운데 DB 에 아직 없는 것 — 넣기가 '같은 이름이 이미 있다' 로 건너뛴 자리가 앞선 넣기의 등록 못 한
+        프레임인지 가른다. 등록된 경로를 모르면(known_paths 없이 만든 관리자) 전부 등록 안 된 것으로 본다(스캔이 가른다)."""
+        if not paths or self.known_paths is None:
+            return list(paths)
+        known = self.known_paths()
+        return [p for p in paths if _path_key(p) not in known]
+
     def commit(self, sid: str, camera: str | None, start: str | None, keep: list[int]) -> dict:
         """고른 프레임을 unlabeled/<카메라>/ 로 옮기고 스캔한다. start(영상 첫 프레임의 현지 시각)가 비면 시각 없는 이름
         (`notime_name`, 폴더 v<지문>)으로 — DB 촬영 시각은 '모름' 이 된다. camera 가 비면 이 영상용 카메라를 자동으로
@@ -705,6 +717,7 @@ class CaptureManager:
             root = self.cfg.unlabeled / camera
             moved: list[Path] = []
             exists: list[str] = []
+            had: list[Path] = []                 # 같은 이름이 이미 있던 자리 (exists 는 화면에 보일 이름)
             missing: list[int] = []
             # 이번 넣기의 파일(옮긴 것 + 같은 이름이 이미 있던 것) — 스캔이 새로 등록하면 이 영상의 작업 배치에 든다.
             # 이미 있던 이름도 넣는 것은 '넣는 도중 서버가 꺼진' 뒤의 다시 넣기 때문이다(앞에서 옮기기만 하고 등록 못 한 프레임)
@@ -720,6 +733,7 @@ class CaptureManager:
                     mine.append(dst)
                     if dst.exists():
                         exists.append(dst.name)
+                        had.append(dst)
                         continue
                     if not src.exists():
                         missing.append(i)
@@ -729,24 +743,33 @@ class CaptureManager:
                         _rename(src, dst)         # 같은 디스크라 옮기기만 한다. Windows 의 rename 은 덮어쓰지 않는다
                     except FileExistsError:
                         exists.append(dst.name)
+                        had.append(dst)
                         continue
                     moved.append(dst)
             except OSError as exc:
-                if auto == "new" and not moved:
+                if auto == "new" and not moved and not had:
                     self._drop_auto(camera)
                 with s.lock:
                     s.state = before
                     s.note = f"넣다가 멈췄습니다 — {len(moved)}장은 {root} 에 옮겼습니다: {exc}"
                 s.save()
                 raise CaptureError(500, f"{len(moved)}장을 옮긴 뒤 멈췄습니다 ({root}): {exc}") from exc
-            if auto == "new" and not moved:
+            # mine 은 파일이 없던 번호(missing)의 자리도 담아 비는 일이 없다 — '아무것도 없다' 는 moved·had 로 본다.
+            # 그 폴더에 파일이 하나라도 있으면 등록을 되돌리지 않는다(등록 안 된 카메라 폴더는 다음 스캔을 멈춘다)
+            if auto == "new" and not moved and not had:
                 self._drop_auto(camera)          # 옮길 프레임 파일이 없었다 — 빈 등록을 남기지 않는다
                 auto = "dropped"
 
             out = {"camera": camera, "auto": auto, "moved": len(moved), "exists": len(exists), "missing": len(missing),
                    "exists_names": exists[:5], "dest": str(root), "first": moved[0].name if moved else None,
                    "last": moved[-1].name if moved else None, "no_time": t0 is None}
-            if moved:
+            # 스캔할 것: 이번에 옮긴 프레임, 그리고 같은 이름이 이미 있는데 **아직 등록되지 않은** 프레임 — 앞선 넣기가 옮기기만
+            # 하고 꺼진 것이다. 2026-11-25 전에는 `if moved:` 라서, 고른 프레임을 전부 옮긴 직후에 꺼진 넣기를 다시 하면 옮길
+            # 것이 없어 스캔을 건너뛰고 세션만 지웠다 — 프레임은 등록도 작업 배치도 없이 폴더에 남았다(Gemini 리뷰 묶음 6).
+            # 이미 등록된 같은 이름뿐이면(같은 영상을 두 번 넣음) 전처럼 스캔하지 않는다.
+            stranded = self._unregistered(had)
+            out["stranded"] = len(stranded)
+            if moved or stranded:
                 try:
                     report = self.ingest(mine=mine, note=str(s.video.get("name") or "") or None)
                 except Exception as exc:  # noqa: BLE001 — 파일은 이미 옮겼다. 사람이 고친 뒤 '폴더 스캔' 하면 된다
@@ -754,16 +777,24 @@ class CaptureManager:
                 else:
                     # 이 영상의 작업 배치와, 같은 스캔에 함께 걸린 다른 새 파일의 배치 (workbatch.Intake.finish)
                     out["work"] = getattr(report, "work", None)
-                    mine = {os.path.normcase(str(p.resolve())) for p in moved}
-                    dups = [d for d in report.duplicates if os.path.normcase(d["path"]) in mine]
+                    # 이번 스캔이 새로 등록할 이 넣기의 파일 = 옮긴 것 + 앞에서 옮기다 멈춘 같은 이름. 전에는 여기서 옮긴
+                    # 것만으로 다시 세어, 3장 옮기고 꺼진 뒤 5장을 마저 넣으면 함께 등록된 앞의 3장을 '폴더에 있던 다른 새
+                    # 이미지' 로 알렸다(작업 배치에는 8장이 들었는데 registered 5·other_new 3)
+                    fresh = moved + stranded
+                    keys = {_path_key(p) for p in fresh}
+                    dups = [d for d in report.duplicates if os.path.normcase(d["path"]) in keys]
                     out["duplicates"] = len(dups)
-                    out["unreadable"] = len([u for u in report.unreadable if any(u.startswith(p.name) for p in moved)])
+                    out["unreadable"] = len([u for u in report.unreadable if any(u.startswith(p.name) for p in fresh)])
                     new_total = report.unlabeled_images - report.unlabeled_already
-                    if self.known_paths is not None:
+                    if out["work"] is not None:
+                        # 이 영상의 배치에 실제로 든 장수 = 이번 스캔이 새로 등록한 이 넣기의 파일 (upload.py 와 같다)
+                        main = out["work"].get("main")
+                        out["registered"] = main["n"] if main else 0
+                    elif self.known_paths is not None:      # 배치를 모르는 스캔(옛 꼴)
                         known = self.known_paths()
-                        out["registered"] = sum(1 for p in mine if p in known)
+                        out["registered"] = sum(1 for k in keys if k in known)
                     else:
-                        out["registered"] = len(moved) - out["duplicates"] - out["unreadable"]
+                        out["registered"] = len(fresh) - out["duplicates"] - out["unreadable"]
                     out["other_new"] = max(0, new_total - out["registered"])
                     out["summary"] = report.summary()
             left = self.discard(sid, force=True)
@@ -792,6 +823,12 @@ class CaptureManager:
         if errors:
             return f"임시 폴더를 다 지우지 못했습니다({len(errors)}개 — {s.dir}): {errors[0]}"
         return None
+
+
+def _path_key(path: str | Path) -> str:
+    """등록된 경로와 견줄 때의 키 — 스캔이 등록하는 경로(해석된 절대경로)와 같은 꼴로, 대소문자를 가리지 않게
+    (workbatch.path_key 와 같다 — 이 모듈은 store·ingest 를 끌어오지 않으려고 따로 둔다)."""
+    return os.path.normcase(str(Path(path).resolve()))
 
 
 def _rename(src: Path, dst: Path, tries: int = 20) -> None:

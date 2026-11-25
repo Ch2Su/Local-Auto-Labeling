@@ -23,6 +23,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -88,10 +89,19 @@ def call(path: str, **params) -> bytes:
 
 
 # ---------------------------------------------------------------- 고르기 (순수 함수 — tests/test_its_incident_clips.py)
+_CAM_ID = re.compile(r"[A-Za-z0-9_-]{1,40}")
+
+
 def cam_id(url: str) -> str:
-    """영상 주소의 첫 칸 — 목록끼리 같은 카메라를 가리키는 번호(11-24 실측)."""
-    segs = [s for s in urllib.parse.urlsplit(str(url or "")).path.split("/") if s]
-    return segs[0] if segs else ""
+    """영상 주소의 첫 칸 — 목록끼리 같은 카메라를 가리키는 번호(11-24 실측).
+
+    **파일 이름에 들어가는 값이라 영숫자·`_`·`-` 만 받는다 (2026-11-25, Gemini 리뷰)** — 밖(API 응답)에서 온 글자다. 그 밖의
+    글자(`..`·`\\`·`:` 등)가 든 칸이나 http(s) 가 아닌 주소는 번호 없음("")으로 본다: 그 카메라는 목록에서 빠진다(parse_cams)."""
+    parts = urllib.parse.urlsplit(str(url or ""))
+    if parts.scheme not in ("http", "https"):
+        return ""
+    segs = [s for s in parts.path.split("/") if s]
+    return segs[0] if segs and _CAM_ID.fullmatch(segs[0]) else ""
 
 
 def meters(x1: float, y1: float, x2: float, y2: float) -> float:
@@ -213,7 +223,10 @@ def duration_of(path: Path) -> float | None:
 
 
 def download(url: str, dst: Path) -> int:
-    """mp4 하나를 받는다(.part 로 쓰고 이름을 바꾼다). mp4 가 아니면 지우고 예외."""
+    """mp4 하나를 받는다(.part 로 쓰고 이름을 바꾼다). mp4 가 아니면 지우고 예외.
+    주소는 http(s) 만 — urllib 은 `file:`·`ftp:` 도 여는데, 주소는 API 응답에서 온 글자다(2026-11-25)."""
+    if urllib.parse.urlsplit(str(url or "")).scheme not in ("http", "https"):
+        raise ValueError("http(s) 주소가 아닙니다")
     tmp = dst.with_suffix(".part")
     n = 0
     req = urllib.request.Request(url, headers={"User-Agent": UA})

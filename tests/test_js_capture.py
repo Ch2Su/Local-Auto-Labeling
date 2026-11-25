@@ -171,3 +171,62 @@ def test_closing_a_video_forgets_its_unsaved_start_time(got):
 def test_leaving_the_view_still_saves_a_start_time_in_hand(got):
     assert got["sent_when_leaving"] == [["PUT", "/api/capture/s2/state", {"start": "2026-11-11 08:00:00"}]]
     assert got["pending_after_leaving"] is None
+
+
+@pytest.fixture(scope="module")
+def results(tmp_path_factory) -> dict:
+    """넣은 결과를 적는 글(capture.js `capShowResult`) — 서버가 준 결과마다 화면에 남는 줄·오류 표시·알림을 본다."""
+    node = find_node()
+    if node is None:
+        pytest.skip("node 가 없어 화면(JS) 쪽을 돌릴 수 없습니다")
+    src = (WEB / "capture.js").read_text(encoding="utf-8")
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    script = "\n".join([
+        js_const_lines(app, "esc"),
+        "let box, toasts;",
+        "const $ = (q) => q === '#cap-result' ? box : { onclick: null };",
+        "const toast = (text, bad) => toasts.push([text, !!bad]);",
+        "const setView = () => {}, reloadList = () => {}, workOpen = () => {};",
+        js_function(src, "capShowResult"),
+        "const show = (r) => {",
+        "  toasts = [];",
+        "  box = { innerHTML: '', err: null, classList: { toggle(name, on) { if (name === 'err') box.err = !!on; }, remove() {} } };",
+        "  capShowResult(r, 'clip.mp4');",
+        "  return { html: box.innerHTML, err: box.err, toast: toasts[0] };",
+        "};",
+        "const work = { main: { id: 7, n: 4 }, other: null };",
+        "console.log(JSON.stringify({",
+        "  finished: show({ camera: 'cam-01', moved: 0, exists: 4, stranded: 4, registered: 4, other_new: 0, work }),",
+        "  partly: show({ camera: 'cam-01', moved: 2, exists: 2, stranded: 2, registered: 4, other_new: 0, work }),",
+        "  again: show({ camera: 'cam-01', moved: 0, exists: 3, stranded: 0 }),",
+        "  stuck: show({ camera: 'cam-01', moved: 0, exists: 4, stranded: 4, scan_error: 'RuntimeError: x' }),",
+        "  plain: show({ camera: 'cam-01', moved: 3, exists: 0, stranded: 0, registered: 3, other_new: 0,",
+        "                work: { main: { id: 8, n: 3 }, other: null } }),",
+        "}));",
+        "process.exit(0);",
+    ])
+    return run_node(node, script, tmp_path_factory.mktemp("capture_result"))
+
+
+def test_frames_left_by_a_cut_short_commit_are_reported_as_registered(results):
+    """넣는 도중 꺼진 넣기를 다시 했다(2026-11-25) — 옮길 것이 없어도 옮겨 둔 프레임을 등록했으면 '넣은 것이 없습니다' 가 아니다."""
+    done = results["finished"]
+    assert "같은 이름이 이미 있어 옮기지 않음 4장" in done["html"] and "4장은 앞선 넣기가 옮겨만 두고" in done["html"]
+    assert "같은 구간을 전에 넣었습니다" not in done["html"] and "작업 7" in done["html"]
+    assert done["err"] is False and done["toast"] == ["옮겨 둔 4장을 등록했습니다", False]
+    part = results["partly"]
+    assert "옮기지 않음 2장" in part["html"] and "2장은 앞선 넣기가" in part["html"]
+    assert part["err"] is False and part["toast"] == ["2장을 넣었습니다", False]
+
+
+def test_a_repeat_of_frames_already_in_the_data_still_reads_as_nothing_added(results):
+    again = results["again"]
+    assert "옮기지 않음 3장 — 같은 구간을 전에 넣었습니다" in again["html"]
+    assert again["err"] is True and again["toast"] == ["넣은 것이 없습니다", True]
+    assert results["plain"]["err"] is False and results["plain"]["toast"] == ["3장을 넣었습니다", False]
+
+
+def test_a_stopped_scan_does_not_claim_the_left_frames_were_registered(results):
+    stuck = results["stuck"]
+    assert "함께 등록했습니다" not in stuck["html"] and "스캔이 멈췄습니다" in stuck["html"]
+    assert stuck["err"] is True and stuck["toast"] == ["넣은 것이 없습니다", True]

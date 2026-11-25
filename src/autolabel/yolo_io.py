@@ -137,6 +137,12 @@ def plain_image_open():
     (자동 라벨링·학습·예측 비교를 한 번이라도 돈 검수 서버)에서 이미지가 아닌 파일을 열어 보는 것만으로 설치가 돌았다 —
     웹 이미지 올리기의 테스트(이름만 .jpg 인 글자 파일)가 그렇게 실패했다. `.venv` 는 다른 프로젝트도 쓴다.
     원래 함수는 그 모듈이 `_image_open` 으로 들고 있다. 모듈이 없거나 그 이름이 없어지면 지금의 `Image.open` 그대로다.
+
+    **이 패키지(src/autolabel)에서 그림 파일을 여는 곳은 전부 이것으로 연다 (2026-11-25, Gemini 리뷰 묶음 6)** — 썸네일·
+    `display_size`·dHash·정리의 점검·EXIF 시각·칠한 사본. 그 전에는 `image_size` 만 이랬고, 깨진 그림의 썸네일을 한 번
+    받는 것으로도 설치가 돌 수 있었다. `Image.open` 을 직접 부르는 줄이 다시 생기면 tests/test_yolo_io.py 가 막는다.
+    패키지를 import 할 때 `YOLO_AUTOINSTALL=false` 도 기본으로 둔다(`autolabel/__init__.py`) — 설치는 안 돌지만 그것만으로는
+    못 알아보는 파일에서 `ModuleNotFoundError`(OSError 가 아니다)가 나므로, 여는 쪽은 여전히 이 함수를 써야 한다.
     """
     import sys
 
@@ -165,8 +171,9 @@ def display_size(path: Path) -> tuple[int, int]:
     EXIF Orientation 이 5~8(90도 회전)이면 원시 크기와 가로·세로가 뒤바뀐다. 이 데이터에
     49장이 있고 그중 정사각이 아닌 4장(id 1050·1126·1692·3181)에서 DB 크기(원시)와
     어긋난다. 라벨은 회전을 적용한 화면 기준 정규화 좌표다 (2026-09-23 확인).
+    `image_size` 처럼 `plain_image_open` 으로 연다(2026-11-25 — 이 패키지에서 그림을 여는 곳은 전부 그렇다).
     """
-    with Image.open(path) as im:
+    with plain_image_open()(path) as im:
         w, h = im.size
         if im.getexif().get(_EXIF_ORIENTATION, 1) in (5, 6, 7, 8):
             return h, w

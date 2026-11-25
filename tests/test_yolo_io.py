@@ -131,3 +131,73 @@ def test_a_file_that_is_not_an_image_never_starts_a_package_install(tmp_path, mo
     # 그 모듈이 원래 함수를 다른 이름으로 들게 되면(Ultralytics 를 올렸다) 지금의 Image.open 으로 돌아간다 — 조용히 깨지지 않는다
     del fake._image_open
     assert yolo_io.plain_image_open() is image_open
+
+
+def test_nothing_in_the_package_opens_images_through_the_patched_opener():
+    """이 패키지에서 그림을 여는 곳은 전부 `plain_image_open` 을 쓴다 (2026-11-25, Gemini 리뷰 묶음 6) — `Image.open` 을 직접
+    부르는 줄이 하나라도 생기면, Ultralytics 가 올라온 검수 서버에서 깨진 그림 하나가 패키지 설치를 일으킨다(위 테스트).
+    그 전에는 `image_size` 만 이랬고 썸네일·`display_size`·dHash·정리의 점검·EXIF 시각·칠한 사본이 그대로였다."""
+    from helpers import ROOT
+
+    direct = [f"{p.name}:{n}" for p in sorted((ROOT / "src" / "autolabel").glob("*.py"))
+              for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1) if "Image.open(" in line]
+    assert direct == []
+
+
+def test_the_rotated_size_and_the_scene_hash_also_use_the_plain_opener(tmp_path, monkeypatch):
+    """갈아 끼운 `Image.open`(못 알아보는 파일에서 설치를 돌리는 것)을 흉내 내고, 그림을 여는 다른 길도 그것을 건드리지 않는지."""
+    import sys
+    import types
+
+    import autolabel.yolo_io as yolo_io
+    from autolabel.grouping import dhash
+    from autolabel.masks import write_masked
+    from autolabel.provenance import _from_exif
+
+    original = yolo_io.plain_image_open()
+    opened: list = []
+
+    def image_open(filename, *args, **kwargs):
+        opened.append(str(filename))
+        raise ModuleNotFoundError("No module named 'pi_heif'")
+
+    fake = types.ModuleType("ultralytics.utils.patches")
+    fake._image_open = original
+    monkeypatch.setitem(sys.modules, "ultralytics.utils.patches", fake)
+    monkeypatch.setattr(Image, "open", image_open)
+
+    junk = tmp_path / "notes.jpg"
+    junk.write_bytes(b"this is not a jpeg at all")
+    good = tmp_path / "ok.jpg"
+    original_new = Image.new("RGB", (40, 20), (10, 200, 30))
+    original_new.save(good)
+    with pytest.raises(Image.UnidentifiedImageError):
+        display_size(junk)
+    assert display_size(good) == (40, 20)
+    assert dhash(junk) is None and dhash(good)                 # 못 읽는 파일은 해시 없음(전과 같다), 설치는 안 돈다
+    assert _from_exif(junk) is None and _from_exif(good) is None
+    write_masked(good, tmp_path / "out" / "masked.jpg", [(0.0, 0.0, 0.5, 1.0)])
+    assert (tmp_path / "out" / "masked.jpg").exists()
+    assert opened == []
+
+
+def test_importing_the_package_turns_off_ultralytics_auto_install_unless_told_otherwise():
+    """`import autolabel` 이 `YOLO_AUTOINSTALL=false` 를 기본으로 둔다 — Ultralytics 가 모자란 패키지를 이 `.venv`(다른 프로젝트도
+    쓴다)에 스스로 깔지 않게. 사람이 정해 둔 값은 그대로 둔다. conftest 가 먼저 정해 두므로 새 프로세스로 본다."""
+    import os
+    import subprocess
+    import sys
+
+    from helpers import ROOT
+
+    code = "import os, autolabel; print(os.environ.get('YOLO_AUTOINSTALL'))"
+    env = {k: v for k, v in os.environ.items() if k != "YOLO_AUTOINSTALL"}
+    env["PYTHONPATH"] = str(ROOT / "src")
+
+    def run(extra: dict) -> str:
+        done = subprocess.run([sys.executable, "-c", code], env={**env, **extra}, capture_output=True, text=True, timeout=60)
+        assert done.returncode == 0, done.stderr
+        return done.stdout.strip()
+
+    assert run({}) == "false"
+    assert run({"YOLO_AUTOINSTALL": "true"}) == "true"

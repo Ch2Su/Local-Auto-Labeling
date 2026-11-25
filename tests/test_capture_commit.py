@@ -105,6 +105,51 @@ def test_a_commit_cut_short_by_a_dead_server_says_so_after_restart(cfg, session,
     assert len(asked) == 1 and len(asked[0][0]) == 4
 
 
+def test_a_video_upload_stops_as_soon_as_more_arrives_than_was_announced(cfg, store, monkeypatch):
+    """영상 올리기(server capture_upload) — 알려 준 크기보다 많이 오면 그 자리에서 그만 받고 세션을 지운다 (2026-11-25, Gemini
+    리뷰 묶음 6). 고치기 전에는 오는 대로 끝까지 디스크에 쓴 뒤에야 크기를 견줬다."""
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from autolabel.server import create_app
+    from helpers import StreamBody, post_endpoint
+
+    cfg.cameras.write_text(CAMERAS, encoding="utf-8")
+    app = create_app(cfg, label="시험", bind_host="127.0.0.1")
+    fn = post_endpoint(app, "/api/capture/upload")
+    body = StreamBody([b"x" * 60] * 50)                      # 100바이트라고 했는데 3,000바이트가 온다
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(fn(body, name="clip.mp4", size=100))
+    assert err.value.status_code == 400 and "많이 옵니다" in err.value.detail
+    assert body.taken == 2                                   # 둘째 조각에서 넘었다 — 나머지 48조각은 받지 않았다
+    root = cfg.db.parent / "capture"
+    assert not root.exists() or not list(root.iterdir())     # 받던 세션 폴더는 지웠다
+
+
+def test_a_video_upload_of_unknown_size_stops_when_the_disk_runs_low(cfg, store, monkeypatch):
+    """크기를 알려 주지 않은 올리기는 시작할 때 디스크를 볼 수 없다 — 쓰는 동안 남은 공간이 한도 아래로 내려가면 멈춘다."""
+    import asyncio
+    from collections import namedtuple
+
+    from fastapi import HTTPException
+
+    from autolabel import server
+    from helpers import StreamBody, post_endpoint
+
+    cfg.cameras.write_text(CAMERAS, encoding="utf-8")
+    app = server.create_app(cfg, label="시험", bind_host="127.0.0.1")
+    fn = post_endpoint(app, "/api/capture/upload")
+    usage = namedtuple("usage", "total used free")
+    monkeypatch.setattr(server.shutil, "disk_usage", lambda p: usage(10 ** 12, 10 ** 12, server.CAPTURE_MIN_FREE - 1))
+    body = StreamBody([b"x" * (8 << 20)] * 5)                # 8MB 조각 다섯 — 첫 조각을 쓰고 나서 디스크를 본다
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(fn(body, name="clip.mp4", size=None))
+    assert err.value.status_code == 507 and body.taken == 1
+    root = cfg.db.parent / "capture"
+    assert not root.exists() or not list(root.iterdir())
+
+
 def test_a_commit_refused_before_moving_leaves_the_saved_state_alone(cfg, session):
     """옮기기 전에 거절된 넣기(없는 카메라)는 상태를 건드리지 않는다 — 파일의 상태도 done 그대로."""
     man = manager(cfg)

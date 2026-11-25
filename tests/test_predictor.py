@@ -91,6 +91,29 @@ def test_a_vehicle_class_the_project_lacks_does_not_remove_others(cfg, store, ad
     assert (report.merged, report.dropped_unknown_class) == (0, 1)
 
 
+def test_tiled_autolabel_follows_the_same_rule_for_a_vehicle_class_the_project_lacks(cfg, store, add_image, monkeypatch):
+    """타일 모드도 같다 (2026-11-25, Gemini 리뷰 묶음 6) — 고치기 전에는 타일 쪽만 모델의 차량 클래스를 전부 묶어, 버려질
+    responder(0.9)가 같은 자리의 car(0.6)를 먼저 지우고 저장 단계에서 자기도 버려졌다(그 차의 박스가 하나도 안 남았다).
+    성분 추론(`tiling.run_component`)만 정해 둔 검출로 갈아 끼우고 합치기·저장은 그대로 돌린다."""
+    import numpy as np
+    from PIL import Image
+
+    from autolabel import tiling
+
+    store.set_classes([c for c in CLASSES if c != "responder"], drop_extra=True)
+    image_id = add_image("t.jpg", status="unlabeled", size=(640, 480))
+    path = Path(store.get_image(image_id)["path"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (640, 480), (90, 90, 90)).save(path)       # 타일 모드는 그림을 읽는다(긴 변 800 이하 — 통째 성분만)
+    dets = np.array([[100, 100, 300, 260, 0.90, RESP, 0], [104, 104, 296, 262, 0.60, CAR, 0]], np.float32)
+    monkeypatch.setattr(tiling, "run_component", lambda model, img, comp, **kw: (dets.copy(), 0.0))
+    labeler = labeler_for(cfg, store)
+    report = labeler.run([image_id], tiles=True)
+    car = store.get_classes().index("car")
+    assert [b.cls for b in store.get_boxes(image_id)] == [car]
+    assert report.dropped_unknown_class == 1 and not report.errors
+
+
 def test_bad_class_iou_stops_before_the_model_runs(cfg, store, add_image):
     cfg.raw["predict"] = {"class_iou": 2}
     image_id = add_image("c.jpg", status="unlabeled")

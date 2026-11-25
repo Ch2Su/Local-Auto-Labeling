@@ -167,13 +167,15 @@
   `tiling.plain_class_iou`), 함수는 `tiling.cross_class_keep`: **같은 클래스 NMS 는 하지 않고**(모델이 낸 그대로) 클래스를 넘는
   차량 겹침만 merge_cross 와 같은 순서로 지운다(무작위 400벌로 견주는 테스트가 있다). `AutoLabeler.run` 의 통째 경로가 xyxy(픽셀)로
   표를 받아 xywhn 행을 거르고, 뺀 수는 `PredictReport.merged`(요약 줄 '겹친 차량 박스 N개'). 타일 모드는 그대로 detect 안에서
-  `predict.tiles.class_iou` 로 하고 그 수는 세지 않는다. **예측 비교(P)·label_qa 는 걸지 않는다**(모델이 낸 그대로 견준다 —
+  `predict.tiles.class_iou` 로 하고 그 수는 세지 않는다. **두 모드 모두 묶음에는 프로젝트 클래스로 옮겨지는 차량 클래스만
+  넣는다**(11-25, Gemini 리뷰 묶음 6 — 타일 쪽은 `detect(names=)` 에 옮겨지는 이름만 넘긴다. 전에는 타일만 모델의 차량
+  클래스를 전부 묶어, 저장 때 버려질 박스가 같은 자리의 남을 박스를 먼저 지울 수 있었다). **예측 비교(P)·label_qa 는 걸지 않는다**(모델이 낸 그대로 견준다 —
   P 의 `LiveDetector` 머리말). `model_version` 에는 표시를 붙이지 않았다(11-20 이후 통째로 라벨링한 이미지는 정리된 것).
   `tests/test_predictor.py`(가짜 모델로 저장까지). 그날 DB 사본(승인 175장, 운영 가중치)으로 끝까지 돌려 보니 끈 쪽 1,743개 중
   52개만 빠졌고 그 수가 `merged` 와 같았으며, 클래스가 다른 차량 박스 쌍(IoU ≥ 0.6)이 55 → 0(`runs/compare_1118_pretrain/plain_merge_check.py`).
 - **영상 캡처 탭 (2026-11-10, 사용자 요청 — `capture.py`·`web/capture.js`, 사용법은 README '영상 캡처')** — 라벨링·이미지 보기와
   같은 페이지의 세 번째 보기(`setView('capture')`·`body.view-capture`). 영상을 올려(`POST /api/capture/upload` — multipart 가
-  아니라 **본문 그대로** `request.stream()` 을 8MB 씩 쓴다, `size` 와 다르면·끊기면(ClientDisconnect) 지운다) 서버가 OpenCV 로
+  아니라 **본문 그대로** `request.stream()` 을 8MB 씩 쓴다, `size` 와 다르면·끊기면(ClientDisconnect) 지운다. 알려 준 `size` 보다 많이 오면 끝까지 받지 않고 그 자리에서 멈춘다 — 11-25, 크기를 안 알려 준 올리기는 디스크의 남은 공간이 `MIN_FREE` 아래로 내려가면) 서버가 OpenCV 로
   뽑고, 고른 것만 `unlabeled/<카메라>/<날짜>/` 로 옮겨 스캔한다.
   - 세션 = `<DB 폴더>/capture/<YYYYMMDD_HHMMSS_hex4>/`(`video.<확장자>` 사본·`frames/`·`thumbs/`·`session.json`). 넣거나 닫으면
     폴더째 지운다. 서버를 켤 때 `session.json` 이 없거나 '올리는 중' 이던 세션 폴더는 지우고(그 이름 꼴만), 뽑던·넣던 것은 '멈춤'.
@@ -185,7 +187,16 @@
     도중 서버가 죽으면 다시 켤 때 `_load` 가 그 상태를 보고 '넣는 도중 서버가 꺼졌습니다' 를 붙인다(전에는 메모리에서만 바꿔 그
     안내가 한 번도 안 나왔다). 같은 영상에서 다시 넣으면 남은 프레임만 옮기고(옮긴 것은 같은 이름이라 `exists`) 자동 카메라도
     지문으로 다시 찾는다 — 사본에서 넣기를 3장 옮긴 뒤 `os._exit` 로 죽여 보고 화면에서 확인했다(다시 넣기: 옮김 5·있음 3·
-    스캔 8장). `tests/test_capture_commit.py`. 화면 쪽 `capReset` 은 타이머뿐 아니라 들어 둔 시작 시각(`C.startPending`)도
+    스캔 8장). `tests/test_capture_commit.py`.
+    **다시 넣기는 옮겨만 둔 프레임도 등록한다 (11-25, Gemini 리뷰 묶음 6).** 같은 이름이 이미 있던 자리 가운데 DB 에 없는
+    것(`_unregistered` — 결과의 `stranded`)이 있으면 옮긴 것이 없어도 스캔하고, `registered` 는 이 영상의 배치에 실제로 든
+    장수(`work.main.n` — upload.py 와 같다)다. 전에는 `if moved:` 라서 고른 프레임을 전부 옮긴 직후에 꺼진 넣기를 다시 하면
+    스캔 없이 세션만 지웠고(프레임이 등록·배치 없이 폴더에 남았다), 일부만 옮긴 때는 앞의 프레임을 '폴더에 있던 다른 새
+    이미지' 로 셌다. 이미 등록된 같은 이름뿐이면(같은 영상을 두 번 넣음) 전처럼 스캔하지 않는다. 자동 카메라 등록을
+    되돌리는 조건은 `not moved and not had` 다 — **`mine` 으로 보면 안 된다**(없는 번호의 자리도 담아 비는 일이 없다).
+    화면은 `stranded` 를 '앞선 넣기가 옮겨만 두고 등록하지 못한 프레임' 으로 적고 그때는 '넣은 것이 없습니다' 라고 하지
+    않는다(`capShowResult`). `tests/test_workbatch.py`(서버째 — 전부·일부 옮긴 뒤 꺼진 넣기, 이미 등록된 이름)·
+    `tests/test_js_capture.py`. 화면 쪽 `capReset` 은 타이머뿐 아니라 들어 둔 시작 시각(`C.startPending`)도
     버린다 — 안 버리면 넣거나 닫은 뒤 다른 보기로 갈 때 없어진 세션에 PUT 을 보냈다(`tests/test_js_capture.py`).
   - 뽑는 방식·이름은 `tools/extract_frames.py` 와 **바이트까지 같다**(11-10 에 10장 대조) — `frame_name`·`parse_start`·`small_gray`·
     `changed_pct` 를 capture.py 한 곳에 두고 extract_frames·import_roadplus 가 가져간다. 이름의 시각을 scan 이 `captured_at` 으로
@@ -318,6 +329,11 @@
     분할 수**(`health.used_splits` — 비율 0 인 val·test 는 뺀다)보다 적으면 알리고, 그 수는 응답의 `min_units`·`splits.used` 로
     화면에 준다. **화면에 서버의 값을 따로 적지 말 것** — 박스 크기 칸의 이름과 '32px 미만' 도 `size_bins.edges` 로 만든다
     (`hcSizeNames`·`hcUnder`, 11-15 리뷰). '눈여겨볼 것'(`_notes`)에는 숫자로 확인되는 것만 넣는다 — 많다·적다 같은 판단은 넣지 말 것.
+    **고정 분할 카메라를 빼면 모자란 클래스도 알린다 (11-25, Gemini 리뷰 묶음 6).** 클래스 줄의 `pinned_units`(고정 분할별
+    묶음 수 — 묶음 안 카메라의 `cameras.yaml` `split:`)·`free_units`(고정 없는 묶음 수)로, 고정 묶음이 하나도 없는 분할의
+    수보다 `free_units` 가 적으면 '고정 분할 카메라를 빼면 묶음이 모자란 클래스' 를 낸다(고정이 없으면 '곳 미만' 과 같은
+    조건이라 그 줄만 나온다). 그날 DB 는 scooter 라벨 41개 중 37개가 train 고정(AI Hub)이고 나머지가 한 묶음이라 val·test
+    둘 다에는 못 드는데, 묶음 수(30)만 보던 때는 조용했다. `tests/test_health.py`.
   - 눌러 넘기기: 클래스·카메라·태그·분할은 왼쪽 필터를 그 조건 하나로 바꾼다(`hcOpenFiltered` — app.js 의 `noFilters`·
     `setFilters` 로 맞추고 목록을 받은 뒤 `setView('gallery')`). 상태 칸은 서버가 준
     `list_status` 로 맞춘다 — 범위 all(휴지통만 뺀 전부)은 목록의 `all`(휴지통도 넣는다)이 아니라 `live`(`store.LIVE`, 상태
@@ -350,6 +366,9 @@
   통째 그림을 다시 인코딩한다(`_cur` 를 비움). `C` 모드에서는
   모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).
 - '드문 클래스 먼저'·'태그 순'(11-10, `_list_by_tag`) 정렬·클래스 필터는 목록과 **같은 WHERE**(`_list_where`·`count_images`)로 센다 — 어긋나면 목록 묶음이 틀어진다.
+  희소도(`store.class_rarity`)와 분할이 세는 박스(`store.approved_class_counts`)는 **라벨 파일에 들어갈 박스만** 센다(11-25,
+  Gemini 리뷰 묶음 6 — 가릴 영역이 반 넘게 덮은 박스는 `masks.drops` 로 뺀다. 그날 DB 는 승인 박스 3,186개 가운데 1,630개가
+  그런 박스였고, 그대로 세던 때는 사본의 첫 분할에서 val 에 사람 라벨이 433개 중 6개였다 — docs/experiments.md '분할이 세는 박스').
   카메라·도메인·분할 필터도 같은 WHERE 에 있다. **분할 필터는 보기만 한다**(`/api/splits`) — 웹 UI 에 분할을 바꾸는 길을 넣지 말 것
   (분할은 `split.py` 만 쓴다, 위 '묶음 단위 계층화').
 - **목록은 '전체' 로 6천 줄을 펼칠 수 있다** — 이미지를 바꿀 때 목록을 통째로 다시 그리지 말 것(`loadImage` 는 `markCurrent()`,
@@ -402,10 +421,19 @@
     캡처와 같은 줄, 한 장도 못 넣으면 등록을 되돌린다). 이미 있는 그림과 바이트가 같은 파일은 **옮기기 전에** 거른다
     (`dupcheck.DupIndex` — 옮긴 뒤 스캔이 막으면 등록 안 된 사본이 unlabeled 에 남는다). 넣기는 `capman.commit_lock` → `ingest_lock`
     순서·`_capture_blocker` 를 따른다. 서버를 켜면 넣지 않은 세션 폴더는 지운다(그 이름 꼴만).
+    **쓰는 중인 파일이 있으면 넣지 않는다 (11-25, Gemini 리뷰 묶음 6 — `Session.inflight`, 409).** 자리를 잡은(`reserve`)
+    쪽은 어떻게 끝나든 `accept` 나 `reject` 를 부른다 — 서버의 `upload_file` 은 취소·뜻밖의 오류에도 `reject` 한다(안 부르면
+    그 이름이 '받는 중' 으로 남아 묶음을 넣을 수 없다). 넣을 목록은 상태를 `committing` 으로 바꾸는 그 잠금 안에서 뜬다
+    (전에는 확인 앞에서 떠 두어, 그사이 다 받은 파일이 목록에서 빠진 채 세션 폴더와 함께 지워질 수 있었다). 넣는 중인
+    묶음에 늦게 닿은 파일은 이름 예약도 돌려준다. 세션 요약의 `receiving` 이 쓰는 중인 수다. `tests/test_upload.py`.
   - **`yolo_io.image_size` 는 PIL 의 원래 `Image.open`(`plain_image_open`)으로 연다** — Ultralytics(8.4.212)가 import 때 갈아 끼운
     `Image.open` 은 못 알아보는 파일에서 `pi-heif` 를 **지금 파이썬 환경에 설치하려 든다**(`.venv` 는 다른 프로젝트도 쓴다). 그
     모듈이 올라온 서버(자동 라벨링을 한 번이라도 돈 뒤)에서 이미지가 아닌 파일을 올리면 설치가 돌았다. 밖에서 온 파일을 여는 새
-    코드도 그것으로 열 것. 테스트는 `YOLO_AUTOINSTALL=false`(conftest). 썸네일·`display_size` 는 아직 `Image.open` 그대로다.
+    코드도 그것으로 열 것. **11-25 부터 이 패키지에서 그림을 여는 곳은 전부 그렇다**(썸네일·`display_size`·dHash·정리의
+    점검·EXIF 시각·칠한 사본 — `Image.open` 을 직접 부르는 줄이 생기면 `tests/test_yolo_io.py` 가 막는다: 주석에도 그
+    글자를 괄호까지 쓰면 걸린다). 패키지를 import 하면 `YOLO_AUTOINSTALL=false` 가 기본으로 놓인다(`autolabel/__init__.py` —
+    정해 둔 값은 그대로). 그 값만으로는 못 알아보는 파일에서 `ModuleNotFoundError`(OSError 가 아니다)가 나므로 여는 쪽은
+    여전히 `plain_image_open` 이어야 한다.
 - **보기는 app.js 의 `VIEWS` 표 한 곳에 적는다 (11-15 리뷰).** 라벨링 말고의 보기(이미지 보기·작업 배치·영상 캡처·데이터 점검)마다
   `show`·`hide`(setView 가 부른다)·`key`(그 보기의 키 처리 — **없으면 키를 버린다**)·`vToggle`(V 가 라벨링과 오간다 — 이미지
   보기만)·`full`(세 칸을 통째로 쓴다 — `body.view-full` 이 왼쪽 목록·가운데·오른쪽 칸을 숨긴다, style.css 한 줄)을 적는다.

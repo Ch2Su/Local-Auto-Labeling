@@ -463,8 +463,10 @@ def write_masked(src: Path, dst: Path, rects: Sequence, *, quality: int = 95) ->
     회전을 적용해 쓰므로 새 파일에는 EXIF 가 없다 — 라벨이 회전을 적용한 화면 기준이라 그대로 맞는다
     (CLAUDE.md 'EXIF 회전 이미지'). 반쯤 쓴 파일이 남지 않게 임시 이름으로 쓴 뒤 바꾼다.
     """
+    from .yolo_io import plain_image_open       # Ultralytics 가 갈아 끼운 Image.open 을 거치지 않는다(그 머리말)
+
     dst.parent.mkdir(parents=True, exist_ok=True)
-    with Image.open(src) as im:
+    with plain_image_open()(src) as im:
         out = paint(ImageOps.exif_transpose(im), rects)
     tmp = dst.with_name(dst.name + ".tmp")
     out.save(tmp, "JPEG", quality=quality)

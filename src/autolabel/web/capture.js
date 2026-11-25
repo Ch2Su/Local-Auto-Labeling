@@ -513,7 +513,14 @@ function capShowResult(r, name) {
   if (r.auto === "new") lines.push(`카메라를 고르지 않아 <b>${esc(r.camera)}</b> 를 새로 등록했습니다(장소 '모름') — 알게 되면 '고치기…' 로 바꾸세요.`);
   else if (r.auto === "reused") lines.push(`이 영상을 전에 넣은 자동 카메라 ${esc(r.camera)} 에 넣었습니다.`);
   else if (r.auto === "dropped") lines.push("옮길 프레임이 없어 자동 등록한 카메라를 다시 뺐습니다.");
-  if (r.exists) lines.push(`같은 이름이 이미 있어 건너뜀 ${r.exists}장 — 같은 구간을 전에 넣었습니다.`);
+  // stranded: 같은 이름이 이미 있던 것 가운데 아직 등록되지 않았던 프레임 — 앞선 넣기가 옮기기만 하고 꺼진 것(서버 capture.py
+  // commit, 2026-11-25). 이번 스캔이 이 영상의 배치로 함께 등록한다 — 스캔이 멈췄으면(scan_error) 등록됐다고 적지 않는다
+  const saved = r.scan_error ? 0 : (r.stranded || 0);
+  if (r.exists) {
+    lines.push(`같은 이름이 이미 있어 옮기지 않음 ${r.exists}장`
+      + (saved ? ` — 그중 ${saved}장은 앞선 넣기가 옮겨만 두고 등록하지 못한 프레임이라 이번에 함께 등록했습니다.`
+               : " — 같은 구간을 전에 넣었습니다."));
+  }
   if (r.missing) lines.push(`프레임 파일이 없어 건너뜀 ${r.missing}장.`);
   if (r.duplicates) lines.push(`내용이 이미 있는 이미지와 같아 등록하지 않음 ${r.duplicates}장(멈춘 화면 등).`);
   if (r.unreadable) lines.push(`읽지 못해 등록하지 않음 ${r.unreadable}장.`);
@@ -536,7 +543,7 @@ function capShowResult(r, name) {
   }
   const box = $("#cap-result");
   box.innerHTML = lines.join("<br>");
-  box.classList.toggle("err", !!r.scan_error || !r.moved);
+  box.classList.toggle("err", !!r.scan_error || !(r.moved || saved));
   box.classList.remove("hidden");
   const go = $("#cap-go-label");
   if (go) {
@@ -550,7 +557,8 @@ function capShowResult(r, name) {
     $("#cap-go-work").onclick = () => workOpen(main.id);       // work.js — 라벨링을 그 배치로 걸러 연다
     $("#cap-go-works").onclick = () => setView("work");
   }
-  toast(r.moved ? `${r.moved}장을 넣었습니다` : "넣은 것이 없습니다", !r.moved || !!r.scan_error);
+  toast(r.moved ? `${r.moved}장을 넣었습니다` : saved ? `옮겨 둔 ${saved}장을 등록했습니다` : "넣은 것이 없습니다",
+        !(r.moved || saved) || !!r.scan_error);
 }
 
 async function capDiscard() {

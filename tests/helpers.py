@@ -93,3 +93,24 @@ def run_node(node: str, script: str, folder: Path):
 def plain_name(i: int) -> str:
     """이름 규칙(연번·스크린샷)에 걸리지 않는 이름 — 숫자가 없다."""
     return f"p{chr(97 + i // 26 % 26)}{chr(97 + i % 26)}{'x' * (i // 676)}.jpg"
+
+
+class StreamBody:
+    """요청 본문 대역 — `stream()` 이 조각을 차례로 주다가 fail 이 있으면 그것을 던진다. 몇 조각을 가져갔는지 센다
+    (`taken`). 본문을 그대로 받는 처리 함수(영상·이미지 올리기)를 `post_endpoint` 로 꺼내 직접 부를 때 쓴다."""
+
+    def __init__(self, chunks, fail: BaseException | None = None):
+        self.chunks, self.fail, self.taken = list(chunks), fail, 0
+
+    async def stream(self):
+        for c in self.chunks:
+            self.taken += 1
+            yield c
+        if self.fail is not None:
+            raise self.fail
+
+
+def post_endpoint(app, path: str):
+    """서버 앱에서 그 주소의 POST 처리 함수 — 본문을 조각으로 흘려 넣으려고 직접 부른다(TestClient 는 본문을 한 번에 준다)."""
+    return next(r.endpoint for r in app.router.routes
+                if getattr(r, "path", None) == path and "POST" in getattr(r, "methods", ()))

@@ -27,6 +27,31 @@ def test_cam_id_is_first_path_segment():
     assert T.cam_id("") == "" and T.cam_id(None) == ""
 
 
+@pytest.mark.parametrize("url", [
+    "https://h/..%5C..%5Cx/tok", "https://h/a\\..\\..\\x/tok", "https://h/../tok", "https://h/a:b/tok", "https://h/a b/tok",
+    "https://h/" + "9" * 41 + "/tok", "file:///C:/Windows/win.ini", "ftp://h/2514/tok", "//h/2514/tok", "2514/tok",
+])
+def test_cam_id_takes_only_plain_numbers_and_letters_from_a_web_address(url):
+    """번호는 받은 영상의 파일 이름(`its-<번호>_…mp4`)에 들어간다 — API 응답에서 온 글자라, 경로가 될 수 있는 글자가 든
+    칸이나 http(s) 가 아닌 주소는 번호 없음으로 본다(2026-11-25, Gemini 리뷰). 그런 줄은 카메라 목록에서 빠진다."""
+    assert T.cam_id(url) == ""
+    assert T.parse_cams({"response": {"data": [{"cctvurl": url, "coordx": "127.0", "coordy": "37.0"}]}}, "ex") == []
+
+
+def test_cam_id_keeps_the_ids_seen_so_far():
+    assert T.cam_id("http://h/2514/tok") == "2514" and T.cam_id("https://h/E90_0012-a/tok") == "E90_0012-a"
+
+
+def test_download_opens_only_web_addresses(tmp_path, monkeypatch):
+    """urllib 은 `file:` 도 연다 — 주소는 API 응답에서 온 글자라 http(s) 만 받는다. 열어 보지도 않는다."""
+    opened: list = []
+    monkeypatch.setattr(T.urllib.request, "urlopen", lambda req, timeout=0: opened.append(req))
+    for url in ("file:///C:/Windows/win.ini", "ftp://h/1/t", "", "h/1/t"):
+        with pytest.raises(ValueError):
+            T.download(url, tmp_path / "a.mp4")
+    assert opened == [] and list(tmp_path.iterdir()) == []
+
+
 def test_meters_matches_latitude_scale():
     assert T.meters(127, 36, 127, 36 + 500 * DEG_PER_M) == pytest.approx(500, abs=0.5)
 

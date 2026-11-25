@@ -715,10 +715,10 @@ def _from_name(path: Path) -> datetime | None:
 
 
 def _from_exif(path: Path) -> datetime | None:
-    from PIL import Image
+    from .yolo_io import plain_image_open       # Ultralytics 가 갈아 끼운 Image.open 을 거치지 않는다(그 머리말)
 
     try:
-        with Image.open(path) as im:
+        with plain_image_open()(path) as im:
             ifd = im.getexif().get_ifd(_EXIF_IFD)
     except Exception:
         return None

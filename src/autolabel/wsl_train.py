@@ -3,7 +3,7 @@
 흐름
 
 1. DB 로 데이터셋 폴더(config 의 data.dataset)를 만든다 (Windows, `trainer.build_dataset` 그대로)
-2. WSL 홈으로 복사한다 (`wsl/sync_dataset.sh` — 이미지·라벨만, `.npy`·DB 는 안 간다)
+2. WSL 홈으로 복사한다 (`wsl/sync_dataset.sh` — 이미지·라벨·test 의 `ignore/` 그림만, `.npy`·DB 는 안 간다)
 3. `wsl` 로 `wsl/train_wsl.py` 를 띄우고 출력을 작업 로그로 중계한다
 4. 끝까지 가면 best.pt 를 운영 가중치로 올린다 (`trainer.promote_if_finished` — 이전 것은
    `best.prev.pt`. 중단한 학습은 올리지 않는다, 2026-11-16. Windows 학습 버튼과 같은 규칙이다)

@@ -31,7 +31,7 @@ from typing import Callable
 from .config import Config
 from .provenance import is_camera_key
 from .store import Store
-from .yolo_io import write_yolo_txt
+from .yolo_io import plain_image_open, write_yolo_txt
 
 ProgressFn = Callable[[int, int, str], None]
 
@@ -230,8 +230,6 @@ def check_images(cfg: Config, store: Store, *, fix_size: bool = False) -> CheckR
     fix_size=True 면 크기 불일치를 DB 쪽에 맞춘다. 박스 값은 건드리지 않는다 —
     정규화 좌표라 종횡비가 유지되는 한 그대로 유효하다.
     """
-    from PIL import Image
-
     report = CheckReport()
     for row in store.list_images(status="all", limit=10**9):
         report.checked += 1
@@ -243,7 +241,7 @@ def check_images(cfg: Config, store: Store, *, fix_size: bool = False) -> CheckR
         if os.path.normcase(real) != os.path.normcase(str(path)):   # ingest._key 와 같은 기준
             report.noncanonical.append((row["id"], str(path), real))
         try:
-            with Image.open(path) as im:
+            with plain_image_open()(path) as im:
                 size = im.size
         except Exception as exc:
             report.unreadable.append((row["id"], str(path), f"{type(exc).__name__}: {exc}"))

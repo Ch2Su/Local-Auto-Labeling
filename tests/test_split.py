@@ -136,6 +136,37 @@ def test_without_test_ratio_only_train_and_val(cfg, store, singles):
     assert set(assign.values()) == {"train", "val"}
 
 
+def test_boxes_under_a_masking_region_do_not_steer_the_split(cfg, store, add_image):
+    """가릴 영역이 반 넘게 덮은 박스는 라벨 파일에 없다 — 계층화가 그 박스로 클래스 비중을 맞추면 안 된다 (2026-11-25,
+    Gemini 리뷰 묶음 6).
+
+    네 장을 반반으로 나눈다. `decoy` 에는 차 박스 20개가 있지만 전부 영역 아래라 라벨에는 하나도 없고, 라벨에 남는 차는
+    `one`·`two` 의 하나씩뿐이다. 고치기 전에는 DB 의 박스(22개)로 비중을 맞춰 decoy 를 한쪽에, one·two 를 **함께** 반대쪽에
+    넣었다 — 한 분할에는 차 라벨이 하나도 없었다(실제 DB 의 사본에서는 val 에 사람 라벨이 433개 중 6개였다)."""
+    from autolabel import masks
+
+    cfg.raw["train"].update(val_ratio=0.5, test_ratio=0)
+    hashes = far_hashes(4, seed=5)
+    decoy = add_image(plain_name(0), dhash=hashes[0],
+                      boxes=[box(cls=2, cx=0.05 + 0.045 * k, cy=0.5, w=0.04, h=0.04) for k in range(20)])
+    add_image(plain_name(1), dhash=hashes[1], boxes=[box(cls=0)])
+    one = add_image(plain_name(2), dhash=hashes[2], boxes=[box(cls=2)])
+    two = add_image(plain_name(3), dhash=hashes[3], boxes=[box(cls=2)])
+    store.set_masks(decoy, [(0.0, 0.0, 1.0, 1.0)])
+
+    assign, report = ensure_splits(cfg, store)
+    assert sorted(report.counts.values()) == [2, 2]
+    assert assign[one] != assign[two]                       # 라벨에 남는 차가 두 분할에 하나씩
+    rects = store.masks_by_image()
+    cars = {"train": 0, "val": 0}
+    for im, boxes in store.approved_with_boxes():           # 라벨 파일에 들어갈 박스로 따로 센다(학습 세트와 같은 함수)
+        keep, _ = masks.split_boxes(boxes, rects.get(im["id"], []))
+        cars[assign[im["id"]]] += sum(1 for b in keep if b.cls == 2)
+    assert cars == {"train": 1, "val": 1}
+    # 보고의 클래스 비중도 라벨 기준이다 — 차는 반반(전에는 DB 박스로 20/22 대 2/22)
+    assert report.shares["train"]["car"] == report.shares["val"]["car"] == 0.5
+
+
 # ----------------------------------------------------------------- 카메라
 
 def test_a_camera_goes_whole_and_pins_are_obeyed(cfg, store, add_image, singles):

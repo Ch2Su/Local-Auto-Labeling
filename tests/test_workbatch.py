@@ -547,5 +547,82 @@ def test_a_capture_commit_puts_its_frames_in_one_batch(cfg, store, cams):
                        "stray.jpg": other["id"]}
 
 
+def cut_short_session(cfg, sid: str, n: int, moved: int, t0: str = "2026-11-23 12:00:00") -> list[str]:
+    """넣는 도중 서버가 꺼진 세션 — 프레임 n 장 가운데 앞의 moved 장은 이미 unlabeled/cam-01/ 로 옮겨졌고(등록은 안 됨)
+    session.json 의 상태는 committing 이다. 넣기가 붙였을 이름 n 개를 돌려준다."""
+    from datetime import timedelta
+
+    from autolabel.capture import frame_name, parse_start
+
+    d = cfg.db.parent / "capture" / sid
+    (d / "frames").mkdir(parents=True)
+    start = parse_start(t0)
+    names = [frame_name("cam-01", start + timedelta(seconds=i)) for i in range(n)]
+    for i, name in enumerate(names):
+        img = Image.new("RGB", (64, 36), (50 * i + 10, 90, 120))
+        if i < moved:
+            dst = cfg.unlabeled / "cam-01" / f"{start:%Y%m%d}" / name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            img.save(dst)
+        else:
+            img.save(d / "frames" / f"{i:05d}.jpg")
+    data = {"created": "2026-11-23T10:15:00", "video": {"name": "clip.mp4", "file": "video.mp4", "sha1": "ab" * 20},
+            "state": "committing", "error": None, "note": None, "settings": {"every": 1.0},
+            "frames": [{"i": i, "t": float(i), "c": 10.0, "s": None, "k": True} for i in range(n)],
+            "run": 1, "pos": float(n), "camera": "cam-01", "start": None, "start_guess": None, "start_mtime": None}
+    (d / "session.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return names
+
+
+@pytest.mark.parametrize("moved", [4, 2])
+def test_a_commit_cut_short_is_finished_by_committing_again(cfg, store, cams, moved):
+    """넣는 도중 서버가 꺼졌다 — 다시 넣으면 옮겨만 둔 프레임도 이 영상의 배치로 등록된다 (2026-11-25, Gemini 리뷰 묶음 6).
+
+    고치기 전: 전부 옮긴 뒤 꺼졌으면(moved 4) 다시 넣을 때 옮길 것이 없어 스캔을 건너뛰고 세션만 지웠다 — 프레임이 등록도
+    배치도 없이 폴더에 남았다. 일부만 옮기고 꺼졌으면(moved 2) 배치에는 4장이 들었는데 결과는 '등록 2장 + 폴더에 있던 다른
+    새 이미지 2장' 이었다."""
+    from fastapi.testclient import TestClient
+
+    from autolabel.server import create_app
+
+    sid = "20261123_101500_ab12"
+    names = cut_short_session(cfg, sid, 4, moved)
+    put(cfg, "cam-02", "stray.jpg", 200)                       # 사람이 폴더에 따로 둔 새 파일 — 이것만 '다른 새 이미지' 다
+    with TestClient(create_app(cfg, label="시험", bind_host="127.0.0.1"), base_url=ORIGIN) as client:
+        r = client.post(f"/api/capture/{sid}/commit",
+                        json={"camera": "cam-01", "start": "2026-11-23 12:00:00", "keep": [0, 1, 2, 3]})
+        assert r.status_code == 200, r.text
+        out = r.json()
+    assert "work" in out, out                                  # 스캔을 돌렸다(전부 옮긴 뒤 꺼진 넣기도)
+    main, other = out["work"]["main"], out["work"]["other"]
+    assert (out["registered"], out["other_new"], main["n"], other["n"]) == (4, 1, 4, 1)
+    assert (out["moved"], out["exists"], out["stranded"]) == (4 - moved, moved, moved)
+    by_name = {r["name"]: r["work_batch"] for r in rows(store)}
+    assert by_name == {**{n: main["id"] for n in names}, "stray.jpg": other["id"]}
+    assert not (cfg.db.parent / "capture" / sid).exists()
+
+
+def test_frames_that_are_already_registered_do_not_start_a_scan(cfg, store, cams):
+    """같은 영상을 두 번 넣었다 — 같은 이름이 전부 이미 등록돼 있으면 옮길 것도 등록할 것도 없다. 스캔하지 않는다(전과 같다:
+    폴더에 따로 둔 새 파일을 이 넣기가 끌고 들어가지 않는다)."""
+    from fastapi.testclient import TestClient
+
+    from autolabel.server import create_app
+
+    names = cut_short_session(cfg, "20261123_101500_ab12", 3, 3)
+    ingest_as_batch(cfg, store, "scan")                        # 앞서 폴더 스캔으로 등록해 둔 프레임
+    assert sorted(r["name"] for r in rows(store)) == names
+    cut = cfg.db.parent / "capture" / "20261123_101500_ab12"
+    for i in range(3):                                         # 같은 영상을 다시 뽑았다 — 프레임 파일이 세션에 다시 있다
+        Image.new("RGB", (64, 36), (50 * i + 10, 90, 120)).save(cut / "frames" / f"{i:05d}.jpg")
+    put(cfg, "cam-02", "stray.jpg", 200)
+    with TestClient(create_app(cfg, label="시험", bind_host="127.0.0.1"), base_url=ORIGIN) as client:
+        out = client.post("/api/capture/20261123_101500_ab12/commit",
+                          json={"camera": "cam-01", "start": "2026-11-23 12:00:00", "keep": [0, 1, 2]}).json()
+    assert (out["moved"], out["exists"], out["stranded"]) == (0, 3, 0)
+    assert "summary" not in out and "work" not in out and "scan_error" not in out
+    assert sorted(r["name"] for r in rows(store)) == names     # stray.jpg 는 그대로 미등록
+
+
 def test_classes_are_untouched_by_all_this(store):
     assert store.get_classes() == CLASSES

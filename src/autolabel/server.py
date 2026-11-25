@@ -11,6 +11,7 @@ import math
 import os
 import re
 import secrets
+import shutil
 import threading
 import time
 import unicodedata
@@ -35,6 +36,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from .camera_move import MoveBlocked, apply_move, plan_move
 from .camera_rename import RenameBlocked, RenameStuck, apply_rename, plan_rename
 from .capture import MAX_EVERY, MAX_FRAMES, MIN_EVERY, CaptureError, CaptureManager
+from .capture import MIN_FREE as CAPTURE_MIN_FREE
 from .config import ROOT, Config, resolve
 from .export import default_export_dir, export_yolo
 from .health import GRID as HEALTH_GRID
@@ -63,7 +65,7 @@ from .trainer import train as run_train
 from .upload import MAX_FILE_BYTES, MAX_FILES, UploadError, UploadManager
 from .workbatch import KIND_NAMES as WORK_KIND_NAMES
 from .workbatch import ingest_as_batch
-from .yolo_io import IMG_EXTS, Box, display_size
+from .yolo_io import IMG_EXTS, Box, display_size, plain_image_open
 
 WEB_DIR = Path(__file__).parent / "web"
 
@@ -1109,7 +1111,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             thumb_dir.mkdir(parents=True, exist_ok=True)
             tmp = out.with_name(f"{out.stem}.{secrets.token_hex(4)}.tmp")
             try:
-                with Image.open(path) as im:
+                with plain_image_open()(path) as im:                     # 갈아 끼운 Image.open 을 거치지 않는다(yolo_io)
                     im.draft("RGB", (s, s))                              # JPEG 은 1/2·1/4·1/8 로 풀어 빠르다
                     im = ImageOps.exif_transpose(im).convert("RGB")      # 화면처럼 회전(CLAUDE.md 'EXIF 회전')
                     im.thumbnail((s, s))
@@ -1854,16 +1856,25 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             f.write(data)
             digest.update(data)
 
+        # 받다가 그만둘 이유 (2026-11-25, Gemini 리뷰 묶음 6): 알려 준 크기보다 많이 온다(끝까지 받아도 어차피 버린다 — 전에는
+        # 다 쓴 뒤에야 견줬다), 크기를 안 알려 준 올리기가 디스크를 MIN_FREE 아래로 채운다(begin_upload 는 크기를 알 때만 본다)
+        over = None
         try:
             with open(dst, "wb") as f:
                 buf = bytearray()
                 async for chunk in request.stream():
                     buf += chunk
+                    if size is not None and written + len(buf) > size:
+                        over = f"받은 크기가 다릅니다(알려 준 {size:,} 바이트보다 많이 옵니다) — 다시 올리세요."
+                        break
                     if len(buf) >= 8 << 20:
                         await run_in_threadpool(put, f, bytes(buf))
                         written += len(buf)
                         buf.clear()
-                if buf:
+                        if size is None and shutil.disk_usage(dst.parent).free < CAPTURE_MIN_FREE:
+                            over = "디스크에 남은 공간이 모자라 올리기를 멈췄습니다."
+                            break
+                if buf and over is None:
                     await run_in_threadpool(put, f, bytes(buf))
                     written += len(buf)
         except ClientDisconnect:
@@ -1872,6 +1883,9 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         except OSError as exc:
             await run_in_threadpool(capman.discard, sess.sid, force=True)
             raise HTTPException(500, f"영상을 쓰지 못했습니다: {exc}") from exc
+        if over is not None:
+            await run_in_threadpool(capman.discard, sess.sid, force=True)
+            raise HTTPException(507 if size is None else 400, over)
         if not written or (size is not None and written != size):
             await run_in_threadpool(capman.discard, sess.sid, force=True)
             raise HTTPException(400, f"받은 크기가 다릅니다({written:,} / {size:,} 바이트) — 다시 올리세요."
@@ -1974,6 +1988,11 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         except OSError as exc:
             await run_in_threadpool(upman.reject, sess, dst)
             raise HTTPException(500, f"파일을 쓰지 못했습니다: {exc}") from exc
+        except BaseException:
+            # 요청이 취소됐거나(서버를 끄는 중) 뜻밖의 오류 — 자리를 돌려주지 않으면 이 이름이 '받는 중' 으로 남아 묶음을
+            # 넣을 수 없다(upload.commit 의 409). 취소 중에는 await 할 수 없으니 여기서 바로 부른다(파일 하나 지우기뿐이다)
+            upman.reject(sess, dst)
+            raise
         item = await run_in_threadpool(_up, upman.accept, sess, dst, written, size)
         return {"ok": True, "sent": name, **item}
 

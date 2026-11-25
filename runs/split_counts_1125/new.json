@@ -1,0 +1,99 @@
+{
+ "tag": "new",
+ "approved": 260,
+ "raw": 3186,
+ "eff": 1556,
+ "raw_by_class": {
+  "bicycle": 90,
+  "bus": 63,
+  "car": 1569,
+  "motorcycle": 98,
+  "person": 897,
+  "scooter": 55,
+  "truck": 223,
+  "pickup": 117,
+  "responder": 37,
+  "cone": 37
+ },
+ "eff_by_class": {
+  "bicycle": 68,
+  "bus": 48,
+  "car": 634,
+  "motorcycle": 58,
+  "person": 433,
+  "scooter": 41,
+  "truck": 122,
+  "pickup": 80,
+  "responder": 37,
+  "cone": 35
+ },
+ "counts_ms": 44.6,
+ "rarity_ms": 36.5,
+ "rarity_groups": {
+  "bicycle": 36,
+  "bus": 40,
+  "car": 181,
+  "motorcycle": 33,
+  "person": 102,
+  "scooter": 31,
+  "truck": 91,
+  "pickup": 60,
+  "responder": 19,
+  "cone": 14
+ },
+ "store_counts_total": 1556,
+ "images": {
+  "train": 182,
+  "val": 38,
+  "test": 40
+ },
+ "own_images": {
+  "train": 116,
+  "val": 38,
+  "test": 40
+ },
+ "eff_by_split": {
+  "train": {
+   "bicycle": 52,
+   "bus": 34,
+   "car": 453,
+   "motorcycle": 51,
+   "person": 269,
+   "scooter": 37,
+   "truck": 85,
+   "pickup": 54,
+   "responder": 27,
+   "cone": 31
+  },
+  "val": {
+   "bicycle": 5,
+   "bus": 8,
+   "car": 85,
+   "motorcycle": 4,
+   "person": 110,
+   "truck": 24,
+   "pickup": 15,
+   "responder": 7,
+   "cone": 1
+  },
+  "test": {
+   "bicycle": 11,
+   "bus": 6,
+   "car": 96,
+   "motorcycle": 3,
+   "person": 54,
+   "scooter": 4,
+   "truck": 13,
+   "pickup": 11,
+   "responder": 3,
+   "cone": 3
+  }
+ },
+ "missing": {
+  "val": [
+   "scooter"
+  ],
+  "test": []
+ },
+ "report_shares_worst": 0.2024
+}

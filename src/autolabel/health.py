@@ -138,7 +138,8 @@ def masked_out(snap: dict) -> list[bool]:
     """snap["boxes"] 와 같은 순서로 — 가릴 영역이 반 이상 덮어 학습 라벨에서 빠지는 박스인가(`_Gone`).
 
     화면 글자·먼 배경을 영역으로 덮으면 그 아래의 자동 라벨 박스가 DB 에 남는다 — 2026-11-15 의 DB 는 승인 박스 1,277개 가운데
-    619개가 그랬다. 그래서 수치는 기본으로 이 박스를 빼고 센다. **test 분할 이미지의 박스는 빠지지 않는다**(머리말) — 늘 False.
+    619개가 그랬다. 그래서 수치는 기본으로 이 박스를 빼고 센다. **test 분할 이미지의 박스도 같다**(2026-11-24 부터 — test 의
+    영역은 칠하지 않고 채점에서 빼는 자리라 그 박스는 test 라벨에서도 빠진다, 머리말. 그 전에는 test 는 늘 False 였다).
     report 와 heatmap 에 `gone=` 으로 넘기면 한 번 잰 것을 함께 쓴다(server 의 /api/health?heat=1).
     """
     gone = _Gone(snap)
@@ -164,6 +165,13 @@ def report(snap: dict, classes: list[str], cameras: dict, *, scope: str, imgsz: 
     for im in images:
         if im["camera"]:
             unit_cams.setdefault(unit[im["id"]], set()).add(im["camera"])
+    # 묶음의 고정 분할 — 그 안 카메라의 cameras.yaml `split:`(없으면 자유). 고정 카메라는 그 분할로만 간다(split.py 의
+    # _camera_pins). 한 묶음에 고정이 둘이면 분할이 멈추니(그쪽이 알린다) 여기서는 이름순 첫 것으로 둔다
+    unit_pin: dict[int, str] = {}
+    for u, keys in unit_cams.items():
+        pins = sorted({getattr(cameras.get(k), "split", None) or "" for k in keys} - {""})
+        if pins:
+            unit_pin[u] = pins[0]
     used = used_splits(val_ratio, test_ratio)
 
     n_cls = max([len(classes), *(c + 1 for _i, c, *_ in snap["boxes"])])
@@ -229,11 +237,14 @@ def report(snap: dict, classes: list[str], cameras: dict, *, scope: str, imgsz: 
         if st["boxes"]:
             key, n = max(st["units"].items(), key=lambda kv: (kv[1], -kv[0]))
             top = {"share": round(n / st["boxes"], 4), "cameras": sorted(unit_cams.get(key, ()))}
+        # 이 클래스가 있는 묶음 가운데 분할이 고정된 것 {분할: 묶음 수}와 고정 없는 묶음 수 — _notes 가 '고정을 빼면 모자란가' 를 본다
+        pinned = Counter(unit_pin[u] for u in st["units"] if u in unit_pin)
         class_rows.append({
             "idx": i, "name": classes[i] if i < len(classes) else f"cls_{i}",
             "boxes": st["boxes"], "images": len(st["images"]),
             "cameras": sum(1 for k in st["cams"] if k), "no_camera_boxes": st["cams"].get(None, 0),
-            "units": len(st["units"]), "top": top, "split": st["split"], "sizes": st["sizes"],
+            "units": len(st["units"]), "free_units": len(st["units"]) - sum(pinned.values()), "pinned_units": dict(pinned),
+            "top": top, "split": st["split"], "sizes": st["sizes"],
             "median_px": round(median(st["px"]), 1) if st["px"] else None, "masked_out": st["masked_out"],
         })
 
@@ -311,6 +322,20 @@ def _notes(class_rows: list[dict], split_images: dict, n_images: int, n_gone: in
         out.append({"level": "warn", "text": (
             f"카메라(묶음)가 {len(used)}곳 미만인 클래스: {_names(few, lambda r: r['units'])} — 분할이 카메라째라 "
             f"{'·'.join(used)} 에 모두 들어갈 수 없습니다.")})
+    # 묶음 수는 넉넉해도 대부분이 고정 분할 카메라면 모자랄 수 있다 (2026-11-25, Gemini 리뷰 묶음 6): 고정 카메라는 그
+    # 분할로만 가므로, 고정 묶음이 하나도 없는 분할(lack)은 고정 없는 묶음(free_units)이 하나씩 채워야 한다. 그날 DB 는
+    # scooter 라벨 41개 가운데 37개가 train 고정 카메라(AI Hub)에 있고 나머지는 한 묶음이라 val·test 둘 다에는 못 들어갔는데,
+    # 묶음 수(31)만 보는 위의 줄은 이것을 알리지 않았다. 고정이 없으면 위의 줄과 같은 조건이다
+    def lack(r: dict) -> list[str]:
+        return [sp for sp in used if not r.get("pinned_units", {}).get(sp)]
+
+    short = [r for r in class_rows if r["boxes"] and r["units"] >= len(used)
+             and r.get("free_units", r["units"]) < len(lack(r))]
+    if short:
+        out.append({"level": "warn", "text": (
+            "고정 분할 카메라(cameras.yaml 의 split)를 빼면 묶음이 모자란 클래스: "
+            f"{_names(short, lambda r: '·'.join(lack(r)) + ' 에 ' + str(r['free_units']) + '곳')} — 고정 카메라는 그 분할로만 "
+            "가서, 괄호 안의 분할에 모두 들어갈 수 없습니다.")})
     if assigned:
         for sp, ratio in (("val", val_ratio), ("test", test_ratio)):
             if ratio <= 0:

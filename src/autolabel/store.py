@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from .masks import MAX_MASKS, as_mask, from_row, is_poly, row_values, same_rects, to_wire
+from .masks import MAX_MASKS, as_mask, drops, from_row, is_poly, row_values, same_rects, to_wire
 from .masks import clean as clean_masks
 from .masks import merge as merge_masks
 from .masks import subtract as subtract_masks
@@ -243,6 +243,23 @@ def _read_masks(con: sqlite3.Connection, image_id: int) -> list:
     """이 이미지의 가릴 영역 — 넣은 순서대로(masks.py 의 꼴: 사각형 튜플·다각형 점 튜플)."""
     return [from_row(*r) for r in con.execute(
         f"SELECT {_MASK_COLS} FROM masks WHERE image_id=? ORDER BY id", (image_id,))]
+
+
+def _approved_masks(con: sqlite3.Connection) -> dict[int, list]:
+    """승인 이미지의 가릴 영역 {이미지 id: [영역, …]} — 박스를 읽은 그 연결(같은 읽기 시점)로 읽는다."""
+    out: dict[int, list] = {}
+    for r in con.execute(
+            "SELECT m.image_id, m.x1, m.y1, m.x2, m.y2, m.poly FROM masks m JOIN images i ON i.id = m.image_id"
+            " WHERE i.status='approved' ORDER BY m.image_id, m.id"):
+        out.setdefault(int(r[0]), []).append(from_row(*tuple(r)[1:]))
+    return out
+
+
+def _masked_out(row: sqlite3.Row, rects: dict[int, list], *, key: str = "image_id") -> bool:
+    """이 박스 줄(cls·cx·cy·w·h 와 이미지 id 열 `key`)이 라벨 파일에서 빠지는가 — 그 이미지의 영역이 반 이상 덮는다.
+    판정은 학습 세트·내보내기·데이터 점검과 같은 `masks.drops` 하나다(따로 적지 말 것 — masks.py 머리말)."""
+    mine = rects.get(int(row[key]))
+    return bool(mine) and drops(Box(int(row["cls"]), row["cx"], row["cy"], row["w"], row["h"]), mine)
 
 
 # 변경 이력의 목록 (2026-11-11 — 위 hist_lists). 새 줄은 '#id', 그 전 줄은 JSON 글자 그대로다.
@@ -740,15 +757,23 @@ class Store:
         카메라 한 대의 같은 두 대라, 묶음으로는 233개로 가장 적다(2026-09-23).
         희소도 = (가장 드문 클래스의 묶음 수) / (이 클래스의 묶음 수). 가장 드문 것이 1 이다.
         아직 승인 박스가 없는 클래스는 1 로 둔다. 묶음이 없는 이미지는 한 장을 한 묶음으로 센다.
+        **가릴 영역이 반 이상 덮은 박스는 세지 않는다 (2026-11-25)** — 라벨 파일에 없는 박스다(`approved_class_counts`
+        와 같은 판정 `masks.drops`). 넣고 세면 대부분이 영역 아래에 있는 클래스가 실제보다 흔해 보인다.
         """
         with self.connect() as con:
+            con.execute("BEGIN")                # 박스와 영역을 같은 시점으로 읽는다
             rows = con.execute(
-                "SELECT b.cls AS cls, COUNT(DISTINCT COALESCE(i.grp, 'id' || i.id)) AS g"
-                " FROM boxes b JOIN images i ON i.id = b.image_id"
-                " WHERE i.status='approved' GROUP BY b.cls"
+                "SELECT b.image_id AS image_id, b.cls AS cls, b.cx AS cx, b.cy AS cy, b.w AS w, b.h AS h,"
+                " COALESCE(i.grp, 'id' || i.id) AS g"
+                " FROM boxes b JOIN images i ON i.id = b.image_id WHERE i.status='approved'"
             ).fetchall()
+            rects = _approved_masks(con)
             n_classes = con.execute("SELECT COUNT(*) FROM classes").fetchone()[0]
-        groups = {int(r["cls"]): int(r["g"]) for r in rows}
+        seen: dict[int, set[str]] = {}
+        for r in rows:
+            if not _masked_out(r, rects):
+                seen.setdefault(int(r["cls"]), set()).add(r["g"])
+        groups = {c: len(g) for c, g in seen.items()}
         least = min(groups.values(), default=1)
         return {c: {"groups": groups.get(c, 0),
                     "weight": (least / groups[c]) if groups.get(c) else 1.0}
@@ -1875,22 +1900,30 @@ class Store:
                     )
         return len(items)
 
-    def approved_class_counts(self) -> list[dict]:
+    def approved_class_counts(self, *, drop_masked: bool = True) -> list[dict]:
         """분할 계산용: 승인 이미지별
         {id, path, width, height, split, grp, dhash, camera, counts={클래스: 박스 수}}.
 
         박스가 하나도 없는 배경 이미지도 빠뜨리지 않는다 (LEFT JOIN).
         width·height 는 이름이 숫자뿐인 파일을 묶을 때 쓴다 (grouping.name_series).
         camera 는 같은 카메라를 한 묶음으로 합칠 때 쓴다 (grouping.group_images, 2026-11-03).
+
+        **counts 는 라벨 파일에 실제로 들어가는 박스만 센다 (2026-11-25, Gemini 리뷰 묶음 6).** 가릴 영역이 반 이상 덮은
+        박스(`masks.drops` — 학습 세트·내보내기·데이터 점검과 같은 판정)는 DB 에 남아 있어도 뺀다. 전에는 DB 의 박스를
+        그대로 세어 계층화가 라벨에 없는 박스로 클래스 비중을 맞췄다 — 그날 DB 는 승인 박스 3,186개 가운데 1,630개가 그런
+        박스였고, 사본의 첫 분할에서 val 에 bicycle·scooter 라벨이 하나도 없었다(docs/experiments.md). 영역만 있고 남는
+        박스가 없는 이미지는 배경 이미지처럼 counts 가 빈다. drop_masked=False 면 DB 의 박스 전부.
         """
         with self.connect() as con:
+            con.execute("BEGIN")                # 박스와 영역을 같은 시점으로 읽는다
             rows = con.execute(
                 "SELECT i.id AS id, i.path AS path, i.width AS width, i.height AS height,"
-                " i.split AS split, i.grp AS grp, i.camera AS camera,"
-                " i.dhash AS dhash, b.cls AS cls, COUNT(b.id) AS n"
+                " i.split AS split, i.grp AS grp, i.camera AS camera, i.dhash AS dhash,"
+                " b.cls AS cls, b.cx AS cx, b.cy AS cy, b.w AS w, b.h AS h"
                 " FROM images i LEFT JOIN boxes b ON b.image_id = i.id"
-                " WHERE i.status='approved' GROUP BY i.id, b.cls ORDER BY i.id"
+                " WHERE i.status='approved' ORDER BY i.id, b.id"
             ).fetchall()
+            rects = _approved_masks(con) if drop_masked else {}
         out: dict[int, dict] = {}
         for r in rows:
             it = out.setdefault(
@@ -1899,8 +1932,8 @@ class Store:
                  "height": r["height"], "split": r["split"],
                  "grp": r["grp"], "dhash": r["dhash"], "camera": r["camera"], "counts": {}},
             )
-            if r["cls"] is not None:
-                it["counts"][int(r["cls"])] = int(r["n"])
+            if r["cls"] is not None and not _masked_out(r, rects, key="id"):
+                it["counts"][int(r["cls"])] = it["counts"].get(int(r["cls"]), 0) + 1
         return list(out.values())
 
     def _set_column(self, column: str, pairs: list[tuple[int, str]]) -> None:

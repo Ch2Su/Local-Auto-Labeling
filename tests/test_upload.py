@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import sqlite3
 from pathlib import Path
@@ -24,6 +25,7 @@ from PIL import Image
 from autolabel import upload
 from autolabel.provenance import load_cameras
 from autolabel.upload import UploadError, UploadManager, clean_name
+from helpers import StreamBody, post_endpoint
 
 ORIGIN = "http://127.0.0.1:7860"
 CAMERAS = """\
@@ -417,3 +419,111 @@ def test_the_db_is_untouched_by_staging(cfg, store, cams):
     assert con.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 0
     assert con.execute("SELECT COUNT(*) FROM work_batches").fetchone()[0] == 0
     con.close()
+
+
+# ================================================================= 받는 중인 파일과 넣기 (2026-11-25, Gemini 리뷰 묶음 6)
+
+def test_a_bundle_is_not_committed_while_a_file_is_still_arriving(cfg, cams):
+    """파일 하나를 아직 쓰는 중에 '넣기' 가 왔다 — 넣지 않는다(409). 고치기 전에는 다 받은 것만 옮기고 세션 폴더를 지워, 쓰던
+    파일은 묶음에서 빠지고 그 요청은 409 로 끝났다."""
+    asked: list = []
+    man = manager(cfg, asked)
+    sid = man.begin("cam-01")["sid"]
+    stage(man, sid, "a.jpg", jpeg(10))
+    s, path, _ = man.reserve(sid, "b.jpg", len(jpeg(20)))      # 자리를 잡고 쓰는 중
+    assert man.get(sid).summary()["receiving"] == 1
+    with pytest.raises(UploadError) as err:
+        man.commit(sid)
+    assert err.value.status == 409 and "받는 중인 파일이 1개" in str(err.value)
+    assert man.get(sid).state == "open" and asked == []
+    assert not (cfg.unlabeled / "cam-01").exists()             # 하나도 옮기지 않았다
+
+    path.write_bytes(jpeg(20))
+    man.accept(s, path, len(jpeg(20)), len(jpeg(20)))          # 다 받았다
+    assert man.get(sid).summary()["receiving"] == 0
+    out = man.commit(sid)
+    assert out["moved"] == 2 and asked[0][0] == ["a.jpg", "b.jpg"]
+
+
+def test_a_refused_upload_does_not_keep_the_bundle_from_being_committed(cfg, cams):
+    """받다 만 파일(끊김·형식 오류)은 자리를 돌려준다 — '받는 중' 으로 남아 넣기를 막지 않는다."""
+    man = manager(cfg)
+    sid = man.begin("cam-01")["sid"]
+    stage(man, sid, "a.jpg", jpeg(10))
+    s, path, _ = man.reserve(sid, "cut.jpg", 100)
+    man.reject(s, path)                                        # 올리기가 끊겼다
+    s, path, _ = man.reserve(sid, "text.jpg", 5)
+    path.write_bytes(b"hello")
+    with pytest.raises(UploadError):
+        man.accept(s, path, 5, 5)                              # 이미지가 아니다
+    assert man.get(sid).summary()["receiving"] == 0
+    assert man.commit(sid)["moved"] == 1
+
+
+def test_a_file_that_finishes_just_before_the_commit_starts_is_in_it(cfg, cams):
+    """넣기가 확인(정리 중인가·카메라)을 하는 사이에 다 받은 파일 — 받았다는 응답이 나갔으니 묶음에 든다. 고치기 전에는 넣을
+    목록을 확인 **앞**에서 떠 두어 이 파일이 목록에 없었고, 세션 폴더와 함께 지워졌다."""
+    asked: list = []
+    armed: list = []                                           # 묶음을 시작할 때(begin)도 blocker 를 묻는다 — 넣기 때만 끼운다
+
+    def blocker():
+        if armed:                                              # 넣기의 첫 확인과 상태 바꾸기 사이
+            stage(man, armed.pop(), "b.jpg", jpeg(20))
+        return None
+
+    man = manager(cfg, asked, blocker=blocker)
+    sid = man.begin("cam-01")["sid"]
+    stage(man, sid, "a.jpg", jpeg(10))
+    armed.append(sid)
+    out = man.commit(sid)
+    assert out["moved"] == 2 and asked[0][0] == ["a.jpg", "b.jpg"]
+    dest = cfg.unlabeled / "cam-01" / f"up{sid[:15]}"
+    assert sorted(p.name for p in dest.iterdir()) == ["a.jpg", "b.jpg"]
+
+
+def test_a_file_that_starts_arriving_just_before_the_commit_starts_stops_it(cfg, cams):
+    armed: list = []
+
+    def blocker():
+        if armed:
+            man.reserve(armed.pop(), "b.jpg", 100)             # 확인하는 사이 새 파일을 받기 시작했다
+        return None
+
+    man = manager(cfg, blocker=blocker)
+    sid = man.begin("cam-01")["sid"]
+    stage(man, sid, "a.jpg", jpeg(10))
+    armed.append(sid)
+    with pytest.raises(UploadError) as err:
+        man.commit(sid)
+    assert err.value.status == 409 and "받는 중" in str(err.value)
+    assert man.get(sid).state == "open" and not (cfg.unlabeled / "cam-01").exists()
+
+
+def test_a_file_turned_away_by_a_busy_bundle_gives_its_name_back(cfg, cams):
+    """넣는 중인 묶음에 늦게 닿은 파일 — 지우고, 잡아 둔 이름도 돌려준다. 고치기 전에는 파일만 지워서, 넣기가 실패해 묶음이
+    다시 열리면 그 이름이 예약된 채였다(같은 이름을 다시 올리면 `late_2.jpg` 가 됐다)."""
+    man = manager(cfg)
+    sid = man.begin("cam-01")["sid"]
+    s, path, final = man.reserve(sid, "late.jpg", len(jpeg(10)))
+    path.write_bytes(jpeg(10))
+    s.state = "committing"                                     # 그사이 넣기가 시작됐다
+    with pytest.raises(UploadError) as err:
+        man.accept(s, path, len(jpeg(10)), len(jpeg(10)))
+    assert err.value.status == 409 and not path.exists()
+    assert not s.reserved and not s.inflight
+    s.state = "open"                                           # 넣기가 실패해 묶음이 다시 열렸다
+    assert man.reserve(sid, "late.jpg", 10)[2] == final == "late.jpg"
+
+
+@pytest.mark.parametrize("fail", [RuntimeError("뜻밖의 오류"), asyncio.CancelledError()])
+def test_an_upload_that_dies_midway_gives_its_place_back(client, fail):
+    """받는 도중 요청이 취소되거나(서버를 끄는 중) 뜻밖의 오류가 났다 — 자리를 돌려준다. 안 돌려주면 그 이름이 '받는 중' 으로
+    남아 이 묶음을 넣을 수 없다."""
+    sid = begin(client)
+    assert send(client, sid, "a.jpg", jpeg(10)).status_code == 200
+    fn = post_endpoint(client.app, "/api/upload/{sid}/file")
+    with pytest.raises(type(fail)):
+        asyncio.run(fn(StreamBody([jpeg(20)[:100]], fail), sid=sid, name="b.jpg", size=len(jpeg(20))))
+    bundle = client.get("/api/upload").json()["sessions"][0]
+    assert (bundle["n"], bundle["receiving"]) == (1, 0)
+    assert client.post(f"/api/upload/{sid}/commit").json()["moved"] == 1

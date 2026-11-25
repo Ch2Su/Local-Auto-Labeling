@@ -95,6 +95,42 @@ def test_background_images_are_part_of_the_split_input(store, add_image):
     assert got == {empty: {}, full: {CAR: 2, 0: 1}}
 
 
+def test_the_split_input_counts_only_boxes_that_reach_the_label_file(store, add_image):
+    """가릴 영역이 반 이상 덮은 박스는 라벨 파일에 없다 — 분할이 세는 수에도 없어야 한다 (2026-11-25, Gemini 리뷰 묶음 6).
+    고치기 전에는 DB 의 박스를 그대로 세었다(실제 DB: 승인 박스 3,186개 가운데 1,630개가 그런 박스였다)."""
+    # 박스는 x 0.15~0.35 — 영역이 왼쪽 0.25 까지면 꼭 반(빠진다), 0.23 까지면 40%(남는다)
+    half = add_image("half.jpg", boxes=[box(cls=CAR, cx=0.25, w=0.2, h=0.2), box(cls=0, cx=0.75, w=0.2, h=0.2)])
+    less = add_image("less.jpg", boxes=[box(cls=CAR, cx=0.25, w=0.2, h=0.2)])
+    gone = add_image("gone.jpg", boxes=[box(cls=PICKUP), box(cls=PICKUP, cx=0.25)])
+    poly = add_image("poly.jpg", boxes=[box(cls=CONE, cx=0.25, cy=0.25, w=0.1, h=0.1), box(cls=CONE, cx=0.75, cy=0.75, w=0.1, h=0.1)])
+    waiting = add_image("waiting.jpg", status="pending", boxes=[box(cls=CAR)])
+    store.set_masks(half, [(0.0, 0.0, 0.25, 1.0)])
+    store.set_masks(less, [(0.0, 0.0, 0.23, 1.0)])
+    store.set_masks(gone, [(0.0, 0.0, 1.0, 1.0)])
+    store.set_masks(poly, [((0.0, 0.0), (0.5, 0.0), (0.0, 0.5))])          # 왼쪽 위 세모 — 첫 박스를 통째로 덮는다
+    store.set_masks(waiting, [(0.0, 0.0, 1.0, 1.0)])
+    got = {it["id"]: it["counts"] for it in store.approved_class_counts()}
+    assert got == {half: {0: 1}, less: {CAR: 1}, gone: {}, poly: {CONE: 1}}   # 다 가려진 장도 배경 이미지처럼 남는다
+    raw = {it["id"]: it["counts"] for it in store.approved_class_counts(drop_masked=False)}
+    assert raw == {half: {CAR: 1, 0: 1}, less: {CAR: 1}, gone: {PICKUP: 2}, poly: {CONE: 2}}
+
+
+def test_class_rarity_does_not_count_scenes_whose_boxes_are_all_covered(store, add_image):
+    """'드문 클래스 먼저' 의 희소도 — 라벨에 없는 박스로 그 클래스가 흔해 보이면 안 된다."""
+    for k in range(4):
+        add_image(f"car{k}.jpg", boxes=[box(cls=CAR)])
+    seen = add_image("pickup.jpg", boxes=[box(cls=PICKUP)])
+    hidden = [add_image(f"hidden{k}.jpg", boxes=[box(cls=PICKUP)]) for k in range(3)]
+    before = store.class_rarity()
+    assert (before[PICKUP]["groups"], before[CAR]["groups"]) == (4, 4)
+    for i in hidden:
+        store.set_masks(i, [(0.0, 0.0, 1.0, 1.0)])
+    after = store.class_rarity()
+    assert (after[PICKUP]["groups"], after[CAR]["groups"]) == (1, 4)
+    assert after[PICKUP]["weight"] == 1.0 and after[CAR]["weight"] == 0.25
+    assert store.get_boxes(seen) and all(store.get_boxes(i) for i in hidden)   # DB 의 박스는 그대로다
+
+
 # ----------------------------------------------------------------- 박스 저장과 변경 이력
 
 def test_first_save_on_an_empty_image_leaves_no_history(store, add_image):

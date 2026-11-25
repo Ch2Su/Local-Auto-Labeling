@@ -119,8 +119,10 @@ def dhash(path: Path, size: int = 8) -> str | None:
     """
     from PIL import Image, ImageOps
 
+    from .yolo_io import plain_image_open       # Ultralytics 가 갈아 끼운 Image.open 을 거치지 않는다(그 머리말)
+
     try:
-        with Image.open(path) as im:
+        with plain_image_open()(path) as im:
             orient = im.getexif().get(0x0112, 1)
             im.draft("L", (size * 8, size * 8))
             src = ImageOps.exif_transpose(im) if orient in (2, 3, 4, 5, 6, 7, 8) else im

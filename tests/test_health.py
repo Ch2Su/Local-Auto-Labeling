@@ -170,6 +170,42 @@ def test_the_unit_warning_counts_only_the_splits_in_use(store, data, cams):
     assert r["min_units"] == 1 and not any("곳 미만인 클래스" in n["text"] for n in r["notes"])
 
 
+def test_units_pinned_to_one_split_do_not_hide_a_class_that_cannot_reach_the_others(cfg, store, add_image):
+    """묶음 수는 넉넉한데 대부분이 고정 분할 카메라인 클래스 (2026-11-25, Gemini 리뷰 묶음 6).
+
+    고정 카메라는 그 분할로만 간다 — train 고정 카메라 넷과 고정 없는 카메라 하나에 있는 클래스는 묶음이 다섯이어도 val·test
+    둘 다에는 못 들어간다. 고치기 전에는 묶음 수(5 ≥ 3)만 봐서 아무 말이 없었다(그날 DB: scooter 라벨 41개 가운데 37개가
+    train 고정 AI Hub 카메라, 나머지는 한 묶음)."""
+    cfg.cameras.write_text("cameras:\n" + "".join(
+        f"  {key}:\n    kind: cctv\n    place: 시험 장소 {key}\n    split: {pin}\n"
+        for key, pin in [*((f"ah-000{k}", "train") for k in range(1, 5)), ("cam-01", ""), ("cam-02", ""), ("cam-03", "test")]),
+        encoding="utf-8")
+    cams = load_cameras(cfg.cameras)
+    for k in range(1, 5):
+        add_image(f"h{k}.jpg", camera=f"ah-000{k}", boxes=[box(PERSON), box(CAR)])
+    add_image("a.jpg", camera="cam-01", boxes=[box(PERSON), box(CAR), box(TRUCK)])
+    add_image("b.jpg", camera="cam-02", boxes=[box(CAR), box(TRUCK)])
+    add_image("c.jpg", camera="cam-03", boxes=[box(TRUCK), box(CONE)])
+
+    r = rep(store, cams)
+    rows = by_name(r["classes"])
+    assert (rows["person"]["units"], rows["person"]["free_units"], rows["person"]["pinned_units"]) == (5, 1, {"train": 4})
+    assert (rows["car"]["units"], rows["car"]["free_units"]) == (6, 2)
+    assert (rows["truck"]["units"], rows["truck"]["free_units"], rows["truck"]["pinned_units"]) == (3, 2, {"test": 1})
+    short = next(n for n in r["notes"] if n["text"].startswith("고정 분할 카메라"))
+    assert short["level"] == "warn"
+    assert "person(val·test 에 1곳)" in short["text"]         # 고정 없는 묶음 하나로 val·test 둘을 채울 수 없다
+    assert "car" not in short["text"]                          # 고정 없는 묶음 둘 — val·test 에 하나씩 갈 수 있다
+    assert "truck" not in short["text"]                        # test 는 고정 카메라가, train·val 은 고정 없는 둘이
+    few = next(n["text"] for n in r["notes"] if "3곳 미만인 클래스" in n["text"])
+    assert "cone(1)" in few and "person" not in few            # 묶음 수가 모자란 클래스는 전처럼 앞의 줄에
+
+    # 고정이 없으면(등록 파일을 못 읽었다) 전과 같다 — 묶음 수만 본다
+    assert not any(n["text"].startswith("고정 분할 카메라") for n in rep(store)["notes"])
+    # test 를 쓰지 않는 설정이면 val 하나만 채우면 된다 — 고정 없는 묶음 하나로 충분하다
+    assert not any(n["text"].startswith("고정 분할 카메라") for n in rep(store, cams, test=0.0)["notes"])
+
+
 def test_legacy_images_count_their_scene_group_as_one_unit(store, add_image):
     """출처 없는 이미지는 장면 묶음(grp)이 분할 단위다 — 같은 묶음 두 장은 한 곳, 묶음이 없으면 장마다 한 곳."""
     a = add_image("a.jpg", boxes=[box(CAR)])
