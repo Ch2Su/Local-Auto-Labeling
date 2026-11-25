@@ -1,0 +1,21 @@
+{
+ "variant": "thybrid",
+ "tag": "s64",
+ "weights": "sam2.1_t.pt",
+ "imgsz": 1024,
+ "half": false,
+ "crop": 512,
+ "small": 64.0,
+ "images": 191,
+ "boxes": 943,
+ "mask_dropped": 1447,
+ "load_s": 1.04,
+ "encode_ms_mean": 67.1,
+ "ask_ms_mean": 56.2,
+ "peak_alloc_gib": 0.53,
+ "peak_reserved_gib": 0.68,
+ "no_mask": 4,
+ "fallbacks": 1040,
+ "wall_s": 176.5,
+ "gpu": "NVIDIA GeForce RTX 5060 Ti"
+}

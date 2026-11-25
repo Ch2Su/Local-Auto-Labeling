@@ -15,6 +15,9 @@ AI Hub `ah-*`·출처 aihub_pm 은 뺀다. 가릴 영역이 반 넘게 덮은 �
   sam31  sam3.1_multiplex.pt (--sam3 경로), imgsz 1008, 패키지는 --deps 폴더에서 (YOLO_AUTOINSTALL=false)
   tcrop  t 와 같은 가중치, 프롬프트 주변 정사각형만 잘라 넣는다 — 점: 한 변 --crop(512), 박스: max(--crop, 박스 긴 변 × 2).
          마스크가 잘린 칸 가장자리(2px)에 닿으면 통째 그림으로 다시 묻는다(그 시간까지 센다).
+  thybrid 먼저 t 로 통째 그림에 묻고, 나온 박스의 짧은 변이 --small(원본 px, 기본 64) 미만일 때만 tcrop 처럼 잘라 다시
+         묻는다(정답 크기가 아니라 t 가 낸 박스로 고른다 — 실제 화면에서도 할 수 있는 판단). 잘라 낸 결과가 칸 가장자리에
+         닿으면 통째 결과를 그대로 쓴다. 시간은 통째 묻기 + (잘랐으면) 잘라 인코딩·묻기.
 
 한 갈래 = 한 프로세스(VRAM 최대치를 따로 재려고). 박스별 결과는 `out/<갈래>.jsonl.gz`(git 밖 — runs/ 규칙에 .gz 가 없다),
 요약은 summarize.py. 그림 파일 이름·카메라 키는 남기지 않는다(이미지 id·클래스·크기·IoU 만).
@@ -40,8 +43,9 @@ sys.path.insert(0, str(ROOT / "src"))
 from autolabel.masks import drops, from_row  # noqa: E402
 
 OUT = Path(__file__).resolve().parent / "out"
-WEIGHTS = {"t": ROOT / "weights" / "sam2.1_t.pt", "s": ROOT / "weights" / "sam2.1_s.pt", "tcrop": ROOT / "weights" / "sam2.1_t.pt"}
-IMGSZ = {"t": 1024, "s": 1024, "tcrop": 1024, "sam31": 1008}
+WEIGHTS = {"t": ROOT / "weights" / "sam2.1_t.pt", "s": ROOT / "weights" / "sam2.1_s.pt", "tcrop": ROOT / "weights" / "sam2.1_t.pt",
+           "thybrid": ROOT / "weights" / "sam2.1_t.pt"}
+IMGSZ = {"t": 1024, "s": 1024, "tcrop": 1024, "thybrid": 1024, "sam31": 1008}
 PROMPTS = ("center", "inner", "rough")
 
 
@@ -159,7 +163,8 @@ def crop_window(cx, cy, side, W, H):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--variant", required=True, choices=["t", "s", "sam31", "tcrop"])
+    ap.add_argument("--variant", required=True, choices=["t", "s", "sam31", "tcrop", "thybrid"])
+    ap.add_argument("--small", type=float, default=64)
     ap.add_argument("--db", default=str(ROOT / "data" / "visible" / "labeling.db"))
     ap.add_argument("--sam3", default=r"C:\datasets\sam3_test\weights\sam3.1_multiplex.pt")
     ap.add_argument("--deps", default=r"C:\datasets\sam3_test\pydeps")
@@ -187,66 +192,93 @@ def main() -> int:
     path = OUT / f"{name}.jsonl.gz"
     enc_s, ask_s, fallbacks, nfail = [], [], 0, 0
     t_all = time.perf_counter()
+    def crop_ask(whole, W, H, point, box):
+        """프롬프트 주변 정사각형만 넣고 묻는다 → (원본 좌표 박스 | None, 걸린 초, 가장자리에 닿음, 칸이 그림 전체)."""
+        if box is not None:
+            side = max(args.crop, 2 * max(box[2] - box[0], box[3] - box[1]))
+            cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        else:
+            side, (cx, cy) = args.crop, point
+        x0, y0, side = crop_window(cx, cy, side, W, H)
+        dt = run.encode(whole[y0:y0 + side, x0:x0 + side])
+        lp = None if point is None else (point[0] - x0, point[1] - y0)
+        lb = None if box is None else (box[0] - x0, box[1] - y0, box[2] - x0, box[3] - y0)
+        out, dt2 = run.ask(point=lp, box=lb)
+        full = side >= W and side >= H
+        if out is None:
+            return None, dt + dt2, False, full
+        touch = out[0] <= 2 or out[1] <= 2 or out[2] >= side - 2 or out[3] >= side - 2
+        return (out[0] + x0, out[1] + y0, out[2] + x0, out[3] + y0), dt + dt2, touch, full
+
     with gzip.open(path, "wt", encoding="utf-8") as f:
         for n, d in enumerate(data, 1):
             W, H = d["W"], d["H"]
             whole = None
-            if args.variant != "tcrop":
-                enc_s.append(run.encode(d["path"]))
-            else:
+            if args.variant in ("tcrop", "thybrid"):
                 whole = cv2.imread(d["path"])
                 if whole is None or whole.shape[1] != W or whole.shape[0] != H:
                     raise SystemExit(f"그림 크기가 DB 와 다르다: id {d['id']}")
+            if args.variant != "tcrop":
+                enc_s.append(run.encode(d["path"]))
+            items = []                                   # (rec, kind, point, box)
             for b in d["boxes"]:
                 p = prompts_for(d["id"], b["k"], b["gt"], W, H)
                 bw, bh = b["gt"][2] - b["gt"][0], b["gt"][3] - b["gt"][1]
                 rec = {"id": d["id"], "k": b["k"], "cls": b["cls"], "origin": b["origin"], "W": W, "H": H,
-                       "bw": round(bw, 1), "bh": round(bh, 1)}
+                       "bw": round(bw, 1), "bh": round(bh, 1), "rough_in": round(iou(p["rough"], b["gt"]), 4), "_gt": b["gt"]}
                 for kind in PROMPTS:
-                    point = p[kind] if kind != "rough" else None
-                    box = p[kind] if kind == "rough" else None
-                    if args.variant != "tcrop":
-                        out, dt = run.ask(point=point, box=box)
-                        fb = False
-                    else:
-                        if box is not None:
-                            side = max(args.crop, 2 * max(box[2] - box[0], box[3] - box[1]))
-                            cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
-                        else:
-                            side, (cx, cy) = args.crop, point
-                        x0, y0, side = crop_window(cx, cy, side, W, H)
-                        dt = run.encode(whole[y0:y0 + side, x0:x0 + side])
-                        lp = None if point is None else (point[0] - x0, point[1] - y0)
-                        lb = None if box is None else (box[0] - x0, box[1] - y0, box[2] - x0, box[3] - y0)
-                        out, dt2 = run.ask(point=lp, box=lb)
-                        dt += dt2
-                        fb = False
-                        full = side >= W and side >= H
-                        if out is not None:
-                            touch = out[0] <= 2 or out[1] <= 2 or out[2] >= side - 2 or out[3] >= side - 2
-                            out = (out[0] + x0, out[1] + y0, out[2] + x0, out[3] + y0)
-                            if touch and not full:
-                                fb = True
-                                fallbacks += 1
-                                dt += run.encode(whole)
-                                out, dt3 = run.ask(point=point, box=box)
-                                dt += dt3
-                    ask_s.append(dt)
-                    if out is None:
-                        nfail += 1
-                    rec[kind] = None if out is None else round(iou(out, b["gt"]), 4)
-                    rec[kind + "_ms"] = round(dt * 1000, 1)
-                    if fb:
-                        rec[kind + "_fb"] = 1
-                rr = p["rough"]
-                rec["rough_in"] = round(iou(rr, b["gt"]), 4)
-                f.write(json.dumps(rec) + "\n")
+                    items.append((rec, kind, p[kind] if kind != "rough" else None, p[kind] if kind == "rough" else None))
+            res = {}                                     # (id(rec), kind) → [out, dt, flag]
+            if args.variant in ("t", "s", "sam31", "thybrid"):
+                for rec, kind, point, box in items:     # 통째 그림 한 번 인코딩한 채로 전부
+                    out, dt = run.ask(point=point, box=box)
+                    res[(id(rec), kind)] = [out, dt, None]
+            if args.variant == "thybrid":                # 작게 나온 것만 잘라 다시
+                for rec, kind, point, box in items:
+                    r = res[(id(rec), kind)]
+                    out = r[0]
+                    if out is not None and min(out[2] - out[0], out[3] - out[1]) >= args.small:
+                        continue
+                    c_out, c_dt, touch, _ = crop_ask(whole, W, H, point, box)
+                    r[1] += c_dt
+                    if c_out is not None and not touch:
+                        r[0], r[2] = c_out, "crop"
+                        fallbacks += 1               # thybrid 에서는 '잘라 쓴 수'
+            if args.variant == "tcrop":
+                for rec, kind, point, box in items:
+                    out, dt, touch, full = crop_ask(whole, W, H, point, box)
+                    flag = None
+                    if out is not None and touch and not full:
+                        flag = "fb"
+                        fallbacks += 1
+                        dt += run.encode(whole)
+                        out, dt3 = run.ask(point=point, box=box)
+                        dt += dt3
+                    res[(id(rec), kind)] = [out, dt, flag]
+            for rec, kind, point, box in items:
+                out, dt, flag = res[(id(rec), kind)]
+                ask_s.append(dt)
+                if out is None:
+                    nfail += 1
+                rec[kind] = None if out is None else round(iou(out, rec["_gt"]), 4)
+                rec[kind + "_ms"] = round(dt * 1000, 1)
+                if out is not None:
+                    rec[kind + "_short"] = round(min(out[2] - out[0], out[3] - out[1]), 1)
+                if flag:
+                    rec[kind + "_" + flag] = 1
+            seen = set()
+            for rec, *_ in items:
+                if id(rec) not in seen:
+                    seen.add(id(rec))
+                    rec.pop("_gt")
+                    f.write(json.dumps(rec) + "\n")
             if n % 20 == 0 or n == len(data):
                 print(f"  {n}/{len(data)}장 · {time.perf_counter() - t_all:.0f}초", flush=True)
 
     torch = run.torch
     meta = {"variant": args.variant, "tag": args.tag, "weights": weights.name, "imgsz": IMGSZ[args.variant],
-            "half": args.half, "crop": args.crop if args.variant == "tcrop" else None, "images": len(data), "boxes": nbox,
+            "half": args.half, "crop": args.crop if args.variant in ("tcrop", "thybrid") else None,
+            "small": args.small if args.variant == "thybrid" else None, "images": len(data), "boxes": nbox,
             "mask_dropped": dropped, "load_s": round(run.load_s, 2),
             "encode_ms_mean": round(1000 * sum(enc_s) / len(enc_s), 1) if enc_s else None,
             "ask_ms_mean": round(1000 * sum(ask_s) / len(ask_s), 1),
