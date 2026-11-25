@@ -194,19 +194,32 @@ def evaluate() -> int:
     return 0
 
 
-def label(w: str) -> str:
-    p = Path(w)
-    if p.name == "last.pt":
-        return p.parent.parent.name.split("_f")[0]
-    return "start" if "lal_review_old" in w else "operating"
+def sha12(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()[:12]
+
+
+def labels_by_sha() -> dict:
+    """eval_test.py 는 가중치 파일 이름(last.pt)만 적으므로 sha256 앞 12자로 갈래를 가른다."""
+    m = {sha12(START): "start", sha12(OPERATING): "operating"}
+    for a in FREEZE:
+        for k in range(K):
+            p = WORK / "runs" / f"{a}_f{k}" / "weights" / "last.pt"
+            if p.exists():
+                m[sha12(p)] = a
+    return m
 
 
 def summary() -> int:
     old8 = ["car", "truck", "bus", "pickup", "person", "bicycle", "motorcycle", "scooter"]
     rows = [json.loads(x) for x in (HERE / "eval.jsonl").read_text(encoding="utf-8").split("\n") if x.strip()]
+    lab_of = labels_by_sha()
     by = {}
     for r in rows:
-        by.setdefault(label(r["weights"]), {})[r["set"]] = r
+        by.setdefault(lab_of[r["sha256"]], {})[r["set"]] = r
     print(f"{'weights':<10} {'8cls mAP50-95 per fold':<26} {'mean':>6} | {'hit/missed/false (8cls, pooled)':<30} | responder hit/n · cone hit/n")
     for lab in ("F", "FZ11", "FZ23", "start", "operating"):
         if lab not in by:
