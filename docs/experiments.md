@@ -1349,7 +1349,8 @@ inner +0.020 [+0.007, +0.035] · rough +0.018 [+0.011, +0.027]**(IoU 0.02 넘게
   `sam.crop_below`(64) 미만이거나 마스크가 없으면 프롬프트 주변 칸(`sam.crop_size` 512, 박스면 긴 변 × 2 와 큰 쪽)으로 다시 묻는다
   (`_ask_crop`, 칸 가장자리에 닿으면 통째 결과). 잘라 넣은 뒤에는 다음 클릭이 통째 그림을 다시 인코딩한다. 확인: ① 가짜 predictor
   테스트 9개(`tests/test_segmenter.py` — 규칙 여섯을 하나씩 빼면 실패) ② 진짜 모델로 `segment` 를 같은 191장·2,829 프롬프트에
-  불러 측정(thybrid 64)과 IoU 가 같은지(`runs/sam_click_bench/check_segmenter.py` — 결과는 아래 덧붙임) ③ DB 사본 서버의 검수 화면 함수
-  (`samBox`)로 작은 사람 셋(10×27·55×105·36×81px)이 0.939·0.962·0.905(t 만이면 0.10·0.60·0.46), 큰 차 셋은 다시 묻지 않고 측정값 그대로.
+  불러 측정(thybrid 64)과 IoU 가 같은지(`runs/sam_click_bench/check_segmenter.py` — 2,829개 모두 같았다) ③ DB 사본 서버의 검수 화면 함수
+  (`samBox`)로 작은 사람 셋(10×27·55×105·36×81px)이 0.939·0.962·0.905(t 만이면 0.10·0.60·0.46), 큰 차 셋은 다시 묻지 않고 측정값 그대로. 화면에서 잰 클릭 하나(요청부터 박스까지, 이 PC)는 잘라 다시 묻는 작은
+  물체가 약 200ms(앞 클릭이 잘라 넣었으면 통째 다시 인코딩까지), 큰 물체가 약 47ms 다.
 - 스크립트·요약: `runs/sam_click_bench/`(`bench.py`·`run_all.sh`·`summarize.py`, 요약 `out/summary.json`·갈래별 `out/*.meta.json`).
   박스별 결과 `out/*.jsonl.gz` 는 git 밖(이미지 id·클래스·크기·IoU 뿐).
