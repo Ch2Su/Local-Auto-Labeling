@@ -28,7 +28,6 @@ const S = {
   masks: [],
   msel: -1,           // 고른 가릴 영역 번호 (박스 선택 S.sel 과 함께 쓰지 않는다)
   masksTouched: false,// 이 이미지에서 영역을 손댔나 — 손댄 뒤로만 저장에 영역을 싣는다(영역을 모르는 저장이 덮지 않게)
-  maskBlock: null,    // 영역을 둘 수 없는 이유(test 이미지) — 서버가 준다
   maskPoly: false,    // 서버가 다각형 영역을 아는가 (2026-11-19, /api/images 의 mask_poly — 옛 서버면 다각형을 시작하지 않는다)
   poly: null,         // 그리는 중인 다각형 {id, pts: [[이미지 x, y], …], cur: 커서} — 닫으면 S.masks 로 (polyStart·polyClose)
   mtpls: [],          // 가릴 영역 템플릿 [{id, name, rects(xyxy), width, height, image_id, camera}] 이름순 (2026-11-10)
@@ -699,7 +698,6 @@ function setMode(mode) {
     toast("SAM 이 꺼져 있습니다 (config.yaml 의 sam.enabled)", true);
     return;
   }
-  if (mode === "mask" && S.maskBlock) { toast(S.maskBlock, true); return; }
   // 영역은 가릴 영역 모드에서만 고르고 옮긴다 — 다른 모드로 가면 고른 영역을 놓는다(Del 이 엉뚱한 것을 지우지 않게)
   if (mode !== "mask" && S.msel >= 0) { S.msel = -1; renderBoxList(); draw(); }
   if (mode !== "mask") polyCancel("그리던 다각형을 버렸습니다 (다른 모드로 바꿈)");
@@ -905,7 +903,6 @@ canvas.addEventListener("mousedown", (e) => {
   // 가릴 영역 모드에서는 영역만 고르고 옮기고 새로 그린다 — 박스는 건드리지 않는다(박스는 B 모드로).
   // 영역 안에 서 있는 사람 박스를 고치다 영역이 딸려 오거나, 영역을 그리다 박스가 옮겨지지 않게.
   if (effectiveMode() === "mask") {
-    if (S.maskBlock) { toast(S.maskBlock, true); return; }
     // 다각형을 그리는 중이면 누르는 곳마다 꼭짓점이다 — 영역 위여도(놓을 때 찍는다, polyClick)
     if (S.poly) { drag = { mode: "poly", sx, sy, id: S.cur.id }; return; }
     const cur = S.msel >= 0 ? S.masks[S.msel] : null;
@@ -1684,12 +1681,6 @@ function renderBoxList() {
     ul.appendChild(li);
   });
   // 가릴 영역은 박스 아래에 (2026-11-09 사용자 선택 — 따로 칸을 두지 않는다). 고르면 가릴 영역 모드로 간다.
-  if (S.masks.length && S.maskBlock) {
-    const li = document.createElement("li");
-    li.className = "mask-row warn";
-    li.textContent = `⚠ ${S.maskBlock} 이 영역은 학습에도 평가에도 쓰이지 않습니다 — 지우세요.`;
-    ul.appendChild(li);
-  }
   S.masks.forEach((m, i) => {
     const li = document.createElement("li");
     li.className = "mask-row" + (i === S.msel ? " active" : "");
@@ -1702,7 +1693,7 @@ function renderBoxList() {
       + (m.pts ? "\n다각형 — 고르면 꼭짓점을 끌어 옮기고, 변 가운데 점을 끌면 꼭짓점이 생기고, 꼭짓점을 우클릭하면 지웁니다. 크기는 바깥 사각형입니다." : "");
     li.onclick = (e) => {
       if (e.target.classList.contains("del")) { deleteMask(i); return; }
-      if (S.mode !== "mask" && !S.maskBlock) setMode("mask");
+      if (S.mode !== "mask") setMode("mask");
       selectMask(i);
     };
     ul.appendChild(li);
@@ -2432,7 +2423,7 @@ async function freshMaskTemplate(id) {
   return S.mtpls.find((t) => t.id === id) || null;
 }
 
-/** 오른쪽 '가릴 영역 템플릿' 칸. 이미지를 열 때도 다시 그린다(test 이미지면 적용을 흐리게). */
+/** 오른쪽 '가릴 영역 템플릿' 칸. 이미지를 열 때도 다시 그린다. */
 function renderMaskTemplates() {
   const ul = $("#mtpl-list");
   if (!ul) return;
@@ -2442,7 +2433,6 @@ function renderMaskTemplates() {
     if (S.cur && S.imgId === S.cur.id) draw();
   }
   ul.innerHTML = "";
-  ul.classList.toggle("blocked", !!S.maskBlock);
   $("#mtpl-count").textContent = S.mtpls.length ? `${S.mtpls.length}개` : "";
   if (!S.mtpls.length) {
     const li = document.createElement("li");
@@ -2464,7 +2454,7 @@ function renderMaskTemplates() {
       + "\n마우스를 올리면 덮을 자리를 노란 점선으로 미리 봅니다. '적용' 은 이 이미지에 더합니다"
       + "(이미 같은 자리에 있는 영역은 건너뜀, Ctrl+Z 로 되돌리기). 여러 장에는 이미지 보기에서 적용합니다.";
     const ap = li.querySelector(".ap");
-    ap.title = S.maskBlock || "이 이미지에 이 템플릿의 가릴 영역을 더합니다";
+    ap.title = "이 이미지에 이 템플릿의 가릴 영역을 더합니다";
     ap.onclick = async (e) => {
       e.stopPropagation();
       e.currentTarget.blur();
@@ -2485,7 +2475,6 @@ function renderMaskTemplates() {
 /** 템플릿 t 의 영역을 지금 이미지에 더한다 — 평소 편집처럼 되돌리기에 쌓고 자동 저장한다. */
 function applyMaskTemplate(t) {
   if (!S.cur || S.imgId !== S.cur.id) { toast("이미지가 뜬 뒤에 적용하세요"); return; }
-  if (S.maskBlock) { toast(S.maskBlock, true); return; }
   if (t.width && t.height && S.cur.width && S.cur.height) {
     const want = t.width / t.height;
     if (Math.abs(S.cur.width / S.cur.height - want) > 0.01 * want
@@ -3542,7 +3531,6 @@ async function reloadCurrentBoxes() {
   S.boxes = meta.boxes.map((b) => ({ ...b, cls0: b.cls }));
   polyCancel("그리던 다각형을 버렸습니다 (서버에서 다시 읽음)");
   S.masks = (meta.masks || []).map(maskFromWire);
-  S.maskBlock = meta.mask_block || null;
   S.maskPoly = !!meta.mask_poly;
   S.masksTouched = false;
   S.sel = -1;
@@ -3731,7 +3719,6 @@ async function refreshCurMeta() {
   const meta = await api(`/api/images/${id}`);
   if (!S.cur || S.cur.id !== id) return;          // 그새 다른 이미지로 갔다
   for (const k of ["name", "path", "camera", "captured_at", "camera_place", "grp", "split", "work"]) S.cur[k] = meta[k];
-  S.maskBlock = meta.mask_block || null;          // test 로 고정한 카메라로 옮겼으면 가릴 영역을 둘 수 없다
   renderMaskTemplates();
   renderImgMeta({ ...meta, status: S.cur.status });
 }
@@ -3778,14 +3765,8 @@ async function loadImageNow(id) {
   S.masks = (meta.masks || []).map(maskFromWire);       // 옛 서버(영역 모름)면 비어 있다
   S.msel = -1;
   S.masksTouched = false;
-  S.maskBlock = meta.mask_block || null;
   S.maskPoly = !!meta.mask_poly;                        // 다각형을 모르는 옛 서버면 다각형을 시작하지 않는다
-  renderMaskTemplates();                                // test 이미지면 적용을 흐리게, 미리 보기는 끈다
-  if (S.mode === "mask" && S.maskBlock) {               // test 이미지 — 영역을 그릴 수 없으니 새 박스 모드로
-    S.mode = "box";
-    renderMode();
-    toast("test 이미지라 가릴 영역 모드를 껐습니다 (평가는 실제 화면 그대로)");
-  }
+  renderMaskTemplates();
   S.undo = [];
   S.dirty = false;
   S.loadedCount = meta.boxes.length;
@@ -4050,7 +4031,7 @@ function clearCurrent() {
   clearTimeout(S._predTimer);
   Object.assign(S, {
     cur: null, boxes: [], sel: -1, undo: [], dirty: false, img: null, imgId: null,
-    masks: [], msel: -1, masksTouched: false, maskBlock: null, poly: null,
+    masks: [], msel: -1, masksTouched: false, poly: null,
     ghost: null, history: [], pred: null, predLoading: false, findings: [], findHot: -1,
   });
   $("#img-name").textContent = "";
@@ -4298,7 +4279,7 @@ function setListControls(c) {
 
 /** 필터·정렬이 바뀌었다 — 목록을 첫 묶음부터 다시 받고 첫 장을 연다.
  *  **고치던 박스를 먼저 저장한다.** 저장하지 못하면 목록을 바꾸지 않고, 필터 칸을 받아 둔 목록의 조건으로 되돌린다. 전에는
- *  목록부터 받고 첫 장을 열 때에야 저장을 봐서, 저장이 거절되면(test 이미지의 가릴 영역 409·잘못된 박스 422 등) 목록은 새 조건
+ *  목록부터 받고 첫 장을 열 때에야 저장을 봐서, 저장이 거절되면(잘못된 박스 422 등) 목록은 새 조건
  *  인데 가운데에는 그 목록에 없는 옛 이미지가 남았다 (2026-11-16). */
 async function reloadList() {
   if (!(await saveBeforeLeaving())) {

@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
-from .masks import MAX_MASKS, as_mask, from_row, has_rect, is_poly, row_values, same_rects, to_wire
+from .masks import MAX_MASKS, as_mask, from_row, is_poly, row_values, same_rects, to_wire
 from .masks import clean as clean_masks
 from .masks import merge as merge_masks
 from .masks import subtract as subtract_masks
@@ -1308,29 +1308,25 @@ class Store:
         with _write_lock, self.connect() as con:
             return con.execute("DELETE FROM mask_templates WHERE id=?", (template_id,)).rowcount > 0
 
-    def apply_mask_template(self, image_ids: list[int], rects: list, *, mode: str, batch: str,
-                            blocked: Callable[[dict], object] | None = None) -> dict:
+    def apply_mask_template(self, image_ids: list[int], rects: list, *, mode: str, batch: str) -> dict:
         """템플릿 영역을 이미지들에 더하거나(add) 뺀다(remove) — 한 트랜잭션, 이미지마다 이력(source='bulk', 같은 batch).
 
         더하기는 이미 같은 좌표의 영역이 있으면 그것은 건너뛰고(masks.merge), 빼기는 템플릿과 좌표가 같은 영역만 뺀다
         (masks.subtract — 손으로 옮긴 영역은 그 이미지의 것이라 남긴다). 박스는 그대로이고, 학습 라벨이 달라지는 손이라
-        updated_at 은 새로 찍는다(set_masks 와 같다). **blocked(행 {split, camera})가 참인 이미지(test — 규칙은 서버의
-        mask_block 한 곳에 있다)에는 더하지 않는다** — 쓰는 순간의 행으로 본다. 빼기는 test 에도 한다(지우기만은 받는다).
-        묶음째 되돌리기는 revert_batch(영역도 되돌린다). {changed, unchanged, blocked, full, missing} 장수를 돌려준다.
+        updated_at 은 새로 찍는다(set_masks 와 같다). test 이미지에도 더한다 — 그 영역은 칠하지 않고 채점에서 뺀다(masks.py,
+        2026-11-24 — 그 전에는 서버가 넘긴 blocked 로 test 를 건너뛰었다). 묶음째 되돌리기는 revert_batch(영역도 되돌린다).
+        {changed, unchanged, full, missing} 장수를 돌려준다.
         """
         if mode not in ("add", "remove"):
             raise ValueError(f"알 수 없는 적용 방식: {mode}")
         rects = clean_masks(rects)
-        out = {"changed": 0, "unchanged": 0, "blocked": 0, "full": 0, "missing": 0}
+        out = {"changed": 0, "unchanged": 0, "full": 0, "missing": 0}
         with _write_lock, self.connect() as con:
             now = _now()
             for image_id in dict.fromkeys(image_ids):          # 같은 id 가 두 번 와도 한 번만
                 row = con.execute("SELECT split, camera FROM images WHERE id=?", (image_id,)).fetchone()
                 if row is None:
                     out["missing"] += 1
-                    continue
-                if mode == "add" and blocked is not None and blocked(dict(row)):
-                    out["blocked"] += 1
                     continue
                 cur = _read_masks(con, image_id)
                 new = merge_masks(cur, rects) if mode == "add" else subtract_masks(cur, rects)
@@ -1578,8 +1574,7 @@ class Store:
         return changed
 
     def revert_batch(self, batch: str, *,
-                     score: Callable[[list[Box]], float] | None = None,
-                     mask_blocked: Callable[[dict], object] | None = None) -> tuple[int, int]:
+                     score: Callable[[list[Box]], float] | None = None) -> tuple[int, int]:
         """일괄 수정 한 묶음을 되돌린다. (되돌린 이미지 수, 건너뛴 이미지 수)
 
         **그 뒤에 또 고친 이미지는 건드리지 않는다** — 지금 박스가 일괄 수정 직후와 같을
@@ -1589,8 +1584,8 @@ class Store:
         score 는 `set_class_bulk` 와 같다 — 되돌린 박스로 uncertainty 를 다시 매긴다 (2026-11-05).
         가릴 영역도 바꾼 묶음(가릴 영역 템플릿 적용, 2026-11-10 — 이력에 masks_after 가 있음)은 지금 영역도 적용 직후와
         같을 때만 되돌리고, 영역도 그 전으로 돌린다. **영역만 바꾼 줄(박스 전후가 같음)은 박스를 견주지 않고 지금 박스를
-        그대로 둔다** — 템플릿을 넣은 뒤 박스를 검수한 이미지도 영역은 되돌릴 수 있어야 한다. mask_blocked(행
-        {split, camera})가 참인 이미지(test — 서버의 mask_block)는 되돌리면 영역이 새로 생기는 경우 건너뛴다.
+        그대로 둔다** — 템플릿을 넣은 뒤 박스를 검수한 이미지도 영역은 되돌릴 수 있어야 한다(test 이미지도 — 2026-11-24 부터
+        test 의 영역은 채점에서 뺄 자리라 막지 않는다).
         """
         skipped = 0
         with _write_lock, self.connect() as con:
@@ -1619,13 +1614,6 @@ class Store:
                         skipped += 1
                         continue
                     masks_before = _masks_from_json(_hist_text(bodies, r["masks_before"]))
-                    # 되돌리면 지금 없는 영역이 생기는데 영역을 둘 수 없는 이미지(test)면 건너뛴다 — 다른 저장 길과 같다
-                    if mask_blocked is not None and any(not has_rect(cur_m, m) for m in masks_before):
-                        img = con.execute("SELECT split, camera FROM images WHERE id=?",
-                                          (r["image_id"],)).fetchone()
-                        if img is not None and mask_blocked(dict(img)):
-                            skipped += 1
-                            continue
                 todo.append((r["image_id"], before, masks_before))
             known = {c["idx"] for c in con.execute("SELECT idx FROM classes")}
             gone = sorted({b.cls for _, before, _m in todo for b in before} - known)

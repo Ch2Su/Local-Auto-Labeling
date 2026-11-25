@@ -1,0 +1,20 @@
+{
+ "variant": "sam31",
+ "tag": "",
+ "weights": "sam3.1_multiplex.pt",
+ "imgsz": 1008,
+ "half": false,
+ "crop": null,
+ "images": 191,
+ "boxes": 943,
+ "mask_dropped": 1447,
+ "load_s": 11.06,
+ "encode_ms_mean": 604.8,
+ "ask_ms_mean": 28.3,
+ "peak_alloc_gib": 2.15,
+ "peak_reserved_gib": 2.46,
+ "no_mask": 10,
+ "fallbacks": 0,
+ "wall_s": 197.2,
+ "gpu": "NVIDIA GeForce RTX 5060 Ti"
+}

@@ -754,7 +754,6 @@ body.view-gallery .filters-head .caret { visibility: hidden; }
 /* 가릴 영역 템플릿 (2026-11-10) — 라벨링 오른쪽 칸(.mtpl-list, 태그 목록 모양)과 이미지 보기의 일괄 적용(.gs-mtpl) */
 .mtpl-list li { cursor: default; }
 .mtpl-list .ap { flex: none; padding: 1px 7px; font-size: 11px; }
-.mtpl-list.blocked .ap { opacity: 0.45; }
 .gs-mtpl { display: flex; gap: 4px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .gs-mtpl select {
   flex: 1; min-width: 0;

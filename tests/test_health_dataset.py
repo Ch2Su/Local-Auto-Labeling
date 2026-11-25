@@ -1,23 +1,30 @@
 """데이터 점검의 수치가 학습 세트·내보내기가 **실제로 쓰는 라벨**과 같은가 (2026-11-15 리뷰 1·12번).
 
-데이터 점검은 '가릴 영역이 반 이상 덮은 박스는 학습 라벨에서 빠진다' 를 따로 적어 세다가 test 분할의 예외(칠하지도, 박스를
-빼지도 않는다)를 빠뜨렸다. 이제 세 곳(trainer.build_dataset·export_yolo·health)이 `masks.drops`·`masks.applies_to` 를 함께
-쓰는데, 여기서는 그 약속을 결과로 지킨다 — 진짜 학습 세트와 내보내기를 임시 폴더에 만들어 라벨 줄 수를 분할·클래스별로 세고
+데이터 점검은 '가릴 영역이 반 이상 덮은 박스는 학습 라벨에서 빠진다' 를 따로 적어 세다가 그때의 test 분할 예외를 빠뜨렸다.
+이제 세 곳(trainer.build_dataset·export_yolo·health)이 `masks.drops`(분할과 상관없이 — 2026-11-24 부터 test 도)와
+`masks.paints`(test 는 칠하지 않는다)를 함께 쓰는데, 여기서는 그 약속을 결과로 지킨다 — 진짜 학습 세트와 내보내기를 임시 폴더에 만들어 라벨 줄 수를 분할·클래스별로 세고
 `health.report` 와 견준다. 셋 중 하나가 판정을 따로 적기 시작하면 여기서 어긋난다.
 """
 
 from __future__ import annotations
 
+import sys
 from collections import Counter
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
+import numpy as np
+
 from autolabel import health
 from autolabel.export import export_yolo
+from autolabel.masks import paint_array
 from autolabel.trainer import build_dataset
-from helpers import CLASSES, box, far_hashes
+from helpers import CLASSES, ROOT, box, far_hashes
+
+sys.path.insert(0, str(ROOT / "wsl"))
+from eval_test import ignore_path, load_ignore  # noqa: E402  — 평가 도구가 그 그림을 찾는 규칙 그대로
 
 PERSON, CAR, TRUCK = CLASSES.index("person"), CLASSES.index("car"), CLASSES.index("truck")
 SPLITS = ("train", "val", "test")
@@ -66,17 +73,25 @@ def report(store, drop=True):
 def test_the_report_counts_what_the_training_set_labels(cfg, store, masked):
     r = report(store)
     built = build_dataset(cfg, store)
-    assert (built.masked, built.masked_test, built.mask_dropped) == (2, 1, 4)     # train·val 을 칠하고 둘씩 뺐다, test 는 그대로
+    assert (built.masked, built.masked_test, built.mask_dropped) == (2, 1, 6)     # train·val 을 칠하고, 세 분할에서 둘씩 뺐다
 
     for sp in SPLITS:
         got = label_counts(cfg.dataset / "labels" / sp)
         assert sum(got.values()) == r["splits"]["boxes"][sp], sp
         for row in r["classes"]:
             assert got.get(row["idx"], 0) == row["split"][sp], (sp, row["name"])
-    # 손으로 센 값 — train: 덮인 장(트럭 1·사람 1) + 안 덮인 장(차 1·사람 1), val: 트럭 1·사람 1, test: 넷 다
-    assert r["splits"]["boxes"] == {"train": 4, "val": 2, "test": 4, "none": 0}
-    assert (r["masks"]["dropped"], r["masks"]["test_images"]) == (4, 1)
-    assert not any(n["text"].startswith("test 에 박스가 없는 클래스") and "car" in n["text"] for n in r["notes"])
+    # 손으로 센 값 — train: 덮인 장(트럭 1·사람 1) + 안 덮인 장(차 1·사람 1), val·test: 트럭 1·사람 1
+    assert r["splits"]["boxes"] == {"train": 4, "val": 2, "test": 2, "none": 0}
+    assert (r["masks"]["dropped"], r["masks"]["test_images"]) == (6, 1)
+    # test 장은 칠하지 않고(원본 색 그대로) 칠할 자리를 ignore/ 그림으로 남긴다 — 평가 도구가 읽는 자리에, 칠할 바로 그 픽셀로
+    test_img = next((cfg.dataset / "images" / "test").glob("test__*"))
+    with Image.open(test_img) as im:
+        assert abs(im.getpixel((int(0.2 * 1280), int(0.2 * 720)))[2] - 150) <= 8
+    ignore = ignore_path(test_img)
+    assert ignore == cfg.dataset / "ignore" / "test" / f"{test_img.stem}.png" and ignore.is_file()
+    want = paint_array(np.zeros((720, 1280), np.uint8), store.get_masks(masked["test"])) > 0
+    assert (load_ignore(test_img) == want).all()
+    assert not list((cfg.dataset / "ignore").glob("train/*")) and not list((cfg.dataset / "ignore").glob("val/*"))
 
 
 def test_the_report_counts_what_an_export_with_images_labels(cfg, store, masked, tmp_path):
@@ -115,12 +130,12 @@ def poly_masked(store, add_image):
 def test_polygons_paint_and_drop_the_same_in_training_set_and_report(cfg, store, poly_masked):
     r = report(store)
     built = build_dataset(cfg, store)
-    assert (built.masked, built.masked_test, built.mask_dropped) == (2, 1, 4)     # train·val 에서 둘씩, test 는 그대로
+    assert (built.masked, built.masked_test, built.mask_dropped) == (2, 1, 6)     # 세 분할에서 둘씩, test 는 칠하지 않는다
     for sp in SPLITS:
         got = label_counts(cfg.dataset / "labels" / sp)
         assert sum(got.values()) == r["splits"]["boxes"][sp], sp
-    assert r["splits"]["boxes"] == {"train": 2, "val": 2, "test": 4, "none": 0}
-    assert (r["masks"]["dropped"], r["masks"]["rects"], r["masks"]["test_images"]) == (4, 6, 1)
+    assert r["splits"]["boxes"] == {"train": 2, "val": 2, "test": 2, "none": 0}
+    assert (r["masks"]["dropped"], r["masks"]["rects"], r["masks"]["test_images"]) == (6, 6, 1)
 
     # 칠한 그림 — 다각형 안은 회색, 바깥 사각형 안이라도 모양 밖은 그대로 (픽셀 중심 규칙)
     px = lambda im, x, y: im.getpixel((int(x * 1280), int(y * 720)))
@@ -136,13 +151,15 @@ def test_polygons_paint_and_drop_the_same_in_training_set_and_report(cfg, store,
 
 
 def test_keeping_masked_boxes_counts_the_database(cfg, store, masked):
-    """'넣고 셈' 은 DB 의 박스 전부다 — 라벨만 내보낼 때(그림을 칠하지 않으니 박스도 빼지 않는다)와 같다."""
+    """'넣고 셈' 은 DB 의 박스 전부다. 라벨만 내보낼 때 train·val 은 그림을 칠하지 않으니 박스도 빼지 않고, test 는 채점에서
+    빼는 자리라 뺀다(2026-11-24 — 그 전에는 test 도 DB 박스 그대로였다)."""
     r = report(store, drop=False)
     out = cfg.dataset.parent / "labels_only"
-    export_yolo(cfg, store, out, with_images=False)
+    done = export_yolo(cfg, store, out, with_images=False)
     got = label_counts(out / "labels")
-    assert sum(got.values()) == r["boxes"] == 14
-    assert {row["idx"]: row["boxes"] for row in r["classes"] if row["boxes"]} == dict(got)
+    assert r["boxes"] == 14 and sum(got.values()) == 12                   # test 장에서 둘이 빠졌다
+    assert (done.masked_raw, done.masked_test, done.mask_dropped) == (2, 1, 2)
+    assert len(list((out / "ignore").glob("*.png"))) == 1                  # 원본이 있으니 그 자리 그림도 남긴다
 
 
 # ------------------------------------------- 학습을 시작할 때의 알림 (trainer.BuildReport.class_gaps, 2026-11-16)
@@ -171,7 +188,8 @@ def test_the_training_log_names_the_classes_a_split_has_no_boxes_for(cfg, store,
         "[경고] train 에 박스가 없는 클래스: cone(test 1) — 이 클래스는 배우지 못합니다")
     # val 장의 차는 영역에 통째로 덮여 라벨에서 빠졌다 — val 에는 차가 없다. 라바콘도 없다
     assert next(g for g in gaps if g.startswith("[알림] val 에")).startswith("[알림] val 에 박스가 없는 클래스: car, cone ")
-    assert not any(g.startswith("[알림] test 에") for g in gaps)             # test 에는 박스가 있는 클래스가 다 있다
+    # test 장의 차도 영역에 통째로 덮여 빠졌다(2026-11-24 부터 — 채점에서 빼는 자리)
+    assert next(g for g in gaps if g.startswith("[알림] test 에")).startswith("[알림] test 에 박스가 없는 클래스: car ")
     assert all(g in built.summary() for g in gaps)                           # 학습 로그에 찍히는 요약에 들어 있다
 
 

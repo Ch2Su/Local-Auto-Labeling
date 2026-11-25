@@ -216,7 +216,7 @@ def test_template_is_copied_and_reverted_even_after_boxes_were_reviewed(store, a
     k = add_image("c.jpg", boxes=[box()])
     store.set_masks(j, [RECT_B])
     out = store.apply_mask_template([i, j, k, i, 99999], [RECT_A, RECT_B], mode="add", batch="tpl")
-    assert out == {"changed": 3, "unchanged": 0, "blocked": 0, "full": 0, "missing": 1}
+    assert out == {"changed": 3, "unchanged": 0, "full": 0, "missing": 1}
     assert store.get_masks(j) == [RECT_B, RECT_A]       # 이미 있던 같은 자리는 건너뛴다
 
     reviewed = [box(cx=0.25, conf=None, origin="human")]
@@ -257,22 +257,18 @@ def test_template_applied_through_the_screen_is_still_recognised(store, add_imag
     assert store.revert_batch("off") == (1, 0) and len(store.get_masks(i)) == len(rects)
 
 
-def test_template_is_not_added_to_blocked_images_but_can_be_removed(store, add_image):
-    """test 이미지에는 영역을 더하지 않는다(규칙은 서버가 넘긴다). 지우기만은 받는다."""
-    is_test = lambda r: r["split"] == "test"
+def test_template_goes_onto_test_images_too(store, add_image):
+    """2026-11-24 — test 의 영역은 칠하지 않고 채점에서 빼는 자리라 템플릿도 test 이미지에 들어가고 되돌려진다(전에는 서버가
+    넘긴 blocked 로 건너뛰었다)."""
     t = add_image("t.jpg", split="test")
     n = add_image("n.jpg", split="train")
-    out = store.apply_mask_template([t, n], [RECT_A], mode="add", batch="b1", blocked=is_test)
-    assert (out["changed"], out["blocked"]) == (1, 1)
-    assert store.get_masks(t) == []
-
-    store.apply_mask_template([t], [RECT_A], mode="add", batch="b2")           # (규칙 없이 들어간 옛 영역)
-    out = store.apply_mask_template([t, n], [RECT_A], mode="remove", batch="b3", blocked=is_test)
-    assert out["changed"] == 2
-    assert store.get_masks(t) == store.get_masks(n) == []
-    # 빼기를 되돌리면 영역이 새로 생긴다 — test 는 건너뛴다
-    assert store.revert_batch("b3", mask_blocked=is_test) == (1, 1)
-    assert (store.get_masks(t), store.get_masks(n)) == ([], [RECT_A])
+    out = store.apply_mask_template([t, n], [RECT_A], mode="add", batch="b1")
+    assert out["changed"] == 2 and "blocked" not in out
+    assert store.get_masks(t) == store.get_masks(n) == [RECT_A]
+    out = store.apply_mask_template([t, n], [RECT_A], mode="remove", batch="b2")
+    assert out["changed"] == 2 and store.get_masks(t) == store.get_masks(n) == []
+    assert store.revert_batch("b2") == (2, 0)                  # 빼기를 되돌리면 test 에도 영역이 다시 생긴다
+    assert store.get_masks(t) == store.get_masks(n) == [RECT_A]
 
 
 POLY = ((0.1, 0.1), (0.4, 0.15), (0.2, 0.45))          # 다각형 영역 (2026-11-19)

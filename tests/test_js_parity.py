@@ -254,7 +254,7 @@ def js(node, tmp_path_factory) -> dict:
     cap = (WEB / "capture.js").read_text(encoding="utf-8")
     script = "\n".join([
         # applyMaskTemplate 이 쓰는 화면 상태·함수의 대역 — 이미지가 떠 있고 영역을 둘 수 있는 장이다
-        "const S = { masks: [], cur: { id: 1, width: 2560, height: 1440 }, imgId: 1, maskBlock: null,",
+        "const S = { masks: [], cur: { id: 1, width: 2560, height: 1440 }, imgId: 1,",
         "            masksTouched: false, msel: -1, maskPoly: true };",
         "const toasts = [];",
         "const toast = (m) => { toasts.push(m); };",

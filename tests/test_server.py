@@ -119,21 +119,23 @@ def test_a_template_skips_a_photo_that_is_shown_turned(client, store, add_image)
     assert store.get_masks(turned) == [] and store.get_masks(odd) == []
 
 
-def test_test_images_take_no_masks(client, store, add_image):
-    """test 는 칠하지 않는다 — 평가는 실제 화면 그대로여야 한다. 지우기만은 받는다."""
+def test_test_images_take_masks_too(client, store, add_image):
+    """2026-11-24 사용자 결정 — test 의 가릴 영역은 칠하지 않고 채점에서 빼는 자리다(masks.py). 전에는 409 로 막았다."""
     i = add_image("a.jpg", status="approved", boxes=[box()], split="test")
     area = {"x1": 0.5, "y1": 0.5, "x2": 0.75, "y2": 0.75}
-    r = client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": [area]})
-    assert r.status_code == 409
-    assert store.get_masks(i) == [] and keys(store.get_boxes(i)) == keys([box()])       # 박스도 저장하지 않는다
-    assert client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": []}).status_code == 200
+    r = client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": [area, {"pts": PTS}]})
+    assert r.status_code == 200
+    assert store.get_masks(i) == [(0.5, 0.5, 0.75, 0.75), tuple(map(tuple, PTS))]
+    meta = client.get(f"/api/images/{i}").json()
+    assert "mask_block" not in meta and meta["masks"] == [[0.5, 0.5, 0.75, 0.75], PTS]
 
 
-def test_images_of_a_camera_pinned_to_test_take_no_masks(client, cfg, store, add_image):
+def test_images_of_a_camera_pinned_to_test_take_masks_too(client, cfg, store, add_image):
     cfg.cameras.write_text("cameras:\n  cam-01:\n    kind: cctv\n    place: 시험 장소\n    split: test\n", encoding="utf-8")
-    i = add_image("a.jpg", status="pending", camera="cam-01")           # 아직 분할 전이어도 막는다
+    i = add_image("a.jpg", status="pending", camera="cam-01")           # 전에는 분할 전이어도 막았다
     area = {"x1": 0.5, "y1": 0.5, "x2": 0.75, "y2": 0.75}
-    assert client.put(f"/api/images/{i}/boxes", json={"boxes": [], "masks": [area]}).status_code == 409
+    assert client.put(f"/api/images/{i}/boxes", json={"boxes": [], "masks": [area]}).status_code == 200
+    assert store.get_masks(i) == [(0.5, 0.5, 0.75, 0.75)]
 
 
 # ----------------------------------------------------------------- 가릴 영역 — 다각형 (2026-11-19)
@@ -174,12 +176,6 @@ def test_nan_inside_polygon_points_is_422(client, store, add_image):
     body = '{"boxes": [], "masks": [{"pts": [[0.1, NaN], [0.4, 0.15], [0.2, 0.45]]}]}'
     r = client.put(f"/api/images/{i}/boxes", content=body, headers={"Content-Type": "application/json"})
     assert r.status_code == 422 and store.get_masks(i) == []
-
-
-def test_test_images_take_no_polygons(client, store, add_image):
-    i = add_image("a.jpg", status="approved", boxes=[box()], split="test")
-    assert client.put(f"/api/images/{i}/boxes", json={"boxes": [ONE], "masks": [{"pts": PTS}]}).status_code == 409
-    assert store.get_masks(i) == []
 
 
 def test_restoring_history_brings_polygons_back(client, store, add_image):

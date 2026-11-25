@@ -213,10 +213,16 @@ sam:
   #   sam2.1_t.pt       0.55GB    13ms  15ms   0.758 → 0.888      0.755   <- 선택
   #
   # sam2.1_t 는 클릭 한 번으로 손으로 그린 박스와 같은 품질이 나오고 실패(IoU<0.5)가
-  # 0% 다. 더 큰 sam2.1_s/_b 도 쓸 수 있지만 VRAM 과 지연이 늘고, 이 용도에는
-  # t 로 충분했다. 가중치는 weights/ 에 있다(약 80MB).
+  # 0% 다. 2026-11-25 에 지금 데이터(직접 모은 그림 943박스)로 sam2.1_s·SAM 3.1 과 다시
+  # 견줬는데 둘 다 t 보다 낫지 않았다(s 는 클릭이 -0.03, SAM 3.1 은 작은 물체만 낫고
+  # 인코딩 9배 — docs/experiments.md 'SAM 클릭 모델 비교'). 가중치는 weights/ 에 있다(약 80MB).
   enabled: true
   model: weights/sam2.1_t.pt
+  # 작게 나오면 주변만 잘라 다시 묻는다(2026-11-25 — segmenter.py 머리말). 통째 그림에서 나온 박스의
+  # 짧은 변이 crop_below(원본 px) 미만이면 클릭 주변 crop_size 정사각형(박스면 박스 긴 변 x2 와 큰 쪽)만
+  # 넣어 한 번 더 묻는다. 같은 측정에서 클릭·거친 박스 모두 IoU +0.02~0.03. 0 이면 끈다.
+  crop_below: 64
+  crop_size: 512
 
 wsl:
   # 웹 UI 'WSL 학습' 버튼. DB 로 data/visible/dataset 을 만들어 WSL 홈으로 복사한 뒤

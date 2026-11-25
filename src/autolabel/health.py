@@ -16,12 +16,10 @@ Roboflow 의 'Dataset Health Check' 에서 가져온 것: 이미지·박스 수,
   (dHash 로 이어진 두 카메라는 grp 가 같다), 둘 다 없으면 그 한 장. '한 곳 몫'(top)도 이 묶음으로 센다 — 출처 없는 이미지
   전부를 카메라 한 곳처럼 세지 않는다. 묶음이 **쓰는 분할 수**(`used_splits` — 비율이 0 인 val·test 는 뺀다)보다 적으면 알린다.
 - **가릴 영역이 반 이상 덮은 박스는 기본으로 세지 않는다**(`masked_out`·`_Gone`). 판정은 학습 세트·내보내기와 **같은 함수**다
-  (`masks.drops`·`masks.applies_to` — 따로 적지 말 것). DB 에는 남아 있지만 학습 라벨에는 없는 박스라, 넣고 세면 클래스 균형·
-  박스 크기가 학습이 보는 것과 달라진다. 화면의 '가려진 박스' 로 넣고 셀 수도 있다(`drop_masked=False`).
-  **test 분할 이미지의 박스는 가려졌어도 뺀 것으로 치지 않는다** — 학습 세트와 내보내기가 test 는 칠하지도, 박스를 빼지도
-  않는다(평가는 실제 화면 그대로 — `masks.applies_to`). 영역은 검수하며 먼저 덮고 분할은 나중에 정해지므로 영역이 있는
-  이미지가 test 로 갈 수 있다 — 그런 이미지 수는 `masks.test_images`(2026-11-15 리뷰에서 고침: 전에는 분할을 안 보고 빼서
-  test 의 박스 수·크기가 학습 세트의 labels/test 보다 적게 나왔다).
+  (`masks.drops` — 따로 적지 말 것). DB 에는 남아 있지만 라벨 파일에는 없는 박스라, 넣고 세면 클래스 균형·박스 크기가 학습·
+  평가가 보는 것과 달라진다. 화면의 '가려진 박스' 로 넣고 셀 수도 있다(`drop_masked=False`). **test 분할도 같다**(2026-11-24
+  사용자 결정 — test 의 영역은 칠하지 않고 채점에서 빼는 자리다, masks.py 머리말). 그 전에는 test 는 칠하지도 빼지도 않아 여기서도
+  test 박스를 뺀 것으로 치지 않았다(11-15 리뷰). 영역이 있는 test 이미지 수는 `masks.test_images` 로 준다.
 - 덮인 몫을 재는 것이 가장 비싸다(영역이 수백 개인 장). 그래서 **한 요청에 한 번만, 필요한 박스만 잰다**(2026-11-15 리뷰):
   화면을 열 때는 /api/health 가 같은 스냅샷·같은 판정(`gone=`)으로 히트맵까지 함께 주고(`heat=1`), 조건을 바꿔 히트맵만
   다시 받을 때는 거른 뒤 남은 박스만, 칸을 누를 때는 그 칸의 박스만 잰다(`cell_images`).
@@ -34,7 +32,7 @@ from collections import Counter, namedtuple
 from statistics import median
 
 from .grouping import DSU
-from .masks import applies_to, drops
+from .masks import drops
 from .store import NO_CAMERA
 
 SCOPES = ("approved", "all")            # 승인만(학습에 들어가는 것) · 휴지통만 뺀 전부
@@ -123,19 +121,17 @@ def _rects(snap: dict) -> dict[int, list]:
 class _Gone:
     """박스 하나가 **학습 라벨에서 빠지는가** — 가릴 영역이 넓이의 반 이상을 덮는다(DB 에는 그대로 있다).
 
-    판정은 학습 세트·내보내기와 **같은 함수**다: `masks.drops`(덮인 몫이 DROP 이상)와 `masks.applies_to`(test 분할에는 영역을
-    적용하지 않는다 — 칠하지도, 박스를 빼지도 않는다). 영역이 있고 영역을 적용하는 분할의 이미지에서만 덮인 몫을 잰다 —
-    부를 때마다 재므로, 걸러 낸 뒤에 부르면 그만큼만 잰다(heatmap·cell_images).
+    판정은 학습 세트·내보내기·평가 세트와 **같은 함수**다: `masks.drops`(덮인 몫이 DROP 이상 — 2026-11-24 부터 test 도). 영역이
+    있는 이미지에서만 덮인 몫을 잰다 — 부를 때마다 재므로, 걸러 낸 뒤에 부르면 그만큼만 잰다(heatmap·cell_images).
     """
 
     def __init__(self, snap: dict) -> None:
         self.rects = _rects(snap)
-        self.spared = {im["id"] for im in snap["images"]       # 영역이 있지만 적용하지 않는 이미지(test)
-                       if im["id"] in self.rects and not applies_to(im.get("split"))}
+        self.tests = {im["id"] for im in snap["images"]        # 영역이 있는 test 이미지 — 칠하지 않고 채점에서 뺀다(수만 알린다)
+                      if im["id"] in self.rects and im.get("split") == "test"}
 
     def __call__(self, image_id: int, cx: float, cy: float, w: float, h: float) -> bool:
-        return (image_id in self.rects and image_id not in self.spared
-                and drops(_Box(cx, cy, w, h), self.rects[image_id]))
+        return image_id in self.rects and drops(_Box(cx, cy, w, h), self.rects[image_id])
 
 
 def masked_out(snap: dict) -> list[bool]:
@@ -265,7 +261,7 @@ def report(snap: dict, classes: list[str], cameras: dict, *, scope: str, imgsz: 
         })
     cam_rows.sort(key=lambda r: (r["key"] is None, -r["images"], r["key"] or ""))
 
-    n_test_masked = len(judge.spared)                   # 영역이 있는 test 이미지 — 그 박스는 빼지 않았다(_Gone)
+    n_test_masked = len(judge.tests)                    # 영역이 있는 test 이미지 — 칠하지 않고 그 자리를 채점에서 뺀다
     sizes = Counter((im["width"], im["height"]) for im in images).most_common()
     domains = Counter(im["domain"] or "none" for im in images)
 
@@ -329,8 +325,8 @@ def _notes(class_rows: list[dict], split_images: dict, n_images: int, n_gone: in
             f"가릴 영역이 반 이상 덮어 학습 라벨에서 빠지는 박스 {n_gone:,}개가 수치에 들어 있습니다.")})
     if n_test_masked:
         out.append({"level": "info", "text": (
-            f"가릴 영역이 있는 test 이미지 {n_test_masked:,}장 — test 는 칠하지 않으므로 그 아래의 박스도 그대로 셉니다"
-            "(학습 세트의 test 라벨과 같게).")})
+            f"가릴 영역이 있는 test 이미지 {n_test_masked:,}장 — 그림은 칠하지 않고, 반 이상 덮인 박스와 그 자리의 예측은 "
+            "채점에서 뺍니다(학습 세트의 test 라벨과 같게).")})
     return out
 
 

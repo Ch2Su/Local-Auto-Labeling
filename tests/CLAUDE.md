@@ -28,8 +28,9 @@
   `tests/test_label_qa.py`(가릴 영역·모델이 모르는 클래스 — 써 둔 `preds.jsonl` 을 `--reuse` 로). JS 쪽은 함수를 글자로
   떼니 이름을 바꾸면 그 파일의 `PARTS` 도 맞춘다.
 - `tests/test_health_dataset.py`(11-15)는 **진짜 학습 세트(`trainer.build_dataset`)와 내보내기(`export_yolo`)를 임시 폴더에
-  만들어** 라벨 줄 수를 분할·클래스별로 `health.report` 와 견준다 — 가릴 영역이 빼는 박스의 판정(`masks.drops`·`applies_to`)을
-  셋 중 하나가 따로 적기 시작하면 여기서 어긋난다. 그림 파일을 실제로 쓰는 몇 안 되는 테스트다(작은 JPEG 넉 장).
+  만들어** 라벨 줄 수를 분할·클래스별로 `health.report` 와 견준다 — 가릴 영역이 빼는 박스의 판정(`masks.drops` — 11-24 부터 test 도)과
+  칠하는가(`masks.paints`)를 셋 중 하나가 따로 적기 시작하면 여기서 어긋난다. test 장의 `ignore/` 그림이 칠할 바로 그 픽셀(`paint_array`)
+  이고 평가 도구가 찾는 자리(`eval_test.ignore_path`)에 있는지도 본다. 그림 파일을 실제로 쓰는 몇 안 되는 테스트다(작은 JPEG 넉 장).
 - **좌표가 '같은 자리' 인지는 반올림한 값을 견주지 말고 `masks.same_rect`(화면 `sameRect`)로 본다** — 네 좌표의 차가 모두
   `SAME`(7.5e-8) 이하. 11-12 에 테스트로 찾아 고쳤다: 소수 7자리 반올림 키는 픽셀에 딱 맞춘 좌표(2560·1280 폭)가 반올림 경계에
   자주 걸려, 화면이 영역을 {cx, cy, w, h} 로 들었다 되돌리는 끝자리 잡음만으로 다른 자리가 됐다(같은 템플릿을 두 번 더하면 겹쳐
@@ -106,6 +107,25 @@
 - **테스트는 `YOLO_AUTOINSTALL=false` 로 돈다**(conftest, 2026-11-23) — Ultralytics 가 올라온 프로세스에서 못 알아보는 그림을
   열면 `pi-heif` 를 이 `.venv` 에 설치하려 들었다(올리기 테스트가 전체 실행에서만 그렇게 실패했다 — 앞선 테스트가 Ultralytics 를
   올려 둔다). `tests/test_yolo_io.py` 가 `image_size` 는 원래의 `Image.open` 으로 여는지 본다(갈아 끼운 것을 흉내 낸 대역으로).
+- `tests/test_ignore_regions.py`(11-24)는 **test 의 가릴 영역 = 채점에서 뺄 자리**(사용자 결정 — masks.py 'test 의 영역')를 본다:
+  쓰는 곳(`masks.write_ignore` — 학습 세트·내보내기·`test_baseline.build_split`)과 찾는 곳(`wsl/eval_test.ignore_path`)이 같은가,
+  박스 안 픽셀 몫(`covered_px`·`drop_ignored`), 그리고 `IgnoreValidator.update_metrics` 가 레터박스 입력 좌표(배율 0.5·위아래 여백
+  140)를 원본으로 되돌려 그 자리에 반 넘게 든 예측만 빼는가 — 검증기는 `__new__` 로 만들고 부모 `DetectionValidator.update_metrics`
+  를 받아 적는 대역으로 간다(모델·데이터 없이). 그날 `ops.scale_boxes` 줄을 빼고 돌려 이 테스트가 실패하는 것을 봤고, 진짜
+  `model.val`(yolo26n·Ultralytics 예제 그림 bus.jpg·CPU)로도 돌려 영역이 없으면 mAP50 0.995, 왼쪽 반을 덮으면 그 자리의 예측이
+  빠지는 것을 봤다(스크래치 스크립트 — 모델이 필요해 테스트로 두지 않았다). **Ultralytics 를 올리면 이 테스트도 볼 것** —
+  `update_metrics`·예측 사전 꼴·`scale_boxes` 에 기댄다(꼴이 다르면 검증기가 멈춘다).
+- `tests/test_its_incident_clips.py`(11-24)는 `tools/its_incident_clips.py` 의 고르기를 네트워크·키 없이 본다 — 반경 안 가장
+  가까운 카메라, 칸(약 2km)보다 넓은 반경, 돌발과 같은 도로 유형의 카메라만, 드문 유형·최근 것 먼저, 같은 카메라는 한 번,
+  끝난 돌발·현장이 없는 돌발(정체·이동 작업) 빼기, 좌표·주소 없는 줄 버리기, 오류 글에서 키 지우기, mp4 가 아닌 응답은 파일을
+  남기지 않기(`urlopen` 을 대역으로).
+- `tests/test_segmenter.py`(11-25)는 SAM 클릭의 '작게 나오면 주변만 잘라 다시'(`segmenter._ask_crop`)를 가짜 predictor 로 본다 —
+  set_image 에 들어온 것(경로 = 통째, 배열 = 잘라 낸 칸)과 프롬프트에 따라 원본 픽셀 좌표의 사각형 하나를 마스크로 돌려준다
+  (잘라 낸 칸이 원본의 어디였는지는 `_image_array` 를 감싸 배열에 붙인다). 본다: 큰 결과는 다시 묻지 않음, 작은 결과·마스크 없음은
+  칸으로 다시 묻고 칸 좌표로 옮긴 프롬프트를 넘김, 칸을 그림 안으로 밂, 칸 가장자리에 닿은 결과는 버리고 통째 결과, 좌표를
+  원본으로 되돌림, 잘라 넣은 뒤 다음 클릭은 통째 그림을 다시 인코딩, `crop_below: 0` 이면 끔, 잘라 낼 그림을 Ultralytics 와
+  같은 함수로 읽음(EXIF 회전 사진). 2026-11-25 에 규칙 여섯을 하나씩 빼고 돌려 전부 실패하는 것을 봤다. 진짜 모델로는
+  `runs/sam_click_bench/check_segmenter.py` 가 측정(thybrid 64)과 같은 IoU 가 나오는지 본다(테스트 아님 — 모델·DB 가 필요하다).
 - `tests/test_eval_test.py`(11-15)는 `wsl/eval_test.py` 의 `at_conf`(놓침·헛 박스)가 conf 0.25·IoU 0.45 로 세어지는지 본다 —
   Ultralytics 8.4.212 의 검증기는 혼동 행렬을 val 의 conf 0.001·IoU 0.5 로 세서, 같은 119장에서 헛 박스가 에러 없이 20 → 988 이
   됐다(mAP 는 8.4.142 와 같았다 — docs/experiments.md '새 풀 프레임 데이터'). **Ultralytics 를 올리면 이 테스트부터 볼 것.** val 에

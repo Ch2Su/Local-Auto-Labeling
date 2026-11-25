@@ -14,9 +14,12 @@ DB 에 적힌 그대로, train·val 의 가릴 영역은 회색으로 칠하고 
 
 **분할은 원본 DB 의 것을 그대로 쓴다.** 배정 안 된 이미지가 있으면 멈춘다 — 여기서 새로 나누면 원본에서 잰 점수와 견줄
 수 없다. `--force-split test` 는 고른 이미지를 전부 test 로 둔 **평가 전용** 세트를 만든다(모델이 본 적 없는 새 데이터를
-통째로 재 볼 때. data.yaml 의 train·val 도 같은 폴더를 가리키니 **이 세트로 학습하지 말 것**). 기본은 평소 test 처럼 가릴
-영역을 칠하지 않는다 — `--paint-masks` 면 칠하고 반 넘게 가려진 박스를 뺀다(가릴 영역이 '라벨하지 않기로 한 물체' 를 덮은
-새 데이터는 칠하지 않으면 그 물체를 찾은 예측이 전부 헛 박스로 세어진다. 칠한 세트의 점수는 평소 test 점수와 견주지 말 것).
+통째로 재 볼 때. data.yaml 의 train·val 도 같은 폴더를 가리키니 **이 세트로 학습하지 말 것**). 가릴 영역은 평소 test 처럼
+**채점에서 뺄 자리**다(2026-11-24 사용자 결정 — src/autolabel/masks.py 'test 의 영역'): 그림은 칠하지 않고, 반 넘게 가려진
+박스는 라벨에서 빼고, 칠할 자리를 `ignore/test/<이름>.png` 로 남겨 `wsl/eval_test.py` 가 그 자리의 예측을 세지 않는다(그 전에는
+칠하지 않으면 박스도 그대로라, 영역이 덮은 물체를 찾은 예측이 전부 헛 박스로 세어졌다). `--paint-masks` 면 그림까지 칠한다
+(11-12 의 칠한 세트와 견줄 때만 — 칠한 세트의 점수는 평소 test 점수와 견주지 말 것). 평소 세트의 test 분할도
+`trainer.build_dataset` 이 같은 `ignore/` 그림을 남긴다.
 
 **경로.** 옛 DB 는 이미지를 옮기기 전의 절대경로로 들고 있다 — `--path-map "옛 뿌리=새 뿌리"` 로 사본의 경로를 바꾼다.
 
@@ -46,7 +49,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))   # tools/ -> 저장소 루트
 
 from autolabel.config import Config  # noqa: E402
-from autolabel.masks import split_boxes, write_masked  # noqa: E402
+from autolabel.masks import IGNORE_DIR, split_boxes, write_ignore, write_masked  # noqa: E402
 from autolabel.store import Store  # noqa: E402
 from autolabel.trainer import build_dataset  # noqa: E402
 from autolabel.yolo_io import write_yolo_txt  # noqa: E402
@@ -137,12 +140,11 @@ def describe(info: dict) -> str:
 
 
 def write_test_only(store: Store, root: Path, *, paint_masks: bool = False) -> dict:
-    """고른 이미지를 전부 test 로. 기본은 가릴 영역을 칠하지 않고 박스도 빼지 않는다(평가는 실제 화면 그대로).
-    paint_masks 면 학습 세트처럼 칠하고 반 넘게 가려진 박스를 뺀다 — 가릴 영역이 '라벨하지 않기로 한 물체' 를 덮은
-    데이터에서는, 칠하지 않으면 그 물체를 맞게 찾은 예측이 전부 헛 박스로 세어진다.
+    """고른 이미지를 전부 test 로. 가릴 영역은 채점에서 뺄 자리다(머리말) — 반 넘게 가려진 박스는 라벨에서 빼고 칠할 자리를
+    ignore/test/ 그림으로 남긴다. 그림은 원본 그대로이고, paint_masks 면 학습 세트처럼 칠한다(ignore 그림도 남긴다).
     이름은 `trainer.build_dataset` 과 같은 꼴(`<이름>__<경로 sha1 8자>`)."""
     names = store.get_classes()
-    masks = store.masks_by_image() if paint_masks else {}
+    masks = store.masks_by_image()
     n = boxes_n = masked = dropped_n = 0
     for row, boxes in store.approved_with_boxes():
         src = Path(row["path"])
@@ -150,9 +152,11 @@ def write_test_only(store: Store, root: Path, *, paint_masks: bool = False) -> d
         rects = masks.get(row["id"])
         if rects:
             boxes, dropped = split_boxes(boxes, rects)
-            write_masked(src, root / "images" / "test" / f"{stem}.jpg", rects)
+            write_ignore(src, root / IGNORE_DIR / "test" / f"{stem}.png", rects)
             masked += 1
             dropped_n += len(dropped)
+        if rects and paint_masks:
+            write_masked(src, root / "images" / "test" / f"{stem}.jpg", rects)
         else:
             dst = root / "images" / "test" / f"{stem}{src.suffix}"
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -260,7 +264,7 @@ def main() -> int:
                     help="DB 에 적힌 경로의 앞머리를 바꾼다 (옮겨 둔 옛 데이터)")
     ap.add_argument("--force-split", choices=["test"], default=None, help="고른 이미지를 전부 test 로 (평가 전용 세트)")
     ap.add_argument("--paint-masks", action="store_true",
-                    help="--force-split test 와 함께: 평가 세트에도 가릴 영역을 칠하고 반 넘게 가려진 박스를 뺀다")
+                    help="--force-split test 와 함께: 평가 세트의 그림에도 가릴 영역을 칠한다(기본은 칠하지 않고 채점에서만 뺀다)")
     ap.add_argument("--tar", action="store_true", help="dataset.tar 도 만든다")
     ap.add_argument("--apply", action="store_true", help="실제로 만든다 (아니면 보기만)")
     args = ap.parse_args()
@@ -299,8 +303,11 @@ def main() -> int:
                  paint_masks=args.paint_masks, tar=args.tar)
     print(f"\n만들었습니다: {args.out}")
     print(f"  train {made['train']:,} / val {made['val']:,} / test {made['test']:,} (박스 {made['boxes']:,}개)"
-          + (f" · 가릴 영역을 칠한 이미지 {made['masked']}장, 반 넘게 가려져 뺀 박스 {made['mask_dropped']}개"
+          + (f" · 가릴 영역이 있는 이미지 {made['masked']}장, 반 넘게 가려져 라벨에서 뺀 박스 {made['mask_dropped']}개"
              if made.get("masked") else ""))
+    if made.get("masked") and args.force_split:
+        print("  그 자리는 dataset/ignore/test/ 에 그림으로 남겼다 — wsl/eval_test.py 가 그 자리의 예측을 세지 않는다"
+              + (" (그림에도 칠했다 — --paint-masks)" if args.paint_masks else ""))
     if made.get("tar_bytes"):
         print(f"  dataset.tar {made['tar_bytes'] / 1e9:.2f} GB")
     return 0

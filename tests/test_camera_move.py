@@ -186,12 +186,11 @@ def test_an_assigned_image_cannot_make_a_camera_span_two_splits(cfg, store, cams
     assert plan_move(cfg, store, [trained], "cam-04", cams).items                 # 같은 분할의 카메라로도
 
 
-def test_unassigned_images_may_go_to_a_pinned_camera_unless_they_carry_masks(cfg, store, cams, frame):
+def test_unassigned_images_may_go_to_a_pinned_camera_masks_and_all(cfg, store, cams, frame):
+    """2026-11-24 — 가릴 영역이 있어도 test 고정 카메라로 옮긴다(test 의 영역은 채점에서 빼는 자리 — 전에는 막았다)."""
     plain, masked = frame("cam-01", "164428"), frame("cam-01", "164534")
     store.set_boxes(masked, [box()], uncertainty=0.0, source="ui", masks=[(0.1, 0.1, 0.2, 0.2)])
-    assert plan_move(cfg, store, [plain], "cam-03", cams).items
-    with pytest.raises(MoveBlocked, match="가릴 영역"):
-        plan_move(cfg, store, [plain, masked], "cam-03", cams)
+    assert len(plan_move(cfg, store, [plain, masked], "cam-03", cams).items) == 2
 
 
 def test_an_existing_file_or_row_at_the_new_path_blocks(cfg, store, cams, frame):

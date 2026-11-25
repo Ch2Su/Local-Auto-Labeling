@@ -1080,7 +1080,7 @@ async function capCamEditSave() {
   }
   if (!body.place) { toast("장소를 적으세요", true); $("#cc-place").focus(); return; }
   if (body.split === "test" && (c.split || "") !== "test" && !confirm(`'${target}' 를 test 로 고정할까요?\n이 카메라의 이미지는 `
-    + "평가에만 쓰이고(학습에 안 들어감) 가릴 영역을 둘 수 없습니다.")) return;
+    + "평가에만 쓰입니다(학습에 안 들어감 — 가릴 영역은 칠하지 않고 채점에서 뺍니다).")) return;
   const files = c.files || [];
   const used = (c.db || 0) > 0 || files.length > 0;
   if (body.new_key && used && !confirm(`카메라 키를 ${target} → ${body.new_key} 로 바꿀까요?\n\n`
@@ -1147,7 +1147,7 @@ async function capCamSave() {
   if (!known.has(prefix) && !confirm(`새 계열 '${prefix || key}' 입니다.\n키는 폴더·파일 이름과 문서·커밋 메시지에 그대로 `
     + "남습니다 — 지명이 드러나지 않나요? (예: hw-10 처럼 번호로)")) return;
   if (body.split === "test" && !confirm(`'${key}' 를 test 로 고정할까요?\n이 카메라의 이미지는 평가에만 쓰이고(학습에 안 들어감) `
-    + "가릴 영역을 둘 수 없습니다. 나중에 train 으로 옮기면 그때까지 잰 test 점수와 견줄 수 없게 됩니다.")) return;
+    + "가릴 영역은 칠하지 않고 채점에서 뺍니다. 나중에 train 으로 옮기면 그때까지 잰 test 점수와 견줄 수 없게 됩니다.")) return;
   const btn = $("#cc-save");
   btn.disabled = true;
   try {

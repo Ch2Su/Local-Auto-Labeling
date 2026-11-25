@@ -17,16 +17,20 @@ docs/label-rules.md)를 **학습 세트를 만들 때만** 회색(114)으로 칠
 **규칙.**
 - 학습 세트(`trainer.build_dataset`)와 이미지를 함께 내보내기(`export.export_yolo`)가 칠한 JPEG 을 쓴다. 영역들의
   합집합이 박스 넓이의 반(DROP) 이상을 덮으면 그 박스는 **그 라벨 파일에서만** 뺀다 — DB 박스는 그대로다.
-- **test 는 칠하지 않는다** — 평가는 실제 화면 그대로여야 한다. 서버는 test 이미지(분할이 test 이거나 cameras.yaml 에서
-  test 로 고정한 카메라)에 영역을 받지 않고, 학습 세트도 test 분할은 원본·박스 그대로 쓴다. `tools/test_baseline.py` 는
-  원래부터 원본 그림과 DB 박스를 읽는다.
-- **'어느 박스가 라벨에서 빠지는가' 는 여기 두 함수가 정한다** — `drops`(덮인 몫이 DROP 이상)와 `applies_to`(test 분할에는
-  적용하지 않는다). 학습 세트·내보내기·데이터 점검(health.py)이 함께 쓴다(2026-11-15) — 그쪽에 판정을 따로 적지 말 것.
-  결과가 같은지는 tests/test_health_dataset.py 가 견준다.
+- **test 의 영역은 '채점에서 빼는 자리' 다 (2026-11-24 사용자 결정)** — test 그림은 **칠하지 않는다**(평가는 실제 화면
+  그대로 — `paints`). 대신 반 넘게 덮인 라벨은 test 라벨 파일에서도 빼고(`drops` — 모든 분할에 같다), 영역이 칠할 픽셀을
+  `ignore/<분할>/<이름>.png`(라벨 파일과 같은 자리에 `labels` 대신 `ignore`)로 남겨, 평가 도구가 그 자리에 반 넘게 든 예측을
+  헛 박스로 세지 않는다(`wsl/eval_test.py` 의 `IgnoreValidator` — `tools/test_baseline.py`·`test_tiles.py` 도 그것을 쓴다).
+  COCO 의 iscrowd·VOC 의 difficult 와 같은 생각이다. 전에는 서버가 test 이미지에 영역을 받지 않았고(11-09) test 에서는 애매한
+  물체도 박스로 그리게 했는데(11-10), 라벨링이 분할보다 먼저라 학습 규칙대로 덮은 그림이 나중에 test 로 가면 영역은 무시되고
+  그 물체가 라벨 없이 채점됐다 — 정말 못 다는 물체는 짐작한 박스나 빈칸이 점수를 흔들었다.
+- **'어느 박스가 라벨에서 빠지는가' 는 `drops`(덮인 몫이 DROP 이상), '그림을 칠하는가' 는 `paints`(test 빼고)** — 학습 세트·
+  내보내기·데이터 점검(health.py)·평가 세트가 함께 쓴다(2026-11-15) — 그쪽에 판정을 따로 적지 말 것. 결과가 같은지는
+  tests/test_health_dataset.py 가 견준다.
 - 라벨된 박스와 겹친 몫은 그 물체도 칠해진 채로 학습된다 — 조금은 괜찮고(가려진 물체와 같다), 크게 덮어야 하면 그림
   가장자리면 잘라 낸다(`tools/crop_images.py`). 검수 화면은 반 미만으로 덮이는 박스를 '⚠ n% 가림' 으로 알린다.
-- 원본을 직접 읽는 분석 도구(test_tiles·domain_review 등)는 영역을 모른다(읽기 전용이라 그대로 둔다). `tools/label_qa.py` 는
-  11-16 부터 본다(학습 세트와 같은 `drops`·`applies_to`).
+- 원본을 직접 읽는 분석 도구(domain_review 등)는 영역을 모른다(읽기 전용이라 그대로 둔다). `tools/label_qa.py` 는 11-16 부터
+  본다(`drops` — 11-24 부터 test 도).
 """
 
 from __future__ import annotations
@@ -38,6 +42,8 @@ from typing import Iterable, Sequence
 
 import numpy as np
 from PIL import Image, ImageOps
+
+IGNORE_DIR = "ignore"       # 평가에서 뺄 자리의 그림(`write_ignore`) — 라벨 폴더 `labels` 와 같은 자리의 이 이름 폴더
 
 GRAY = 114                  # Ultralytics 레터박스·모자이크 바탕과 같은 회색
 DROP = 0.5                  # 박스 넓이의 이만큼 이상이 가려지면 학습 라벨에서 뺀다
@@ -351,12 +357,12 @@ def _slab_union(bx1: float, by1: float, bx2: float, by2: float, parts: list, pol
     return inside
 
 
-def applies_to(split: str | None) -> bool:
-    """이 분할의 이미지에 가릴 영역을 **적용하는가** — 그 자리를 칠하고, 반 넘게 가려진 박스를 라벨에서 빼는가.
+def paints(split: str | None) -> bool:
+    """이 분할의 그림에 가릴 영역을 **칠하는가** — test 만 칠하지 않는다(평가는 실제 화면 그대로).
 
-    test 에는 적용하지 않는다(평가는 실제 화면 그대로 — 칠하지도, 박스를 빼지도 않는다). **이 예외는 여기 한 곳에 둔다** —
-    학습 세트(trainer.build_dataset)·내보내기(export_yolo)·데이터 점검(health — '가려진 박스')이 함께 쓴다. 2026-11-15 전에는
-    셋이 따로 적었고, health 가 이 예외를 빠뜨려 test 의 박스를 적게 셌다.
+    반 넘게 가려진 박스를 라벨에서 빼는 것(`drops`)은 분할과 상관없다 — test 에서는 그 자리를 채점에서 뺀다(머리말, 2026-11-24
+    사용자 결정. 그 전 `applies_to` 는 test 에 칠하기·빼기를 둘 다 안 했다). **이 예외는 여기 한 곳에 둔다** — 학습 세트
+    (trainer.build_dataset)·내보내기(export_yolo)가 함께 쓴다.
     """
     return split != "test"
 
@@ -429,6 +435,21 @@ def paint_array(arr: np.ndarray, rects: Sequence) -> np.ndarray:
         x1, y1, x2, y2 = pixel_rect(r, w, h)
         arr[y1:y2, x1:x2] = GRAY
     return arr
+
+
+def write_ignore(src: Path, dst: Path, rects: Sequence) -> None:
+    """평가에서 뺄 자리의 그림 — 원본(EXIF 회전을 적용한 화면 크기)에서 영역이 **칠할 바로 그 픽셀**(`paint_array`)을 흰색으로
+    한 1비트 PNG 를 dst 에 쓴다 (2026-11-24, 머리말 'test 의 영역'). 평가 도구는 프로젝트 코드를 import 하지 않으니(pod·WSL)
+    영역 좌표 대신 이 그림을 읽는다(`wsl/eval_test.py` 의 `IgnoreValidator` — 예측 박스 안 픽셀의 반 이상이 흰색이면 뺀다).
+    반쯤 쓴 파일이 남지 않게 임시 이름으로 쓴 뒤 바꾼다."""
+    from .yolo_io import display_size
+
+    w, h = display_size(src)
+    arr = paint_array(np.zeros((h, w), np.uint8), rects)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".tmp")
+    Image.fromarray(arr > 0).save(tmp, "PNG")
+    tmp.replace(dst)
 
 
 def paint(img: Image.Image, rects: Sequence) -> Image.Image:

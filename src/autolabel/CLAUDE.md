@@ -15,8 +15,8 @@
   응답을 기다리는 곳(SAM·예측·이미지 로드·변경 내역)은 **요청한 이미지 id 를 붙잡아 두고 바뀌었으면 결과를 버린다** — 새
   비동기 호출을 넣을 때도 그렇게 할 것.
   - **목록을 바꾸는 길도 저장이 먼저다 (2026-11-16)** — `reloadList`(필터·정렬·묶음 크기 칸)·`openIds`·데이터 점검의
-    `hcOpenFiltered`. 전에는 목록부터 받고 첫 장을 열 때에야 저장을 봐서, 저장이 거절되면(test 이미지의 가릴 영역 409·잘못된 박스
-    422) 목록은 새 조건인데 가운데에는 그 목록에 없는 옛 이미지가 남았다. 못 하면 목록을 그대로 두고 칸을 **목록을 받았을 때의
+    `hcOpenFiltered`. 전에는 목록부터 받고 첫 장을 열 때에야 저장을 봐서, 저장이 거절되면(잘못된 박스 422 —
+    11-24 전에는 test 이미지의 가릴 영역 409 도) 목록은 새 조건인데 가운데에는 그 목록에 없는 옛 이미지가 남았다. 못 하면 목록을 그대로 두고 칸을 **목록을 받았을 때의
     조건**(`S.listAt` — `loadImageList` 가 받을 때마다 `listControls()` 로 적는다)으로 되돌린다(`setListControls`). 목록을 다시
     받는 새 길은 `reloadList` 를 거치고, 필터 칸을 새로 만들면 `filterState`·`setFilters` 에 넣을 것(안 넣으면 되돌릴 때 빠진다).
     `tests/test_js_filters.py` 가 이 함수들을 그대로 돌린다.
@@ -40,10 +40,15 @@
   11-19 — 아래 '다각형')(무엇을 덮는지는 docs/label-rules.md 한 곳에 적는다 — 기준을 바꾸면 거기와 화면 문구 `index.html`·`app.js` 를 볼 것).
   DB `masks` 표(정규화 xyxy + 다각형 꼭짓점 `poly`, EXIF 회전을 적용한 화면 기준)에만 있고 **원본 그림은 그대로**다. 학습 세트(`trainer.build_dataset`)와
   이미지를 함께 내보내기(`export_yolo`)만 그 자리를 회색 114 로 칠한 JPEG 을 쓰고, 영역들의 합집합이 박스 넓이의 반 이상을 덮는
-  박스는 그 라벨 파일에서만 뺀다(DB 박스는 그대로). **test 는 칠하지 않는다** — 서버가 test 이미지(분할 test·test 고정 카메라)에
-  영역을 받지 않고(409, 지우기만 받는다) 학습 세트도 test 분할은 원본 그대로다. 원본을 직접 읽는 도구(test_baseline·
-  test_tiles 등)는 영역을 모른다. **`tools/label_qa.py` 는 11-16 부터 영역을 본다** — 반 이상 덮인 라벨과 예측을 견주지
-  않는다(학습 세트와 같은 `masks.drops`·`applies_to`, 전부 보려면 `--keep-masked`). 그날 실제 DB(사본)로 재니 후보가 162건 →
+  박스는 그 라벨 파일에서만 뺀다(DB 박스는 그대로). **test 는 칠하지 않고 '채점에서 빼는 자리' 로 쓴다 (2026-11-24 사용자
+  결정 — masks.py 머리말 'test 의 영역')**: 서버는 test 이미지에도 영역을 받고, 학습 세트·내보내기·`tools/test_baseline.py`·
+  `build_subset_dataset.py` 는 test 그림을 원본 그대로 두되 반 넘게 덮인 박스는 라벨에서 빼고(`masks.drops` — 분할 무관,
+  칠하기만 `masks.paints`) 칠할 자리를 `ignore/<분할>/<이름>.png`(`masks.write_ignore` — 칠할 바로 그 픽셀)로 남긴다. 평가는
+  그 자리에 반 넘게 든 예측을 세지 않는다 — `wsl/eval_test.py` 의 `IgnoreValidator`(Ultralytics `update_metrics` 앞에서 예측을
+  원본 좌표로 되돌려 거른다)·`drop_ignored` 를 `test_baseline`·`test_tiles` 도 쓴다(한 곳). 뺀 수는 기록의 `ignore`. 전에는
+  서버가 test 이미지에 영역을 받지 않았고(409) test 에서는 애매한 물체도 박스로 그리게 했는데, 라벨링이 분할보다 먼저라 학습
+  규칙대로 덮은 그림이 나중에 test 로 가면 그 물체가 라벨 없이 채점됐다(사용자 질문에서). **`tools/label_qa.py` 는 11-16 부터
+  영역을 본다** — 반 이상 덮인 라벨과 예측을 견주지 않는다(`masks.drops`, 11-24 부터 test 도, 전부 보려면 `--keep-masked`). 그날 실제 DB(사본)로 재니 후보가 162건 →
   81건이 됐고, 모델이 모르는 클래스의 라벨도 견주지 않게 하니(아래 '예측 비교') 53건이 됐다.
   - 저장(PUT boxes)의 `masks` 는 **그 화면에서 영역을 손댄 뒤로만** 싣는다(`S.masksTouched`) — 안 실으면(옛 화면 포함) 서버가
     그대로 둔다. 영역이 바뀐 저장은 박스가 그대로여도 이력에 남고(`box_history.masks_before·masks_after`, 박스만 바뀐 줄은 NULL),
@@ -104,8 +109,8 @@
       받으면 바깥 사각형으로 저장한다). 11-19 에 옛 코드 서버 + 새 화면으로 사각형 저장·다각형 거절을 확인했다. 거꾸로(옛 화면 + 새
       서버)는 다각형을 숫자가 아닌 값으로 받아 그 영역을 손대 저장하면 422 로 막힌다(조용히 바뀌지 않는다) — 새로 고칠 것.
     - 시험: `tests/test_masks.py`(덮는 몫·칠하기·자르기·같은 자리), `test_js_parity.py`(화면과 끝자리까지), `test_store.py`(정확한
-      저장·옛 DB 의 열 더하기·템플릿·되돌리기), `test_server.py`(API·검사·test 막기), `test_health_dataset.py`(진짜 학습 세트·내보내기의
-      칠한 픽셀과 라벨 수), `test_label_qa.py`. 도구: `tools/crop_images.py` 는 다각형을 남길 영역으로 잘라(`masks.clip_poly`) 옮기고,
+      저장·옛 DB 의 열 더하기·템플릿·되돌리기), `test_server.py`(API·검사·test 이미지도 받기), `test_health_dataset.py`(진짜 학습 세트·내보내기의
+      칠한 픽셀과 라벨 수·test 의 ignore 그림), `test_label_qa.py`, `test_ignore_regions.py`(채점에서 뺄 자리 — 쓰는 곳·찾는 곳·검증기). 도구: `tools/crop_images.py` 는 다각형을 남길 영역으로 잘라(`masks.clip_poly`) 옮기고,
       `tools/mask_images.py` 는 사각형만 넣되 있던 다각형을 지키고 대조 그림에 칠한다.
   - **한 장 한도는 500개**(`masks.MAX_MASKS`·`app.js` 의 `MASK_MAX` — 같은 값, 11-11 에 50 → 500, 사용자 요청: 애매한 물체를
     하나씩 촘촘히 덮으려고). 실수로 수천 개가 들어오는 것만 막는다. 11-11 실측(2560×1440, 박스 95개 + 영역 500개): 화면 한 번
@@ -116,13 +121,12 @@
     `/api/bulk/mask-template`(add·remove) → `store.apply_mask_template`: 이미지마다 `_replace_boxes(source='bulk', batch=…, masks=…)`
     라 일괄 수정 묶음으로 되돌린다. `revert_batch` 는 `masks_after` 가 있고 박스 전후가 같은 줄(영역만 바꾼 줄)은 **박스를 견주지
     않고 지금 박스를 그대로 둔 채** 영역만 되돌린다(지금 영역이 적용 직후와 같을 때만) — 템플릿을 넣은 뒤 박스를 검수한 장도
-    되돌려야 해서다. 되돌리면 영역이 새로 생기는 장이 그새 test 가 됐으면 건너뛴다.
-    **test 판정은 server 의 `mask_block` 한 곳에만 둔다** — store(`apply_mask_template(blocked=)`·`revert_batch(mask_blocked=)`)에는
-    `mask_blocker()` 로 넘긴다(store 는 cameras.yaml 을 모른다). 넘기지 않으면 store 는 막지 않는다.
+    되돌려야 해서다. test 이미지에도 더하고 되돌린다(11-24 — 그 전에는 server 의 `mask_block` 이 넘긴 `blocked=`·`mask_blocked=`
+    로 test 를 건너뛰었다. 그 둘은 뺐다).
     같은 자리 판정은 `masks.same_rect` — 네 좌표의 차가 모두 `SAME`(7.5e-8) 이하(다각형은 꼭짓점마다 — 아래 '다각형')(2026-11-12 에 소수 7자리 반올림 키
     `mask_key` 에서 바꿨다: 픽셀에 딱 맞춘 2560·1280 폭 좌표가 반올림 경계에 걸려 화면을 한 번 오가면 다른 자리가 됐다 — 이유·
     수치는 masks.py 의 `SAME`). 더하기는 같은 자리를 건너뛰고(`masks.merge`), 빼기는 같은 자리만 뺀다(`masks.subtract`), 영역이
-    '바뀌었나' 는 `same_rects`. 화면의 `sameRect`·`MASK_SAME` 이 같은 식이다 — 고치면 둘 다. 더하기는 test·화면 비율이 1% 넘게 다른 그림·한도(500개) 넘김을
+    '바뀌었나' 는 `same_rects`. 화면의 `sameRect`·`MASK_SAME` 이 같은 식이다 — 고치면 둘 다. 더하기는 화면 비율이 1% 넘게 다른 그림·한도(500개) 넘김을
     건너뛴다. **비율은 장마다 파일을 열어 EXIF 회전을 적용한 화면 크기로 본다**(`_display_ratio`, 11-16 — 전에는 DB 의 원시 비율이
     맞으면 파일을 안 열어서, 16:9 로 찍어 90도 돌려 보는 사진에 영역이 엉뚱한 자리로 들어갔다. 파일을 못 열면 DB 크기로 보고
     그것도 어긋나면 unreadable. 사본 서버 실측: 141장 더하기 0.86초). 화면은 적용 직전에 목록을 다시 받는다(`freshMaskTemplate`).
@@ -224,8 +228,8 @@
     고친다: 한 줄 값은 그 줄을 바꾸고(줄 끝 주석은 `_line_comment` — 떼어도 같게 읽히는 첫 ' #'), 없던 칸은 `_FIELD_ORDER` 자리에 넣고,
     비운 칸은 줄을 뺀다(split 은 `split:`). 키는 키 줄의 이름만 바꾼다. 다시 읽어 그 카메라만 기대대로(`merged`) 바뀌었을 때만 쓴다 —
     flow 한 줄 항목처럼 못 고치는 모양은 400(손으로). `dry_run` 은 확인까지만 한다. **server 가 막는 것(409)**: 분할이 정해진
-    이미지(`store.camera_image_stats` 의 assigned)가 있는 카메라의 고정 분할(split.py 는 정한 분할을 안 옮겨 두 분할로 갈린다), 가릴
-    영역이 있는 이미지(masked)가 있는데 test 고정. **시간대를 바꾸면** 그 카메라 이미지의 `captured_at` 을 `capture_time` 으로 다시
+    이미지(`store.camera_image_stats` 의 assigned)가 있는 카메라의 고정 분할(split.py 는 정한 분할을 안 옮겨 두 분할로 갈린다)
+    (11-24 전에는 가릴 영역이 있는 이미지가 있는 카메라의 test 고정도 막았다). **시간대를 바꾸면** 그 카메라 이미지의 `captured_at` 을 `capture_time` 으로 다시
     센다(`store.set_captured_at` — updated_at 은 그대로, 다시 셀 수 없으면 그대로). 지우기와 같은 두 잠금을 같은 순서로 쥔다.
     키를 바꾸면 캡처 세션도 새 키로(`rename_camera`). 화면 목록의 `fields`(`camera_fields`)가 고치기 칸을 채운다.
   - **여러 카메라의 고정 분할만 한 번에 (11-23, `provenance.set_splits` — AI Hub 카메라 백 대를 train 으로 고정하려고).**
@@ -259,8 +263,7 @@
     센다. `tests/test_camera_move.py` 가 이 줄을 빼면 실패한다). 순서는 키 바꾸기와 같다(하드링크 → `store.move_camera_rows` 한
     트랜잭션, 그사이 경로·카메라가 바뀐 행이 있으면 안 바꿈 → 옛 이름 지우기). DB 를 통째로 뜨지 않고 `backups/camera_moves.jsonl`
     에 옮긴 것을 남긴다. **막는 것(`MoveBlocked` → 409)**: 분할이 정해진 이미지를 옮겨 새 카메라가 두 분할에 걸치는 때(고정 분할·
-    이미 있는 이미지의 분할과 다름 — 미배정은 막지 않는다), 가릴 영역이 있는 이미지를 test 고정 카메라로(`mask_block` 과 같은
-    뜻 — 규칙을 바꾸면 둘 다), 새 경로가 디스크·DB 에 이미 있음, 출처 없는 이미지. `dry_run` 은 세기만 한다(화면의 확인 문구).
+    이미 있는 이미지의 분할과 다름 — 미배정은 막지 않는다), 새 경로가 디스크·DB 에 이미 있음, 출처 없는 이미지. `dry_run` 은 세기만 한다(화면의 확인 문구).
     키 바꾸기처럼 **작업 큐에서 돈다**(`camera_move`, 도는 작업이 있으면 409)·같은 두 잠금. 화면은 옮긴 줄의 이름·카메라만 고치고
     (`applyToRows`), 라벨링의 지금 이미지는 다시 열지 않고 정보 줄만 맞춘다(`refreshCurMeta` — 되돌리기·확대를 지킨다). 고를
     목록은 `/api/cameras` 의 `registered`(등록 전부 — 필터용 `cameras` 는 이미지가 있는 카메라만이다).
@@ -303,11 +306,10 @@
   - **가릴 영역이 반 이상 덮은 박스는 기본으로 어느 수치에도 넣지 않는다**(`health.masked_out` — 학습 세트의
     `masks.split_boxes` 와 같은 판정). 그날 DB 는 승인 박스 1,277개 가운데 619개가 그런 박스였다(영역으로 덮은 자리에 자동 라벨
     박스가 남는다) — 640 입력에서 짧은 변 32px 미만이 넣고 세면 79%, 빼면 62% 다. **이 DB 의 박스를 SQL 로 바로 세어 말할
-    때도 가려진 박스를 뺐는지 밝힐 것**(11-15 에 내가 79% 를 그냥 말했다). **test 분할 이미지의 박스는 빼지 않는다** —
-    학습 세트·내보내기가 test 는 칠하지도 빼지도 않는다(`trainer.build_dataset`·`export_yolo` 의 `split == "test"`). 영역을 먼저
-    덮고 나중에 test 로 배정된 이미지가 있으면 `masks.test_images` 와 '눈여겨볼 것' 에 나온다(11-15 리뷰에서 고침 — 그 전에는
-    분할을 안 보고 빼서 test 박스가 적게 세어졌다). **판정은 `masks.py` 한 곳에 있다** — 박스가 빠지는가는 `masks.drops`,
-    test 예외는 `masks.applies_to` 이고 trainer·export·health 가 함께 쓴다(11-15 — 전에는 셋이 따로 적었다. 다시 따로 적지 말
+    때도 가려진 박스를 뺐는지 밝힐 것**(11-15 에 내가 79% 를 그냥 말했다). **test 분할도 같다**(2026-11-24 — test 의 영역은
+    칠하지 않고 채점에서 빼는 자리라 그 박스는 test 라벨에서도 빠진다. 11-15 ~ 11-23 에는 test 는 칠하지도 빼지도 않아 여기서도
+    빼지 않았다). 영역이 있는 test 이미지 수는 `masks.test_images` 와 '눈여겨볼 것' 에 나온다. **판정은 `masks.py` 한 곳에
+    있다** — 박스가 빠지는가는 `masks.drops`, 칠하는가(test 만 안 칠한다)는 `masks.paints` 이고 trainer·export·health 가 함께 쓴다(11-15 — 전에는 셋이 따로 적었다. 다시 따로 적지 말
     것). `tests/test_health_dataset.py` 가 진짜 학습 세트·내보내기를 임시 폴더에 만들어 라벨 줄 수를 `health.report` 와 견준다.
   - 박스 크기는 긴 변을 imgsz 에 맞췄을 때의 짧은 변(`short_side`)이다. DB 의 원시 크기로 세서 EXIF 로 돌려 보는 그림은
     어긋난다(파일을 열어야 알 수 있어 그대로 뒀다). 클래스의 `units` 는 분할이 통째로 옮기는 단위다(`health.unit_ids` — 같은
@@ -342,7 +344,10 @@
   비어 train 한 장을 빌린 때(`val_borrowed`)는 val 줄을 내지 않는다. 수치는 `health.report` 의 분할별 수와 같아야 한다
   (`tests/test_health_dataset.py`).
 - **GPU 작업(학습·자동 라벨링)이 도는 동안 예측 비교와 SAM(C·R)은 CPU 로 돈다**(`jobs.gpu_busy`). 시작할 때 `server.free_gpu()`
-  가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). `C` 모드에서는
+  가 모든 탭의 SAM·예측 모델을 내린다(함정 9). SAM 은 외접 박스만 낸다(마스크는 저장하지 않는다, `origin='sam'`). **작게 나오면(짧은 변 `sam.crop_below` 64px 미만) 클릭
+  주변 정사각형만 잘라 한 번 더 묻는다**(2026-11-25 사용자 결정 — 측정과 규칙은 segmenter.py 머리말·docs/experiments.md 'SAM 클릭
+  모델 비교', 같은 규칙의 측정 `runs/sam_click_bench/bench.py --variant thybrid` 와 함께 고칠 것). 잘라 넣은 뒤에는 다음 클릭이
+  통째 그림을 다시 인코딩한다(`_cur` 를 비움). `C` 모드에서는
   모든 좌클릭이 SAM 으로 간다(고르거나 옮기려면 `B` 모드).
 - '드문 클래스 먼저'·'태그 순'(11-10, `_list_by_tag`) 정렬·클래스 필터는 목록과 **같은 WHERE**(`_list_where`·`count_images`)로 센다 — 어긋나면 목록 묶음이 틀어진다.
   카메라·도메인·분할 필터도 같은 WHERE 에 있다. **분할 필터는 보기만 한다**(`/api/splits`) — 웹 UI 에 분할을 바꾸는 길을 넣지 말 것

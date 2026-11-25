@@ -12,8 +12,8 @@
 - 이미 있는 영역 뒤에 더한다. `--replace` 면 고른 장의 영역을 이것으로 바꾼다(`--replace` 에 영역을 안 주면 그 장들의
   영역을 지운다 — `--ids` 만). 이 도구로 넣는 것은 사각형뿐이다 — 다각형(2026-11-19)은 검수 화면에서 그리고, 이미 있는
   다각형은 더할 때 그대로 남는다(대조 그림에도 칠해진다).
-- **test 이미지에는 넣지 않는다**(분할이 test 이거나 cameras.yaml 에서 test 로 고정한 카메라면 멈춘다) — 평가는 실제
-  화면 그대로여야 한다.
+- test 이미지에도 넣는다 — test 의 영역은 칠하지 않고 그 자리의 라벨·예측을 채점에서 뺀다(masks.py 'test 의 영역',
+  2026-11-24 사용자 결정. 그 전에는 test 이미지에서 멈췄다).
 - 영역들의 합집합이 박스 넓이의 반 이상을 덮으면 그 박스는 **학습 라벨에서만** 빠진다(DB 박스는 그대로). 반 미만으로
   덮이는 박스는 그만큼 칠해진 채로 배운다 — 조금은 괜찮고, 크게 덮이면 영역을 좁히거나 그림 가장자리면 자른다
   (`tools/crop_images.py`, 판정은 docs/label-rules.md) — 보기에서 '일부 가림'.
@@ -43,7 +43,6 @@ import numpy as np  # noqa: E402
 
 from autolabel.config import Config  # noqa: E402
 from autolabel.masks import DROP, MAX_MASKS, bbox, clean, covered, paint_array  # noqa: E402
-from autolabel.provenance import load_cameras  # noqa: E402
 from autolabel.store import Store  # noqa: E402
 
 Rect = tuple[int, int, int, int]
@@ -150,17 +149,14 @@ def main() -> int:
 
     cfg = Config.load(a.config)
     store = Store(cfg.db)
-    cams = load_cameras(cfg.cameras)
     ids = sorted(wanted)
     with store.connect() as con:
         q = ",".join("?" * len(ids))
         rows = con.execute(f"SELECT id, path, status, updated_at, camera, split FROM images WHERE id IN ({q}) ORDER BY id",
                            ids).fetchall()
     missing = sorted(set(ids) - {r["id"] for r in rows})
-    tests = [r["id"] for r in rows
-             if r["split"] == "test" or (r["camera"] in cams and cams[r["camera"]].split == "test")]
-    if missing or tests:
-        raise SystemExit(f"멈춘다 — DB 에 없는 id {missing} · test 이미지 {tests} (평가는 실제 화면 그대로)")
+    if missing:
+        raise SystemExit(f"멈춘다 — DB 에 없는 id {missing}")
 
     plan, shown = [], []
     tally: collections.Counter = collections.Counter()

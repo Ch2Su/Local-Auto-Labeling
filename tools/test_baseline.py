@@ -32,6 +32,12 @@
   `kind:<형태>`·`mount:<설치>` 도 잰다(카메라째 한 분할이라 test 의 카메라 = 처음 보는 카메라다).
   all 은 collected 도 담는다 — 새 수집분이 test 로 들어오면 장수가 바뀌었다고 알리니, 09-27 기준선과 같은
   범위는 legacy 로 견줄 것.
+
+**가릴 영역 = 채점에서 뺄 자리 (2026-11-24 사용자 결정 — src/autolabel/masks.py 머리말 'test 의 영역').** 그림은 원본 그대로
+복사하고(칠하지 않는다), 반 넘게 덮인 정답 박스는 라벨에서 빼고(`masks.drops` — 학습 세트와 같은 판정), 칠할 자리를
+`ignore/<분할>/<이름>.png` 로 남겨 그 자리에 반 넘게 든 예측을 셈에서 뺀다(`wsl/eval_test.py` 의 `ignore_validator` — pod·WSL
+평가와 같은 코드). 기록의 `ignore` 에 영역이 있던 장수·뺀 정답 박스·운영 문턱(predict.conf) 위에서 뺀 예측 수를 남긴다.
+`boxes` 는 뺀 뒤의 정답 수다 — 11-24 전 기록과 장수·박스 수가 다르면 그 몫이 섞인 것이다.
 """
 
 from __future__ import annotations
@@ -49,8 +55,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ -> 저장소 루트
 
 from autolabel.config import Config, resolve
+from autolabel.masks import IGNORE_DIR, from_row, split_boxes, write_ignore
 from autolabel.provenance import load_cameras
 from autolabel.yolo_io import Box, write_yolo_txt
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "wsl"))
+from eval_test import ignore_summary, ignore_validator  # noqa: E402  — 채점에서 뺄 자리는 pod·WSL 평가와 같은 코드로
 
 HISTORY = "runs/test_baseline/history.jsonl"
 
@@ -140,7 +150,9 @@ def build_split(cfg: Config, split: str, out: Path,
                 like: str | None = None, not_like: str | None = None) -> list[dict]:
     """DB(읽기 전용)에서 그 분할만 복사해 Ultralytics 가 읽을 수 있는 폴더로 만든다.
 
-    복사한 이미지마다 {id, path, source, img(복사본), counts(클래스별 박스 수)} 를 돌려준다.
+    복사한 이미지마다 {id, path, source, img(복사본), counts(클래스별 박스 수), ignored(가릴 영역 때문에 뺀 정답 박스 수),
+    masked(영역이 있나)} 를 돌려준다. 가릴 영역이 있으면 반 넘게 덮인 박스를 라벨에서 빼고 칠할 자리를 ignore/ 그림으로 남긴다
+    (머리말 — 그림은 칠하지 않는다).
     도메인별 목록은 이걸 걸러 txt 로 만든다 — 이미지를 도메인마다 다시 복사하지 않는다.
     """
     con = sqlite3.connect(f"file:{cfg.db.as_posix()}?mode=ro", uri=True)
@@ -164,6 +176,14 @@ def build_split(cfg: Config, split: str, out: Path,
     ):
         boxes.setdefault(r["image_id"], []).append(
             Box(r["cls"], r["cx"], r["cy"], r["w"], r["h"], r["conf"], r["origin"]))
+    masks: dict[int, list] = {}
+    try:      # 다각형 열(11-19)이 없는 옛 DB 는 NULL(사각형)로, masks 표가 없는 DB(11-09 전)는 영역 없이 읽는다
+        poly = "m.poly" if "poly" in {r[1] for r in con.execute("PRAGMA table_info(masks)")} else "NULL"
+        for r in con.execute(f"SELECT m.image_id, m.x1, m.y1, m.x2, m.y2, {poly} FROM masks m JOIN images i ON i.id = m.image_id"
+                             " WHERE i.status='approved' AND i.split=? ORDER BY m.image_id, m.id", (split,)):
+            masks.setdefault(r[0], []).append(from_row(*tuple(r)[1:]))
+    except sqlite3.OperationalError:
+        pass
     con.close()
 
     img_dir, lab_dir = out / "images" / split, out / "labels" / split
@@ -181,10 +201,15 @@ def build_split(cfg: Config, split: str, out: Path,
         stem = f"{src.stem}__{r['id']}"     # 다른 폴더의 동명 파일 충돌 방지 (여기선 id 로 충분)
         dst = img_dir / f"{stem}{src.suffix}"
         shutil.copy2(src, dst)
-        bs = boxes.get(r["id"], [])
+        bs, dropped = boxes.get(r["id"], []), []
+        rects = masks.get(r["id"])
+        if rects:
+            bs, dropped = split_boxes(bs, rects)
+            write_ignore(src, out / IGNORE_DIR / split / f"{stem}.png", rects)
         write_yolo_txt(lab_dir / f"{stem}.txt", bs)
         items.append({"id": r["id"], "path": r["path"], "source": r["source"], "camera": r["camera"],
-                      "domain": r["domain"], "img": dst, "counts": Counter(b.cls for b in bs)})
+                      "domain": r["domain"], "img": dst, "counts": Counter(b.cls for b in bs),
+                      "ignored": len(dropped), "masked": bool(rects)})
     return items
 
 
@@ -260,6 +285,10 @@ def load_history(path: Path) -> list[dict]:
 def print_result(rec: dict, prev: dict | None, names: list[str]) -> None:
     """새로 잰 것을 직전 기록(같은 도메인·분할)과 클래스별로 나란히."""
     title = f"[{rec['domain_label']}] {rec['images']}장 / 박스 {rec['boxes']}개"
+    ig = rec.get("ignore") or {}
+    if ig.get("images"):
+        title += (f" (가릴 영역 {ig['images']}장 — 정답 {ig.get('boxes', 0)}개와 그 자리의 예측"
+                  f" {ig.get('preds_at_conf', 0)}개(conf ≥ {ig.get('conf')})를 채점에서 뺌)")
     print(f"\n{title}   mAP50-95 {rec['map']:.4f}   mAP50 {rec['map50']:.4f}"
           f"   P {rec['precision']:.4f}   R {rec['recall']:.4f}")
     if prev:
@@ -362,6 +391,8 @@ def main():
 
     from ultralytics import YOLO
 
+    validator = ignore_validator()
+    op_conf = float(cfg.get("predict.conf", 0.25))
     model = YOLO(weights)
     check_class_order(model.names, names, weights)
     digest = sha256(Path(weights))
@@ -370,7 +401,7 @@ def main():
     new_recs = []
     for key, label, sub, data in plan:
         res = model.val(data=str(data), split="val", imgsz=imgsz, device=cfg.device,
-                        workers=0, plots=False, verbose=False,
+                        workers=0, plots=False, verbose=False, validator=validator,
                         project=str(out.parent), name=f"{out.name}_{key}_val", exist_ok=True)
         counts = sum((it["counts"] for it in sub), Counter()) if sub is not None else None
         rec = {
@@ -382,6 +413,12 @@ def main():
             **summarize(res, names, counts),
             "note": args.note,
         }
+        ig = ignore_summary(validator, op_conf)
+        if sub is not None:
+            ig["images"] = sum(1 for it in sub if it["masked"])       # 영역이 있던 장(그림이 없을 수 없다 — 위에서 썼다)
+            ig["boxes"] = sum(it["ignored"] for it in sub)
+        if ig.get("images"):
+            rec["ignore"] = {**ig, "conf": op_conf}
         if key in MANUAL:
             rec["domain_rule"] = DOMAIN_RULE
         prev = next((r for r in reversed(history)       # 같은 규칙으로 가른 기록끼리만 (11-04 전 cctv 는 옛 규칙)
