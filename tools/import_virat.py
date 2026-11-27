@@ -90,7 +90,7 @@ from autolabel.grouping import base_name  # noqa: E402
 from autolabel.provenance import load_cameras  # noqa: E402
 from autolabel.scoring import image_uncertainty  # noqa: E402
 from autolabel.store import Store  # noqa: E402
-from autolabel.yolo_io import Box  # noqa: E402
+from autolabel.yolo_io import Box, plain_image_open  # noqa: E402
 
 VIRAT_ROOT = Path(r"E:\datasets\VIRAT_Ground_partial\VIRAT Ground Dataset")
 GT_CLASS = {1: "person", 2: "car", 3: "car", 5: "bicycle"}       # 0 구역 상자·4 object 는 버린다
@@ -399,8 +399,7 @@ class Labeler:
             for k, c, xyxy in zip(r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist()):
                 preds.append((self.model.names[int(k)], float(c), *map(float, xyxy)))
         elif isinstance(source, (str, Path)):
-            from PIL import Image
-            with Image.open(source) as im:
+            with plain_image_open()(source) as im:
                 w, h = im.size
         else:
             h, w = source.shape[:2]

@@ -121,7 +121,7 @@ from autolabel.predictor import build_class_map  # noqa: E402
 from autolabel.provenance import add_camera, load_cameras, remove_cameras, set_splits  # noqa: E402
 from autolabel.scoring import image_uncertainty  # noqa: E402
 from autolabel.store import Store, copy_db  # noqa: E402
-from autolabel.yolo_io import Box, iter_images  # noqa: E402
+from autolabel.yolo_io import Box, iter_images, plain_image_open  # noqa: E402
 
 AIHUB_ROOT = Path(r"E:\datasets\120.개인형 이동장치 안전 데이터\01.데이터")
 SOURCE = "aihub_pm"          # images.source — 공개 데이터셋은 데이터셋 이름을 쓴다(docs/provenance.md 'DB 변경')
@@ -491,7 +491,7 @@ class Frames:
 
 def signature(data: bytes) -> np.ndarray:
     """그림 바이트 → 32×18 흑백 축소본(평균 0·표준편차 1). 두 장의 밝기 무늬가 같은지는 `scene_corr` 로 본다."""
-    im = Image.open(io.BytesIO(data))
+    im = plain_image_open()(io.BytesIO(data))
     im.draft("L", (THUMB[0] * 8, THUMB[1] * 8))
     a = np.asarray(im.convert("L").resize(THUMB, Image.BILINEAR), dtype=np.float32).ravel()
     return (a - a.mean()) / (a.std() + 1e-6)
@@ -859,7 +859,7 @@ def write_sheets(picks: list[Pick], classes: list[str], out_dir: Path, stamp: st
         rows = (len(part) + cols - 1) // cols
         sheet = Image.new("RGB", (cw * cols, ch * rows), (24, 24, 24))
         for k, p in enumerate(part):
-            im = Image.open(io.BytesIO(p.data)).convert("RGB").resize((cw, ch), Image.LANCZOS)
+            im = plain_image_open()(io.BytesIO(p.data)).convert("RGB").resize((cw, ch), Image.LANCZOS)
             dr = ImageDraw.Draw(im)
             sx, sy = cw / p.w, ch / p.h
             for q in p.pm:

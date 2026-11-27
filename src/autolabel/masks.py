@@ -43,6 +43,9 @@ from typing import Iterable, Sequence
 import numpy as np
 from PIL import Image, ImageOps
 
+# 그림을 열거나 EXIF 를 읽다 나는 예외 — server._UNREADABLE 과 같다. 영역을 칠하거나(`write_masked`) 뺄 자리 그림을 쓰는
+# (`write_ignore`) 쪽이 이것으로 잡는다(학습 세트·내보내기, 2026-11-27 — 전에는 너무 큰 그림의 예외가 빠져 있었다).
+UNREADABLE = (OSError, SyntaxError, ValueError, Image.DecompressionBombError)
 IGNORE_DIR = "ignore"       # 평가에서 뺄 자리의 그림(`write_ignore`) — 라벨 폴더 `labels` 와 같은 자리의 이 이름 폴더
 
 GRAY = 114                  # Ultralytics 레터박스·모자이크 바탕과 같은 회색

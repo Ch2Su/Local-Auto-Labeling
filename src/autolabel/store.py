@@ -247,10 +247,15 @@ def _read_masks(con: sqlite3.Connection, image_id: int) -> list:
 
 def _approved_masks(con: sqlite3.Connection) -> dict[int, list]:
     """승인 이미지의 가릴 영역 {이미지 id: [영역, …]} — 박스를 읽은 그 연결(같은 읽기 시점)로 읽는다."""
+    return _masks_where(con, " WHERE i.status='approved'", ())
+
+
+def _masks_where(con: sqlite3.Connection, where: str, args) -> dict[int, list]:
+    """`images i{where}` 에 드는 이미지의 가릴 영역 {이미지 id: [영역, …]} — where 는 목록 조건(`_list_where`)의 꼴이다."""
     out: dict[int, list] = {}
     for r in con.execute(
-            "SELECT m.image_id, m.x1, m.y1, m.x2, m.y2, m.poly FROM masks m JOIN images i ON i.id = m.image_id"
-            " WHERE i.status='approved' ORDER BY m.image_id, m.id"):
+            "SELECT m.image_id, m.x1, m.y1, m.x2, m.y2, m.poly FROM masks m"
+            f" WHERE m.image_id IN (SELECT i.id FROM images i{where}) ORDER BY m.image_id, m.id", list(args)):
         out.setdefault(int(r[0]), []).append(from_row(*tuple(r)[1:]))
     return out
 
@@ -789,15 +794,22 @@ class Store:
         이미지가 많을 때 **다른 장면의 드문 클래스**부터 채우려는 것이다. 사람이 그린 박스
         (conf 없음)는 신뢰도 1 로 본다. 점수가 같으면 불확실한 순.
         목록 묶음(100개씩…)과 맞도록 같은 조건의 전체를 점수로 줄 세운 뒤 잘라 준다.
+        **가릴 영역이 반 이상 덮은 박스는 점수에 넣지 않는다 (2026-11-27, Gemini 리뷰 묶음 7)** — 라벨 파일에 없을 박스다
+        (희소도 `class_rarity` 와 같은 판정). 넣고 매기면 템플릿으로 덮어 둔 자리의 헛 박스 하나로 그 이미지가 맨 앞에 온다.
+        이미지·박스·영역은 한 시점으로 읽는다(희소도는 그 앞에 따로 읽는다 — 가중치일 뿐이라 어긋나도 순서만 조금 다르다).
         """
         rarity = self.class_rarity()
         where, args = _list_where(status, classes, empty, camera, domain, split, tag, work)
         with self.connect() as con:
+            con.execute("BEGIN")
             rows = con.execute(f"SELECT {_LIST_COLS} FROM images i{where}", args).fetchall()
-            boxes = con.execute(
-                "SELECT bx.image_id, bx.cls, bx.conf FROM boxes bx"
+            found = con.execute(
+                "SELECT bx.image_id AS image_id, bx.cls AS cls, bx.conf AS conf,"
+                " bx.cx AS cx, bx.cy AS cy, bx.w AS w, bx.h AS h FROM boxes bx"
                 f" WHERE bx.image_id IN (SELECT i.id FROM images i{where})", args,
             ).fetchall()
+            rects = _masks_where(con, where, args)
+        boxes = [(r["image_id"], r["cls"], r["conf"]) for r in found if not _masked_out(r, rects)]
         best: dict[int, tuple[float, int]] = {}
         for image_id, cls, conf in boxes:
             w = rarity.get(cls, {"weight": 1.0})["weight"]

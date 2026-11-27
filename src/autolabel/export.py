@@ -29,7 +29,7 @@ from pathlib import Path
 import yaml
 
 from .config import ROOT, Config, resolve
-from .masks import IGNORE_DIR, paints, split_boxes, write_ignore, write_masked
+from .masks import IGNORE_DIR, UNREADABLE, paints, split_boxes, write_ignore, write_masked
 from .split import SPLITS
 from .store import Store
 from .yolo_io import write_yolo_txt
@@ -74,11 +74,12 @@ class ExportReport:
         elif self.images:
             lines.append("  DB 에 분할(train·val·test)이 없어 data.yaml 의 train·val 이 모두 images/ 입니다")
         if self.masked or self.masked_test:
-            lines.append(f"가릴 영역  : {self.masked}장을 회색(114)으로 칠해 내보냈고, 반 넘게 가려진 박스 "
-                         f"{self.mask_dropped}개는 라벨에서 뺐습니다")
+            lines.append(f"가릴 영역  : 반 넘게 가려진 박스 {self.mask_dropped}개를 라벨에서 뺐습니다"
+                         + (f" — {self.masked}장은 그 자리를 회색(114)으로 칠해 내보냈습니다" if self.masked else ""))
         if self.masked_test:
             lines.append(f"  test {self.masked_test}장은 칠하지 않았습니다 — 그 자리는 채점에서 뺄 곳으로 {IGNORE_DIR}/ 에 "
-                         "그림으로 남겼습니다(wsl/eval_test.py 가 읽는다)")
+                         "그림으로 남겼습니다(wsl/eval_test.py 가 읽는다"
+                         + ("" if self.copied_images else " — 받는 쪽이 원본을 images/ 에 두면 그 그림과 짝이 된다") + ")")
         if self.masked_raw:
             lines.append(f"  가릴 영역이 있는 {self.masked_raw}장은 칠하지 않고 DB 박스 그대로 썼습니다 "
                          "(이미지를 함께 내보내지 않아서)")
@@ -199,6 +200,10 @@ def export_yolo(
             except FileNotFoundError:
                 report.missing.append(str(src))
                 continue
+            except UNREADABLE as exc:    # 깨진·너무 큰 그림 — 칠하지 않고 내보내면 가린 자리가 드러난다(학습 세트와 같이 멈춘다)
+                if not rects:
+                    raise
+                raise RuntimeError(f"가릴 영역을 칠하지 못했습니다 (id {row['id']}): {src}: {exc}") from exc
             report.copied_images += 1
             if rects:
                 boxes, dropped = split_boxes(boxes, rects)
@@ -208,7 +213,10 @@ def export_yolo(
             report.masked_test += 1
             report.mask_dropped += len(dropped)
             if src.exists():
-                write_ignore(src, out_dir / IGNORE_DIR / f"{stem}.png", ignore)
+                try:
+                    write_ignore(src, out_dir / IGNORE_DIR / f"{stem}.png", ignore)
+                except UNREADABLE as exc:
+                    raise RuntimeError(f"채점에서 뺄 자리의 그림을 쓰지 못했습니다 (id {row['id']}): {src}: {exc}") from exc
         seen.add(stem.lower())
         write_yolo_txt(labels_dir / f"{stem}.txt", boxes)
         report.images += 1

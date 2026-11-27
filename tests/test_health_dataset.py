@@ -160,6 +160,31 @@ def test_keeping_masked_boxes_counts_the_database(cfg, store, masked):
     assert r["boxes"] == 14 and sum(got.values()) == 12                   # test 장에서 둘이 빠졌다
     assert (done.masked_raw, done.masked_test, done.mask_dropped) == (2, 1, 2)
     assert len(list((out / "ignore").glob("*.png"))) == 1                  # 원본이 있으니 그 자리 그림도 남긴다
+    # 요약은 칠한 장이 없으면 '칠해 내보냈다' 고 적지 않는다 (2026-11-27 — 전에는 '0장을 회색으로 칠해 내보냈고' 였다)
+    text = done.summary()
+    assert "박스 2개를 라벨에서 뺐습니다" in text and "칠해 내보냈" not in text
+    assert "test 1장은 칠하지 않았습니다" in text and "원본을 images/ 에 두면" in text
+
+
+@pytest.mark.parametrize("which", ["train", "test"])
+def test_an_export_stops_at_a_masked_image_it_cannot_read(cfg, store, masked, tmp_path, which):
+    """가릴 영역이 있는 그림을 못 읽으면(깨진 파일) 어느 장인지 말하고 멈춘다 — 학습 세트와 같다 (2026-11-27, Gemini 리뷰
+    묶음 7). 전에는 없는 파일만 잡아, 칠할 그림은 OSError 그대로였고 test 의 뺄 자리 그림은 try 밖에서 났다."""
+    Path(store.get_image(masked[which])["path"]).write_bytes(b"not an image")
+    with pytest.raises(RuntimeError, match=rf"\(id {masked[which]}\)"):
+        export_yolo(cfg, store, tmp_path / "exported", with_images=True)
+
+
+def test_an_image_too_large_to_open_stops_the_training_set_by_name(cfg, store, masked, monkeypatch):
+    """너무 큰 그림(`DecompressionBombError` — OSError 가 아니다)도 같은 알림으로 멈춘다(server._UNREADABLE 과 같은 범위)."""
+    import autolabel.trainer as trainer
+
+    def bomb(*a, **k):
+        raise Image.DecompressionBombError("too many pixels")
+
+    monkeypatch.setattr(trainer, "write_masked", bomb)
+    with pytest.raises(RuntimeError, match="가릴 영역을 칠하지 못했습니다"):
+        build_dataset(cfg, store)
 
 
 # ------------------------------------------- 학습을 시작할 때의 알림 (trainer.BuildReport.class_gaps, 2026-11-16)

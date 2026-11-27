@@ -144,5 +144,13 @@
   `helpers.post_endpoint` 로 꺼내 `helpers.StreamBody` 를 넘겨 직접 부른다** — TestClient 는 본문을 한 번에 줘서 '몇 조각째에서
   멈췄나'·'도중에 취소됐다' 를 만들 수 없다. `wsl/sync_dataset.sh` 의 `ignore/` 맞추기는 테스트가 없다(WSL 의 임시 폴더에서
   손으로 돌려 봤다 — 복사 · 지운 그림 걷기 · 원본에 폴더가 없을 때 비우기).
+- **Gemini 리뷰 묶음 7 (2026-11-27)** — 전부 고치기 전 코드로 돌려 실패하는 것을 봤다. `tests/test_store.py` 의 '드문 클래스 먼저'
+  점수(덮인 자리의 pickup 0.99 가 통째로·꼭 반(다각형)·40% 덮인 세 장과 다 덮인 한 장), `tests/test_health_dataset.py` 의 내보내기
+  (라벨만 내보낸 요약 문구 · 영역이 있는 train·test 그림을 깨뜨리면 그 id 를 말하고 멈추는가 · 너무 큰 그림 예외는 `write_masked`
+  를 갈아 끼워), `tests/test_jobs.py`(진짜 `JobManager` — 조각은 `_install_tees()` 가 준 tee 에 직접 쓴다: pytest 가 테스트마다
+  sys.stdout 을 갈아서 print 는 첫 테스트에서만 로그에 닿는다. CR·LF 는 `chr()` 로 적었다 — 함정 6), `tests/test_js_sync.py`
+  (`syncCurrentAfterJob`·`sameBoxes`·한 줄 `const CUR_META_KEYS` — 이름·모양을 바꾸면 `PARTS` 도), `tests/test_yolo_io.py` 의
+  모델을 올리는 도구 목록(`import_aihub_pm`·`label_qa`·`import_virat`·`legacy_groups`·`wsl/eval_test.py` — 모델을 올리는 도구를
+  더하면 그 목록에 넣을 것).
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.

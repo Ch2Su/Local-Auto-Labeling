@@ -281,6 +281,8 @@ def duplicate_rows(images: list[dict], gt, classes) -> list[dict]:
 def render_sheet(rows, images_by_id, gt, classes, path: Path, title: str):
     from PIL import Image, ImageDraw, ImageOps
 
+    from autolabel.yolo_io import plain_image_open
+
     tile, cols = 256, 6
     n = len(rows)
     if not n:
@@ -292,7 +294,8 @@ def render_sheet(rows, images_by_id, gt, classes, path: Path, title: str):
         im = images_by_id[r["image_id"]]
         # 예측 박스(res.orig_shape)도 라벨도 EXIF 회전을 적용한 화면 기준이다. 그냥 열면
         # 회전 사진 49장에서 크롭이 엉뚱한 곳을 자른다 (CLAUDE.md 'EXIF 회전 이미지').
-        img = ImageOps.exif_transpose(Image.open(im["path"])).convert("RGB")
+        # 이 프로세스에는 Ultralytics 가 올라와 있다 — 갈아 끼운 열기는 못 알아보는 파일에서 패키지를 깔려 든다(yolo_io)
+        img = ImageOps.exif_transpose(plain_image_open()(im["path"])).convert("RGB")
         W, H = img.size
         box = [float(v) for v in (r["pred_box"] or r["gt_box"]).split()]
         cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2

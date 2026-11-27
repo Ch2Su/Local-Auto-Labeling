@@ -3711,6 +3711,9 @@ function renderImgMeta(meta) {
       (meta.captured_at ? ` ${meta.captured_at.replace("T", " ").slice(0, 19)}` : " · 촬영 시각 모름") : "");
 }
 
+// 이미지를 다시 열지 않고 맞추는 정보 칸 — 박스·영역·상태가 아닌 것(refreshCurMeta·syncCurrentAfterJob 이 함께 쓴다)
+const CUR_META_KEYS = ["name", "path", "camera", "captured_at", "camera_place", "grp", "split", "work"];
+
 /** 지금 이미지의 이름·카메라·촬영 시각이 서버에서 바뀐 뒤(카메라 옮기기 — gallery.js bulkCamera) 그 칸들만 다시 받는다.
  *  이미지를 다시 열지 않는다 — 박스·가릴 영역·되돌리기·확대는 그대로다(옮기기는 그것들을 바꾸지 않는다). */
 async function refreshCurMeta() {
@@ -3718,7 +3721,7 @@ async function refreshCurMeta() {
   const id = S.cur.id;
   const meta = await api(`/api/images/${id}`);
   if (!S.cur || S.cur.id !== id) return;          // 그새 다른 이미지로 갔다
-  for (const k of ["name", "path", "camera", "captured_at", "camera_place", "grp", "split", "work"]) S.cur[k] = meta[k];
+  for (const k of CUR_META_KEYS) S.cur[k] = meta[k];
   renderMaskTemplates();
   renderImgMeta({ ...meta, status: S.cur.status });
 }
@@ -4075,7 +4078,19 @@ async function syncCurrentAfterJob() {
     return;
   }
   if (S.dirty) return;      // 저장하지 못했다(알림은 saveBoxes 가 띄웠다) — 수정을 잃지 않게 그대로 둔다
-  if (meta.status === S.cur.status && sameBoxes(meta.boxes, S.boxes)) return;
+  if (meta.status === S.cur.status && sameBoxes(meta.boxes, S.boxes)) {
+    // 박스·상태는 같아도 정리(tidy)가 파일을 옮겨 이름·경로가 바뀌었을 수 있다 — 정보 줄만 맞춘다(다시 열지 않는다:
+    // 되돌리기·확대를 지킨다, refreshCurMeta 와 같은 칸). 전에는 그냥 돌아가 위의 이름이 옛 것으로 남았다 (2026-11-27)
+    let changed = false;
+    for (const k of CUR_META_KEYS) {
+      if (JSON.stringify(S.cur[k] ?? null) !== JSON.stringify(meta[k] ?? null)) { S.cur[k] = meta[k]; changed = true; }
+    }
+    if (changed) {
+      renderMaskTemplates();
+      renderImgMeta({ ...meta, status: S.cur.status });
+    }
+    return;
+  }
   await loadImage(id);
 }
 

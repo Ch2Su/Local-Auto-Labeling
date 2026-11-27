@@ -144,6 +144,27 @@ def test_nothing_in_the_package_opens_images_through_the_patched_opener():
     assert direct == []
 
 
+def test_the_tools_that_load_a_model_open_images_the_same_way():
+    """같은 프로세스에 YOLO 를 올리는 도구와 평가 스크립트도 그렇다 (2026-11-27, Gemini 리뷰 묶음 7) — 깨진 그림에서 OSError
+    대신 `ModuleNotFoundError: pi_heif` 가 났다. 모델을 올리는 도구를 더하면 이 목록에 넣을 것(주석에도 그 글자를 여는
+    괄호까지 쓰면 걸린다). `wsl/eval_test.py` 는 프로젝트 코드를 import 하지 않아 자동 설치 끄기도 제 손으로 둔다."""
+    from helpers import ROOT
+
+    loaders = [ROOT / "tools" / n for n in ("import_aihub_pm.py", "label_qa.py", "import_virat.py", "legacy_groups.py")]
+    loaders.append(ROOT / "wsl" / "eval_test.py")
+    for p in loaders:
+        text = p.read_text(encoding="utf-8")
+        assert "YOLO" in text, p.name                                   # 목록이 낡지 않았는지
+        assert [n for n, line in enumerate(text.splitlines(), 1) if "Image.open(" in line] == [], p.name
+    # 모델을 올리는데 이 목록에 없는 도구가 생기면 알린다
+    others = sorted(p.name for p in (ROOT / "tools").glob("*.py")
+                    if p not in loaders and "from ultralytics import YOLO" in p.read_text(encoding="utf-8")
+                    and "Image.open(" in p.read_text(encoding="utf-8"))
+    assert others == []
+    text = loaders[-1].read_text(encoding="utf-8")
+    assert text.index('os.environ.setdefault("YOLO_AUTOINSTALL", "false")') < text.index("from ultralytics")
+
+
 def test_the_rotated_size_and_the_scene_hash_also_use_the_plain_opener(tmp_path, monkeypatch):
     """갈아 끼운 `Image.open`(못 알아보는 파일에서 설치를 돌리는 것)을 흉내 내고, 그림을 여는 다른 길도 그것을 건드리지 않는지."""
     import sys

@@ -59,6 +59,10 @@ Runpod 를 먼저 권하지 않기·백업 전에 묻기)은 루트에도 남겼
      없다(데이터 점검의 '고정 분할 카메라를 빼면 묶음이 모자란 클래스' 가 알린다). cone·responder 는 val·test 에 1–7개뿐이다.
      표는 docs/experiments.md '분할이 세는 박스'. **남은 결정은 그대로다**: 고정한 공개 데이터셋을 비율에 넣을지(위), 평가
      카메라를 고정할지, scooter·cone·responder 가 있는 직접 모은 카메라를 더 모은 뒤 나눌지.
+     **11-27 (AI Hub 100장을 더 넣은 뒤, DB 사본):** 승인 295장(직접 모은 194 + AI Hub 101), 박스 3,538개 중 라벨에 남는 것
+     1,831개(car 708 · person 554 · truck 128 · pickup 87 · bicycle 80 · scooter 78 · motorcycle 69 · bus 50 · cone 40 ·
+     responder 37). scooter 는 78개 중 74개가 AI Hub(train 고정) 61장에 있고 직접 모은 것은 카메라 한 대의 2장 4개뿐이라
+     사정이 그대로다 — Gemini 도 첫 분할 전에 scooter 가 나오는 직접 모은 카메라를 한두 대 더 승인하기를 권했다.
 6. **라벨링 모델을 DetectView 배포 모델과 떼어 무겁게 (11-10 사용자 결정 — 새 데이터의 검수가 쌓이면 준비).** 자동 라벨링·
    P·label_qa 가 쓰는 `best.pt` 는 DetectView(m 640×384 — 그쪽이 `~/rfdetr_work` 에서 따로 학습)에 맞출 필요가 없다. 근거는
    09-18 A40 비교(docs/experiments.md — s640 대조 0.6515 → l960 0.7264·x960 0.7243, 크기와 해상도를 함께 바꿔 어느 쪽 덕인지는 모름).

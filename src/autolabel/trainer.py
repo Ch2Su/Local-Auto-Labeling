@@ -24,7 +24,7 @@ from typing import Callable
 import yaml
 
 from .config import Config, resolve
-from .masks import IGNORE_DIR, paints, split_boxes, write_ignore, write_masked
+from .masks import IGNORE_DIR, UNREADABLE, paints, split_boxes, write_ignore, write_masked
 from .split import SplitReport, ensure_splits
 from .store import Store
 from .yolo_io import write_yolo_txt
@@ -169,7 +169,7 @@ def build_dataset(cfg: Config, store: Store) -> BuildReport:
                 if rects:
                     write_ignore(src, root / IGNORE_DIR / split / f"{stem}.png", rects)
                     report.masked_test += 1
-        except (OSError, SyntaxError, ValueError) as exc:
+        except UNREADABLE as exc:
             if not rects:
                 raise
             raise RuntimeError(f"가릴 영역을 칠하지 못했습니다 (id {row['id']}): {src}: {exc}") from exc

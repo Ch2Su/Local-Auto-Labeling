@@ -131,6 +131,33 @@ def test_class_rarity_does_not_count_scenes_whose_boxes_are_all_covered(store, a
     assert store.get_boxes(seen) and all(store.get_boxes(i) for i in hidden)   # DB 의 박스는 그대로다
 
 
+def test_the_rare_order_does_not_score_boxes_under_a_masking_region(store, add_image):
+    """'드문 클래스 먼저' 의 이미지 점수 — 가릴 영역이 반 이상 덮은 박스는 매기지 않는다 (2026-11-27, Gemini 리뷰 묶음 7).
+    고치기 전에는 희소도만 라벨에 남는 박스로 세고 점수는 DB 의 박스 전부로 매겨, 덮어 둔 자리의 헛 박스(드문 클래스·높은
+    신뢰도) 하나로 검수 대기 이미지가 맨 앞에 왔다."""
+    for k in range(4):
+        add_image(f"car{k}.jpg", boxes=[box(cls=CAR)])
+    add_image("pickup.jpg", boxes=[box(cls=PICKUP)])
+    # 셋 다 왼쪽에 pickup 0.99(드문 클래스), 오른쪽에 car 0.5 — 영역이 pickup 을 통째로·꼭 반·40% 덮는다
+    both = [box(cls=PICKUP, cx=0.25, w=0.2, h=0.2, conf=0.99), box(cls=CAR, cx=0.75, w=0.2, h=0.2, conf=0.5)]
+    covered = add_image("covered.jpg", status="pending", boxes=both)
+    half = add_image("half.jpg", status="pending", boxes=both)
+    less = add_image("less.jpg", status="pending", boxes=both)
+    only = add_image("only.jpg", status="pending", boxes=[box(cls=PICKUP, conf=0.99)])
+    plain = add_image("plain.jpg", status="pending", boxes=[box(cls=CAR, conf=0.9)])
+    store.set_masks(covered, [(0.0, 0.0, 0.5, 1.0)])
+    store.set_masks(half, [((0.0, 0.0), (0.25, 0.0), (0.25, 1.0), (0.0, 1.0))])      # 다각형으로 그린 같은 자리
+    store.set_masks(less, [(0.0, 0.0, 0.23, 1.0)])
+    store.set_masks(only, [(0.0, 0.0, 1.0, 1.0)])
+    got = {d["id"]: (d["rare_score"], d["rare_cls"]) for d in store.list_images(status="pending", order="rare")}
+    w = store.class_rarity()[CAR]["weight"]
+    assert w == 0.25
+    assert got == {covered: (0.125, CAR), half: (0.125, CAR), less: (0.99, PICKUP), only: (0.0, None), plain: (0.225, CAR)}
+    order = [d["id"] for d in store.list_images(status="pending", order="rare")]
+    assert order[0] == less and order[-1] == only and order[1] == plain
+    assert store.list_images(status="pending", order="rare", limit=1, offset=1)[0]["id"] == plain
+
+
 # ----------------------------------------------------------------- 박스 저장과 변경 이력
 
 def test_first_save_on_an_empty_image_leaves_no_history(store, add_image):

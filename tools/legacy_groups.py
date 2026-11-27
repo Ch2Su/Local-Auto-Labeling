@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ 
 
 from autolabel.config import Config, pretrained_path, resolve
 from autolabel.grouping import base_name, group_images
+from autolabel.yolo_io import plain_image_open
 
 # 가로×세로 (세로 영상은 뒤집어서도 본다). 영상·CCTV·카메라에서 흔한 것만.
 STD_SIZES = {
@@ -183,7 +184,7 @@ def sheet(items: list[dict], title: str, path: Path) -> None:
     for k, it in enumerate(items):
         x, y = (k % SHEET_COLS) * THUMB, 36 + (k // SHEET_COLS) * cell_h
         try:
-            with Image.open(it["path"]) as im:
+            with plain_image_open()(it["path"]) as im:
                 im = ImageOps.exif_transpose(im).convert("RGB")
                 im.thumbnail((THUMB - 6, THUMB - 6))
                 canvas.paste(im, (x + (THUMB - im.width) // 2, y + (THUMB - im.height) // 2))

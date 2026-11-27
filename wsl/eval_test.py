@@ -33,9 +33,14 @@ import hashlib
 import inspect
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
+
+# Ultralytics 가 모자란 패키지를 지금 파이썬 환경에 스스로 깔지 않게 한다 — 이 파일은 프로젝트 코드(autolabel 이 같은
+# 기본값을 둔다)를 import 하지 않아 따로 적는다 (2026-11-27). 정해 둔 값은 그대로 둔다. Ultralytics 를 import 하기 전이어야 한다.
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 
 MATCH_IOU = 0.45        # 혼동 행렬에서 예측과 정답을 짝짓는 IoU — 11-12 기록(Ultralytics 8.4.142)이 이 값으로 센 것이다
 IGNORE_DIR = "ignore"   # 채점에서 뺄 자리 그림의 폴더 — src/autolabel/masks.py 의 IGNORE_DIR 와 같아야 한다(고치면 둘 다)
@@ -61,7 +66,9 @@ def load_ignore(im_file):
     import numpy as np
     from PIL import Image
 
-    with Image.open(p) as im:
+    # Ultralytics 가 갈아 끼운 열기 대신 원래 것으로(깨진 그림에서 패키지를 깔려 들지 않게 — src/autolabel/yolo_io 와 같은 뜻)
+    plain = getattr(sys.modules.get("ultralytics.utils.patches"), "_image_open", None) or Image.open
+    with plain(p) as im:
         return np.asarray(im.convert("1"), dtype=bool)
 
 

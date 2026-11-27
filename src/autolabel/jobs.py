@@ -127,6 +127,18 @@ class Job:
     result: dict | None = None
     error: str | None = None
     cancel_requested: bool = False
+    # 로그 줄을 넣고 덮는 일(작업 스레드의 sink ↔ 요청 스레드의 cancel)을 한 번에 하나씩 — 아래 `say`
+    log_lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+    keep_last: bool = False     # 마지막 줄을 진행 표시줄이 덮지 못하게 한다(사람에게 알리는 줄)
+
+    def say(self, line: str) -> None:
+        """작업 밖에서 로그에 알림 한 줄을 넣는다 — 진행 표시줄(같은 줄을 덮어쓰며 갱신되는 줄)이 이 줄을 덮어쓰지 않는다.
+
+        전에는 [중단 요청] 줄을 그냥 붙여, 학습 진행 표시줄이 도는 중이면 바로 다음 갱신이 그 줄을 지웠다(2026-11-27,
+        Gemini 리뷰 묶음 7 — 중단을 눌렀는데 로그에 아무 흔적이 없었다)."""
+        with self.log_lock:
+            self.log.append(line)
+            self.keep_last = True
 
     def to_dict(self) -> dict:
         return {
@@ -175,7 +187,7 @@ class JobManager:
         if job is None or job.status != "running":
             return False
         job.cancel_requested = True
-        job.log.append("[중단 요청] 진행 중인 단계를 마치는 대로 종료합니다...")
+        job.say("[중단 요청] 진행 중인 단계를 마치는 대로 종료합니다...")
         return True
 
     def start(self, kind: str, fn: Callable[[Job], dict]) -> Job:
@@ -223,13 +235,15 @@ class JobManager:
                 line = _ANSI.sub("", m.group(1)).rstrip()
                 if not line:
                     continue
-                if transient and job.log:
-                    job.log[-1] = line
-                else:
-                    job.log.append(line)
+                with job.log_lock:
+                    if transient and job.log and not job.keep_last:
+                        job.log[-1] = line
+                    else:               # 알림 줄(job.say) 뒤의 진행 표시줄은 새 줄에서 이어 간다
+                        job.log.append(line)
+                    job.keep_last = False
+                    del job.log[:-_MAX_LOG_LINES]
                 transient = "\n" not in m.group(2)
                 job.progress = line[:200]
-            del job.log[:-_MAX_LOG_LINES]
 
         def runner() -> None:
             tid = threading.get_ident()
