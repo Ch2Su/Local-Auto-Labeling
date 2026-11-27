@@ -339,7 +339,8 @@ docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운�
 - **optimizer `auto` 는 `warmup_bias_lr` 을 0 으로 바꾼다** — MuSGD 를 이름으로 고정한 직접 실행·`probe_scale.py`·`finetune.py`
   는 본 학습과 이 값이 다르다. **epoch 수가 다른 학습끼리 같은 epoch 의 mAP 를 견주지 말 것**(`cos_lr` 이 총 epoch 에 묶인다).
 - 8GB 에서 들어가는 최대치(`wsl/probe_vram.py`): s 640 b20 / s 960 b8 / s 1280 b4 / m 640 b10 / m 960 b4 / l 640 b8 / x 640 b5.
-  **16GB(집 데스크탑 RTX 5060 Ti, 화면이 안 붙은 GPU 1 — 11-27):** s 1280 b10 / m 1280 b5 (b12·b6 은 넘침). 화면이 붙은 GPU 0 은
+  **16GB(집 데스크탑 RTX 5060 Ti, 화면이 안 붙은 GPU 1 — 11-27):** s 1280 b10 / m 1280 b5 (b12·b6 은 넘침) / n 640 b92 · 960 b39 ·
+  1280 b20 · 1600 b11 · 1920 b7 · 2240 b4 · 2560 b3 (n 은 같은 batch 도 장마다 0.5GB 쯤 오르내려 한도 끝은 한두 칸 낮춰 쓸 것). 화면이 붙은 GPU 0 은
   약 1GB 를 덜 쓴다 — s 1280 b10 은 거기서 한도에 닿는다(docs/experiments.md '16GB 에서 1280').
   WSL 도 넘치면 OOM 없이 느려진다(함정 9).
 - 손으로 돌리는 명령(동기화·학습·STOP·`--resume`)은 `wsl/train_wsl.py` 머리말에 있다.
