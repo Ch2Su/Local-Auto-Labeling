@@ -9,6 +9,12 @@
 
 **규칙.**
 - 영역은 지금 이미지 픽셀 `[x1, y1, x2, y2]`. 고른 이미지는 모두 크기가 같아야 한다(다르면 멈춘다 — 다른 화면이 섞였다).
+  **픽셀·크기는 EXIF 회전을 적용한 화면 기준이다**(`yolo_io.display_size` — 박스·가릴 영역의 정규화 좌표와 OpenCV 가 읽는
+  배열이 그 기준이다. DB 의 width·height 는 회전 전 원시 크기라 90도 돌려 보는 사진에서는 가로·세로가 뒤바뀐다: 2026-11-27
+  전에는 그것으로 재서 그런 사진의 보기는 틀린 박스 수를 보였고 `--apply` 는 '읽기·크기' 로 멈췄다). 새 파일에는 회전
+  표시가 없다 — 돌려 놓은 그림 그대로다.
+- 정리된 이미지(`labeled/images/`)를 자르면 그 옆 `labeled/labels/` 의 옛 라벨 파일도 옛 그림과 함께 보관 폴더로 옮기고,
+  새 이름의 라벨 파일을 새 박스로 쓴다(전에는 옛 좌표의 .txt 가 짝 없는 채 남았다).
 - 박스는 영역으로 자르고, 원래 넓이의 30% 미만만 남거나 1px 이하면 버린다(`import_virat.crop_gt` 와 같은 규칙).
   사람이 그린 박스도 좌표만 옮긴다(다시 라벨링하지 않는다). 출처·신뢰도는 그대로다. 가릴 영역(`src/autolabel/masks.py`)도
   같은 영역 좌표로 옮기고(다각형은 남길 영역으로 잘라서), 영역 밖으로 다 나간 것은 버린다.
@@ -48,7 +54,7 @@ from autolabel.masks import clean as clean_masks  # noqa: E402
 from autolabel.masks import clip_poly, is_poly  # noqa: E402
 from autolabel.scoring import image_uncertainty  # noqa: E402
 from autolabel.store import Store  # noqa: E402
-from autolabel.yolo_io import Box  # noqa: E402
+from autolabel.yolo_io import Box, display_size, write_yolo_txt  # noqa: E402
 
 KEEP = 0.3                                   # 영역에 원래 넓이의 이만큼도 안 남는 박스는 버린다
 TAIL_RE = re.compile(r"_c(\d+)-(\d+)-(\d+)-(\d+)$")
@@ -135,6 +141,15 @@ def crop_mask(m, img_w: int, img_h: int, rect: Rect):
     return (ca - x1) / cw, (ct - y1) / ch, (cc - x1) / cw, (cd - y1) / ch
 
 
+def tidied_label(cfg, image: Path) -> Path | None:
+    """정리된 이미지(`labeled/images/…`)의 짝 라벨 파일 경로(`labeled/labels/….txt`) — 그 폴더 밖의 이미지면 None."""
+    try:
+        rel = image.resolve().relative_to((cfg.labeled / "images").resolve())
+    except ValueError:
+        return None
+    return cfg.labeled / "labels" / rel.with_suffix(".txt")
+
+
 def backup_db(db: Path, stamp: str) -> Path:
     bak = db.with_name(f"{db.name}.bak_crop_{stamp}")
     with sqlite3.connect(db) as src, sqlite3.connect(bak) as dst:
@@ -162,15 +177,26 @@ def main() -> int:
                            f" FROM images WHERE id IN ({q}) ORDER BY id", ids).fetchall()
     missing = sorted(set(ids) - {r["id"] for r in rows})
     other = [r["id"] for r in rows if r["camera"] != a.camera]
-    sizes = collections.Counter((r["width"], r["height"]) for r in rows)
-    if missing or other or len(sizes) != 1:
-        raise SystemExit(f"멈춘다 — DB 에 없는 id {missing[:10]} · 다른 카메라 {other[:10]} · 크기 {dict(sizes)}")
-    (img_w, img_h), = sizes
-    if rect[2] > img_w or rect[3] > img_h:
-        raise SystemExit(f"영역 {rect} 이 이미지({img_w}×{img_h}) 밖으로 나간다")
+    if missing or other:
+        raise SystemExit(f"멈춘다 — DB 에 없는 id {missing[:10]} · 다른 카메라 {other[:10]}")
     gone = [r["id"] for r in rows if not Path(r["path"]).exists()]
     if gone:
         raise SystemExit(f"파일이 없는 이미지 {gone[:10]}")
+    # 크기는 화면 기준(EXIF 회전 적용)으로 잰다 — 박스·영역 좌표와 아래 imdecode 의 배열이 그 기준이다(머리말)
+    shown, unread = {}, []
+    for r in rows:
+        try:
+            shown[r["id"]] = display_size(Path(r["path"]))
+        except (OSError, SyntaxError, ValueError) as exc:
+            unread.append(f"{r['id']}({exc})")
+    if unread:
+        raise SystemExit(f"열 수 없는 이미지 {unread[:10]}")
+    sizes = collections.Counter(shown.values())
+    if len(sizes) != 1:
+        raise SystemExit(f"멈춘다 — 크기가 섞였다 {dict(sizes)}")
+    (img_w, img_h), = sizes
+    if rect[2] > img_w or rect[3] > img_h:
+        raise SystemExit(f"영역 {rect} 이 이미지({img_w}×{img_h}) 밖으로 나간다")
 
     low = float(cfg.get("review.low_band", 0.30))
     high = float(cfg.get("review.high_band", 0.80))
@@ -239,6 +265,13 @@ def main() -> int:
             shutil.move(str(old), str(keep_dir / old.name))
         except OSError as exc:               # DB 는 이미 새 파일 — 옛 파일은 그 자리에 남는다
             stuck.append(f"{r['id']}(옛 파일 옮기기: {exc})")
+        old_lbl = tidied_label(cfg, old)     # 정리된 이미지면 라벨 파일도 짝을 맞춘다(옛 것은 보관, 새 이름으로 새 박스)
+        if old_lbl is not None and old_lbl.exists():
+            try:
+                shutil.move(str(old_lbl), str(keep_dir / old_lbl.name))
+                write_yolo_txt(old_lbl.with_name(new.stem + ".txt"), after)
+            except OSError as exc:
+                stuck.append(f"{r['id']}(라벨 파일: {exc})")
         lines.append(f"{r['id']}\t{r['status']}\t{old.name}\t{new.name}\t{part.shape[1]}x{part.shape[0]}\t"
                      f"{len(before)}\t{len(after)}")
         done += 1

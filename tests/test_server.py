@@ -457,3 +457,32 @@ def test_writes_that_arrive_while_the_daily_backup_copies_wait_for_it(store, clo
     second.join(5)
     assert events == ["사본 시작", "사본 끝", "쓰기 /a", "쓰기 /b"] or events == ["사본 시작", "사본 끝", "쓰기 /b", "쓰기 /a"]
     assert not daily.due()
+
+
+# ----------------------------------------------------------------- 여러 장을 한꺼번에 바꾸는 요청의 상한 (2026-11-27)
+
+@pytest.mark.parametrize("url, body", [
+    ("/api/bulk/tag", {"tag_id": 1}),
+    ("/api/bulk/domain", {"domain": "cctv"}),
+    ("/api/bulk/mask-template", {"template_id": 1}),
+    ("/api/bulk/camera", {"camera": "cam-01"}),
+])
+def test_bulk_requests_refuse_an_endless_id_list(client, url, body):
+    """이미지 id 목록은 20,000개까지 — 넘으면 일을 시작하기 전에 422 (Gemini 리뷰 묶음 8: 전에는 카메라 옮기기에만 있었다)."""
+    from autolabel.server import BULK_IDS_MAX
+
+    assert BULK_IDS_MAX == 20000
+    r = client.post(url, json={**body, "ids": list(range(1, BULK_IDS_MAX + 2))})
+    assert r.status_code == 422, r.text
+    assert client.post(url, json={**body, "ids": [999999]}).status_code != 422       # 상한 안이면 꼴은 받는다
+
+
+def test_capture_frame_lists_are_capped_at_one_extraction(client):
+    """영상 캡처의 번호 목록(뺄 것·넣을 것)은 한 번에 뽑는 장수까지 — 세션을 찾기 전에 422."""
+    from autolabel.capture import MAX_FRAMES
+
+    sid = "20261127_120000_abcd"
+    many = list(range(MAX_FRAMES + 1))
+    assert client.put(f"/api/capture/{sid}/state", json={"drop": many, "upto": 1}).status_code == 422
+    assert client.post(f"/api/capture/{sid}/commit", json={"keep": many}).status_code == 422
+    assert client.put(f"/api/capture/{sid}/state", json={"drop": [1], "upto": 1}).status_code == 404

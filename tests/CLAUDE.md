@@ -152,5 +152,12 @@
   (`syncCurrentAfterJob`·`sameBoxes`·한 줄 `const CUR_META_KEYS` — 이름·모양을 바꾸면 `PARTS` 도), `tests/test_yolo_io.py` 의
   모델을 올리는 도구 목록(`import_aihub_pm`·`label_qa`·`import_virat`·`legacy_groups`·`wsl/eval_test.py` — 모델을 올리는 도구를
   더하면 그 목록에 넣을 것).
+- **Gemini 리뷰 묶음 8 (2026-11-27)** — 전부 고치기 전 코드로 돌려 실패하는 것을 봤다. `tests/test_tidy.py`('도는 사이' 는 진행
+  알림 `progress` 에서 만든다 — 장마다 그 장을 다루기 직전에 불린다. DB 실패는 `autolabel.store._now` 를 예외로 갈아, 파일을
+  옮긴 뒤 경로를 고치는 자리에서 낸다), `tests/test_upload.py` 의 카메라 키 바꾸기·지우기, `tests/test_crop_images.py`(원시
+  100×60 에 Orientation 6 을 적은 진짜 JPEG — 화면 60×100), `tests/test_workbatch.py` 의 등록 파일 읽는 횟수
+  (`server.load_cameras` 를 세는 것으로 갈아), `tests/test_js_lists.py`(`loadState`·`loadSplits`·`listRequest`·`listStale`·
+  한 줄 `const LIST_LAST` — 요청마다 풀어 줄 손잡이를 쥐고 응답 순서를 뒤집는다), `tests/test_server.py` 의 목록 상한,
+  `tests/test_yolo_io.py` 의 '모델을 올리는 도구의 함수를 가져다 쓰는 도구'(가져오는 줄로 찾는다 — `domain_review.py`).
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.

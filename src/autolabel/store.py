@@ -656,6 +656,56 @@ class Store:
             _hist_gc(con)
         return len(image_ids)
 
+    # 파일을 지우거나 옮기는 작업(휴지통 비우기·정리)은 시작할 때 목록을 한 번 읽고 한참 돈다 — 그사이 사람이 그 이미지를
+    # 휴지통에서 되살리거나 승인을 풀 수 있다. 아래 둘은 **쓰기 잠금 안에서** 그 행이 아직 그 상태·그 경로인지 보고, 맞을 때만
+    # 파일 일(부르는 쪽이 준 함수)과 DB 일을 함께 한다 (2026-11-27, Gemini 리뷰 묶음 8). 파일 일이 도는 동안 다른 쓰기(상태
+    # 바꾸기 포함)는 기다린다 — 한 장의 지우기·옮기기만큼이다.
+
+    def purge_row(self, image_id: int, path: str, unlink: Callable[[], None]) -> bool:
+        """휴지통의 한 장을 지운다 — 그 행이 지금도 휴지통이고 경로가 `path` 일 때만 `unlink()` 를 부르고 행을 지운다(True).
+        그새 되살렸거나 경로가 바뀌었으면 아무것도 하지 않는다(False). `unlink` 가 예외를 내면 행은 그대로 남는다(다시 시도).
+        이력이 가리키던 목록은 지우지 않는다 — 다 끝난 뒤 `gc_history` 를 한 번 부를 것."""
+        with _write_lock, self.connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            row = con.execute("SELECT status, path FROM images WHERE id=?", (image_id,)).fetchone()
+            if row is None or row["status"] != "trashed" or row["path"] != path:
+                return False
+            unlink()
+            con.execute("DELETE FROM images WHERE id=?", (image_id,))
+        return True
+
+    def gc_history(self) -> int:
+        """아무 이력 줄도 가리키지 않는 목록을 지운다(`purge_row` 로 여러 장을 지운 뒤 한 번). 지운 수."""
+        with _write_lock, self.connect() as con:
+            return _hist_gc(con)
+
+    def move_row(self, image_id: int, src: str, dst: Path, statuses: tuple[str, ...],
+                 move: Callable[[], None]) -> list[Box] | None:
+        """한 장의 파일을 옮기고 경로를 고친다 — 그 행이 지금도 `statuses` 중 하나이고 경로가 `src` 일 때만 `move()` 를 부르고
+        path·name 을 `dst` 로 바꾼다. 돌려주는 것은 **그 시점의** 박스(라벨 파일에 쓸 것), 그새 상태·경로가 바뀌었으면 None
+        (아무것도 안 한다). `move` 나 DB 쓰기가 예외를 내면 DB 는 그대로다 — 파일을 이미 옮겼으면 되돌리는 것은 부르는 쪽 몫."""
+        p = str(Path(dst).resolve())
+        with _write_lock, self.connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            row = con.execute("SELECT status, path FROM images WHERE id=?", (image_id,)).fetchone()
+            if row is None or row["status"] not in statuses or row["path"] != src:
+                return None
+            boxes = [Box(**dict(r)) for r in con.execute(
+                "SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id", (image_id,))]
+            move()
+            con.execute("UPDATE images SET path=?, name=?, updated_at=? WHERE id=?", (p, Path(p).name, _now(), image_id))
+        return boxes
+
+    def delete_missing(self, rows: list[tuple[int, str]]) -> int:
+        """파일이 없어진 행을 지운다(prune) — (id, 그때 본 경로)마다 **경로가 그대로인 행만**. 그새 다른 곳으로 옮겨진 행
+        (경로가 바뀐 행)은 남긴다. 지운 수."""
+        if not rows:
+            return 0
+        with _write_lock, self.connect() as con:
+            n = sum(con.execute("DELETE FROM images WHERE id=? AND path=?", (i, path)).rowcount for i, path in rows)
+            _hist_gc(con)
+        return n
+
     def update_path(self, image_id: int, new_path: Path) -> None:
         """이미지 파일을 옮긴 뒤 DB의 경로를 갱신한다. 라벨과 검수 이력은 그대로 따라간다."""
         p = str(Path(new_path).resolve())

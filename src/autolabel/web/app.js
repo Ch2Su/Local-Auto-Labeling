@@ -1514,8 +1514,9 @@ async function saveBoxes() {
       if (S.histOpen) loadHistory();
     }
     setRowBoxes(id, res.n_boxes);     // 왼쪽 줄의 박스 수도 서버가 센 값으로
-    // 박스를 고쳤으면 클래스별 집계도 달라진다.
-    loadState().catch(() => {});
+    // 박스를 고쳤으면 클래스별 집계도 달라진다. 필터 칸의 장수(카메라·도메인·분할·태그·작업 배치)는 박스 저장으로
+    // 바뀌지 않으니 다시 받지 않는다 — 전에는 0.6초 자동 저장마다 요청 여섯 개가 나갔다 (2026-11-27)
+    loadState({ lists: false }).catch(() => {});
   } catch (err) {
     if (err.status === 404 && S.cur && S.cur.id === id) {
       // 그새 다른 곳(다른 창의 휴지통 비우기·정리 등)에서 DB 에서 지워졌다 — 저장할 곳이 없으니 수정 표시를 내려
@@ -2104,7 +2105,9 @@ async function applyTagFilter() {
 /* ── 분할(train·val·test) ── 보기만 한다. 분할을 바꾸는 것은 labeler.py split 뿐이다(2026-11-03). */
 async function loadSplits() {
   let data;
-  try { data = await api("/api/splits"); } catch { return; }    // 실패해도 검수는 되어야 한다
+  const req = listRequest("loadSplits", "/api/splits");
+  try { data = await req; } catch { return; }   // 실패해도 검수는 되어야 한다
+  if (await listStale("loadSplits", req)) return;
   S.filterSplit = fillCountFilter($("#filter-split"), S.filterSplit, "분할: 전체",
     data.splits, {}, "미배정", data.none, data.none_key);
 }
@@ -2115,7 +2118,9 @@ const DOMAIN_NAME = { cctv: "CCTV", noncctv: "비CCTV", drone: "드론" };
 
 async function loadDomains() {
   let data;
-  try { data = await api("/api/domains"); } catch { return; }   // 실패해도 검수는 되어야 한다
+  const req = listRequest("loadDomains", "/api/domains");
+  try { data = await req; } catch { return; }   // 실패해도 검수는 되어야 한다
+  if (await listStale("loadDomains", req)) return;
   S.filterDomain = fillCountFilter($("#filter-domain"), S.filterDomain, "도메인: 전체",
     data.domains, DOMAIN_NAME, "미분류", data.none, data.none_key);
 }
@@ -2204,7 +2209,9 @@ function saveCurTag() {
 
 async function loadTags() {
   let data;
-  try { data = await api("/api/tags"); } catch { return; }      // 실패해도 검수는 되어야 한다
+  const req = listRequest("loadTags", "/api/tags");
+  try { data = await req; } catch { return; }   // 실패해도 검수는 되어야 한다
+  if (await listStale("loadTags", req)) return;
   S.tags = data.tags;
   S.tagName = Object.fromEntries(data.tags.map((t) => [t.id, t.name]));
   S.tagN = Object.fromEntries(data.tags.map((t) => [t.id, t.n]));
@@ -2583,7 +2590,9 @@ function camLabel(cam, tail) {
  * 카메라가 붙은 이미지가 하나도 없으면(legacy 뿐이면) 숨긴다. 고른 카메라가 사라지면 '전체' 로. */
 async function loadCameras() {
   let data;
-  try { data = await api("/api/cameras"); } catch { return; }   // 실패해도 검수는 되어야 한다
+  const req = listRequest("loadCameras", "/api/cameras");
+  try { data = await req; } catch { return; }   // 실패해도 검수는 되어야 한다
+  if (await listStale("loadCameras", req)) return;
   const sel = $("#filter-camera");
   const keep = S.filterCamera;
   sel.innerHTML = "";
@@ -2641,7 +2650,9 @@ function approveText(cur) {
 
 async function loadWorks() {
   let data;
-  try { data = await api("/api/work-batches"); } catch { return; }   // 실패해도 검수는 되어야 한다
+  const req = listRequest("loadWorks", "/api/work-batches");
+  try { data = await req; } catch { return; }   // 실패해도 검수는 되어야 한다
+  if (await listStale("loadWorks", req)) return;
   S.works = data.batches || [];
   S.workNone = data.unbatched || null;
   S.workNoneKey = data.none_key || "__none__";
@@ -3544,7 +3555,27 @@ async function reloadCurrentBoxes() {
 
 /* ───────────────────────── 데이터 로딩 ───────────────────────── */
 
-async function loadState() {
+// 필터 칸 목록(loadCameras·loadDomains·loadSplits·loadTags·loadWorks)마다 마지막에 건 요청 — 그 응답만 쓴다 (2026-11-27).
+// 같은 목록을 연달아 받으면 응답이 뒤바뀌어 올 수 있고, 그러면 늦게 온 옛 응답이 필터 칸의 장수를 옛 값으로 덮었다.
+const LIST_LAST = {};
+
+function listRequest(name, url) {
+  return (LIST_LAST[name] = api(url));
+}
+
+/** 이 요청 뒤에 같은 목록을 또 걸었는가 — 그렇다면 그 마지막 요청이 끝날 때까지 기다린 뒤 true (부르는 쪽이 `await
+ *  loadWorks()` 뒤에 S.works 를 읽으므로, 옛 요청도 새 목록이 들어온 뒤에 돌아가야 한다). */
+async function listStale(name, req) {
+  if (LIST_LAST[name] === req) return false;
+  while (LIST_LAST[name] !== req) {
+    req = LIST_LAST[name];
+    await req.catch(() => {});
+  }
+  return true;
+}
+
+/** 상단 수치·클래스 목록을 다시 받는다. `lists: false` 면 필터 칸의 장수 목록 다섯 개는 다시 받지 않는다(박스만 바뀐 저장). */
+async function loadState({ lists = true } = {}) {
   const st = await api("/api/state");
   S.classes = st.classes;
   S.classBoxes = st.class_boxes || [];
@@ -3566,11 +3597,13 @@ async function loadState() {
   // 클래스가 바뀌면(스캔·클래스 추가) 필터 목록도 다시 그린다. 없어진 클래스는 선택에서 뺀다.
   [...S.filterClasses].filter((i) => i >= S.classes.length).forEach((i) => S.filterClasses.delete(i));
   renderClassFilter();
-  loadCameras();        // 스캔으로 새 카메라가 들어올 수 있다. 실패해도 검수는 되어야 하므로 기다리지 않는다
-  loadDomains();
-  loadSplits();         // 학습·split 이 미배정을 배정하면 바뀐다
-  loadTags();
-  loadWorks();          // 작업 배치 — 넣기·스캔으로 생기고, 상태를 바꿀 때마다 장수가 바뀐다. 실패해도 검수는 되어야 한다
+  if (lists) {
+    loadCameras();      // 스캔으로 새 카메라가 들어올 수 있다. 실패해도 검수는 되어야 하므로 기다리지 않는다
+    loadDomains();
+    loadSplits();       // 학습·split 이 미배정을 배정하면 바뀐다
+    loadTags();
+    loadWorks();        // 작업 배치 — 넣기·스캔으로 생기고, 상태를 바꿀 때마다 장수가 바뀐다. 실패해도 검수는 되어야 한다
+  }
   if (st.job && st.job.status === "running" && !S.jobPoll) watchJob(st.job.id);
 }
 

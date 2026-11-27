@@ -155,6 +155,16 @@ def test_the_tools_that_load_a_model_open_images_the_same_way():
     for p in loaders:
         text = p.read_text(encoding="utf-8")
         assert "YOLO" in text, p.name                                   # 목록이 낡지 않았는지
+    # 모델을 올리는 도구의 함수를 가져다 쓰는 도구도 같다 (2026-11-27, 묶음 8 — domain_review 는 YOLO 를 직접 적지 않지만
+    # legacy_groups.embeddings 가 올린다. 글자로는 못 찾으니 가져오는 줄로 찾는다)
+    names = {p.stem for p in loaders}
+    borrowers = [p for p in sorted((ROOT / "tools").glob("*.py")) if p not in loaders and any(
+        line.startswith(tuple(f"{kind} {n}" for n in names for kind in ("from", "import")))
+        for line in p.read_text(encoding="utf-8").splitlines())]
+    assert "domain_review.py" in [p.name for p in borrowers]
+    loaders = loaders[:-1] + borrowers + loaders[-1:]
+    for p in loaders:
+        text = p.read_text(encoding="utf-8")
         assert [n for n, line in enumerate(text.splitlines(), 1) if "Image.open(" in line] == [], p.name
     # 모델을 올리는데 이 목록에 없는 도구가 생기면 알린다
     others = sorted(p.name for p in (ROOT / "tools").glob("*.py")

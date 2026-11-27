@@ -66,6 +66,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))   # tools/ 
 
 from autolabel.config import Config, pretrained_path, resolve
 from autolabel.grouping import group_images
+from autolabel.yolo_io import plain_image_open
 from legacy_groups import embeddings, family, font   # 같은 폴더의 도구 — 임베딩 캐시도 같이 쓴다
 
 DOMS = ("cctv", "noncctv", "drone")
@@ -120,7 +121,7 @@ def old_domain(r: dict) -> str:
 def read_exif(r: dict) -> None:
     r["make"], r["model"], r["gps"] = "", "", False
     try:
-        with Image.open(r["path"]) as im:
+        with plain_image_open()(r["path"]) as im:
             ex = im.getexif()
     except OSError:
         return
@@ -203,7 +204,7 @@ def sheet(items: list[dict], title: str, path: Path, cap) -> None:
     for k, it in enumerate(items):
         x, y = (k % SHEET_COLS) * THUMB, 34 + (k // SHEET_COLS) * cell_h
         try:
-            with Image.open(it["path"]) as im:
+            with plain_image_open()(it["path"]) as im:
                 im = ImageOps.exif_transpose(im).convert("RGB")
                 im.thumbnail((THUMB - 6, THUMB - 6))
                 canvas.paste(im, (x + (THUMB - im.width) // 2, y + (THUMB - im.height) // 2))

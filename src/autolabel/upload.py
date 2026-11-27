@@ -154,6 +154,33 @@ class UploadManager:
             raise UploadError(404, "그런 묶음이 없습니다 — 이미 넣었거나 버렸을 수 있습니다.")
         return s
 
+    def rename_camera(self, old: str, new: str) -> int:
+        """등록에서 키를 바꾼 카메라를 골라 둔 묶음은 새 키로 (2026-11-27, Gemini 리뷰 묶음 8 — 영상 캡처의 세션과 같다).
+        전에는 올리기 묶음만 옛 키로 남아, 넣을 때 '카메라가 없습니다' 로 막히고 묶음을 버려야 했다(묶음의 카메라를
+        바꾸는 길이 없다). 바꾼 묶음 수."""
+        with self._lock:
+            items = list(self.sessions.values())
+        n = 0
+        for s in items:
+            with s.lock:
+                if s.camera == old and not s.deleted:
+                    s.camera = new
+                    n += 1
+        return n
+
+    def using(self, keys) -> dict[str, int]:
+        """이 카메라들을 골라 둔 열린 묶음 수 {키: 묶음 수} — 그런 카메라의 등록을 지우면 그 묶음을 넣을 수 없게 된다
+        (서버가 지우기를 막는다). 자동 카메라(None)는 세지 않는다."""
+        want = set(keys)
+        with self._lock:
+            items = list(self.sessions.values())
+        out: dict[str, int] = {}
+        for s in items:
+            with s.lock:
+                if not s.deleted and s.camera in want:
+                    out[s.camera] = out.get(s.camera, 0) + 1
+        return out
+
     def _cameras(self) -> dict:
         try:
             return load_cameras(self.cfg.cameras)

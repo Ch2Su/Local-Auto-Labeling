@@ -44,9 +44,10 @@ class TidyReport:
     renamed: int = 0
     dest: Path | None = None
     errors: list[str] = field(default_factory=list)
+    changed: list[str] = field(default_factory=list)     # 도는 사이 승인을 풀었거나 경로가 바뀌어 옮기지 않은 것
 
     def summary(self) -> str:
-        if not self.moved and not self.errors:
+        if not self.moved and not self.errors and not self.changed:
             return "옮길 이미지가 없습니다. (자동 라벨링 폴더에 승인된 이미지가 없음)"
         lines = [
             f"옮긴 이미지 : {self.moved}장 (라벨 박스 {self.boxes}개)",
@@ -59,6 +60,9 @@ class TidyReport:
                 f"  원본이 사라져 건너뛴 이미지 {len(self.skipped_missing)}장"
                 f" (예: {self.skipped_missing[:2]})"
             )
+        if self.changed:
+            lines.append(f"  정리하는 사이 상태나 경로가 바뀌어 옮기지 않은 이미지 {len(self.changed)}장"
+                         f" (예: {self.changed[:2]})")
         if self.errors:
             lines.append(f"  오류 {len(self.errors)}건: {self.errors[:3]}")
         return "\n".join(lines)
@@ -73,9 +77,10 @@ class PurgeReport:
     boxes: int = 0
     already_gone: int = 0
     errors: list[str] = field(default_factory=list)
+    kept: int = 0               # 비우는 사이 휴지통에서 꺼낸(또는 옮겨진) 이미지 — 지우지 않았다
 
     def summary(self) -> str:
-        if not self.rows_deleted and not self.errors:
+        if not self.rows_deleted and not self.errors and not self.kept:
             return "휴지통이 비어 있습니다."
         lines = [
             f"휴지통을 비웠습니다: 이미지 {self.rows_deleted}장 삭제 "
@@ -83,6 +88,8 @@ class PurgeReport:
         ]
         if self.already_gone:
             lines.append(f"  원본이 이미 없던 항목 {self.already_gone}개")
+        if self.kept:
+            lines.append(f"  비우는 사이 휴지통에서 꺼낸 이미지 {self.kept}장은 지우지 않았습니다")
         if self.errors:
             lines.append(f"  파일을 지우지 못함 {len(self.errors)}건: {self.errors[:3]}")
         return "\n".join(lines)
@@ -105,26 +112,39 @@ def purge_trashed(
     if not rows:
         return report
 
+    # 목록은 시작할 때 한 번 읽는다 — 도는 사이 사람이 그중 하나를 되살릴 수 있다(검수 화면의 '검수 대기로'). 그래서 한 장씩
+    # 쓰기 잠금 안에서 '아직 휴지통인가' 를 보고 파일과 행을 함께 지운다(store.purge_row, 2026-11-27 — 전에는 처음 읽은
+    # 목록 그대로 파일을 지우고 끝에 id 로만 행을 지워, 되살린 이미지의 원본·라벨이 사라졌다).
     total = len(rows)
-    victims: list[int] = []
     for n, row in enumerate(rows, 1):
         src = Path(row["path"])
         if progress:
             progress(n, total, src.name)
-        if delete_files:
+        did: dict[str, bool] = {}
+
+        def unlink(src: Path = src, did: dict = did) -> None:
+            if not delete_files:
+                return
             if src.exists():
-                try:
-                    src.unlink()
-                    report.files_deleted += 1
-                except OSError as exc:
-                    report.errors.append(f"{src.name}: {exc}")
-                    continue  # 파일이 남았으면 DB 항목도 남겨 재시도 가능하게
+                src.unlink()
+                did["file"] = True
             else:
-                report.already_gone += 1
-        victims.append(int(row["id"]))
+                did["gone"] = True
+
+        try:
+            done = store.purge_row(int(row["id"]), row["path"], unlink)
+        except OSError as exc:
+            report.errors.append(f"{src.name}: {exc}")
+            continue  # 파일이 남았으면 DB 항목도 남겨 재시도 가능하게
+        if not done:
+            report.kept += 1          # 그새 되살렸거나 옮겨졌다 — 건드리지 않는다
+            continue
+        report.files_deleted += bool(did.get("file"))
+        report.already_gone += bool(did.get("gone"))
+        report.rows_deleted += 1
         report.boxes += int(row["n_boxes"])
 
-    report.rows_deleted = store.delete_images(victims)
+    store.gc_history()
     return report
 
 
@@ -270,7 +290,7 @@ def prune_missing(
     연결되지 않았거나 경로 설정이 틀린 상황에서 DB를 통째로 날리는 것을 막는다.
     """
     report = PruneReport()
-    victims: list[int] = []
+    victims: list[tuple[int, str]] = []
 
     for row in store.list_images(status="all", limit=10**9):
         report.checked += 1
@@ -282,7 +302,7 @@ def prune_missing(
         report.by_status[st] = report.by_status.get(st, 0) + 1
         if len(report.samples) < 5:
             report.samples.append(row["name"])
-        victims.append(int(row["id"]))
+        victims.append((int(row["id"]), row["path"]))
 
     if not victims:
         return report
@@ -296,7 +316,7 @@ def prune_missing(
         return report
 
     if not dry_run:
-        report.deleted = store.delete_images(victims)
+        report.deleted = store.delete_missing(victims)     # 그때 본 경로 그대로인 행만(그새 옮겨진 행은 남긴다)
     return report
 
 
@@ -371,17 +391,24 @@ def tidy_approved(
         stem, dst = _free_name(sub_img, sub_lbl, src)
         lbl = sub_lbl / f"{stem}.txt"
 
-        boxes = store.get_boxes(int(row["id"]))
-        try:
+        # 목록은 시작할 때 읽었다 — 그새 승인을 풀었거나(검수 대기·휴지통) 경로가 바뀐 장은 옮기지 않는다. 확인·파일 옮기기·
+        # 경로 고치기를 쓰기 잠금 하나 안에서 한다(store.move_row, 2026-11-27). 박스도 그 시점의 것을 라벨 파일에 쓴다.
+        moved = False
+
+        def move(src: Path = src, dst: Path = dst) -> None:
+            nonlocal moved
             if dst.exists():      # _free_name 직후라 있을 수 없지만, 덮어쓰기만은 절대 안 된다
                 raise FileExistsError(dst)
             shutil.move(str(src), str(dst))
-        except Exception as exc:
-            report.errors.append(f"{src.name}: {exc}")
-            continue
+            moved = True
+
         try:
-            store.update_path(int(row["id"]), dst)
+            boxes = store.move_row(int(row["id"]), row["path"], dst, tuple(statuses), move)
         except Exception as exc:
+            if not moved:
+                report.errors.append(f"{src.name}: {exc}")
+                continue
+            boxes = store.get_boxes(int(row["id"]))
             # DB 를 못 바꾸면 파일을 제자리로 돌린다. 파일만 옮겨지면 그 행은 '파일 없음' 이 되고
             # 뒤이어 도는 prune 이 행을 라벨째 지운다 (09-27 에 실제로 그렇게 두 장을 잃었다).
             try:
@@ -396,6 +423,9 @@ def tidy_approved(
                     f"{dst} 에 있습니다 — prune 을 돌리기 전에 DB 경로(id {row['id']})를 고칠 것."
                 ) from exc2
             report.errors.append(f"{src.name}: DB 경로를 못 바꿔 되돌렸습니다 ({exc})")
+            continue
+        if boxes is None:
+            report.changed.append(src.name)
             continue
         report.moved += 1
         report.boxes += len(boxes)

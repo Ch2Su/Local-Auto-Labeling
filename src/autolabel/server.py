@@ -36,6 +36,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from .camera_move import MoveBlocked, apply_move, plan_move
 from .camera_rename import RenameBlocked, RenameStuck, apply_rename, plan_rename
 from .capture import MAX_EVERY, MAX_FRAMES, MIN_EVERY, CaptureError, CaptureManager
+from .capture import MAX_FRAMES as CAPTURE_MAX_FRAMES
 from .capture import MIN_FREE as CAPTURE_MIN_FREE
 from .config import ROOT, Config, resolve
 from .export import default_export_dir, export_yolo
@@ -133,14 +134,19 @@ class ImageTagIn(BaseModel):
     on: bool = True             # True 붙이기, False 떼기
 
 
+# 여러 장을 한꺼번에 바꾸는 요청이 받는 이미지 id 수 — 실수·장난으로 끝없는 목록이 들어오지 않게(2026-11-27 에 네 요청의
+# 상한을 맞췄다: 전에는 카메라 옮기기만 있었다). 영상 캡처의 번호 목록은 한 번에 뽑는 장수(capture.MAX_FRAMES)까지.
+BULK_IDS_MAX = 20000
+
+
 class BulkTagIn(BaseModel):     # 이미지 보기 탭에서 여러 장을 골라 한꺼번에 (2026-11-04)
-    ids: list[int]
+    ids: list[int] = Field(max_length=BULK_IDS_MAX)
     tag_id: int
     on: bool = True
 
 
 class BulkDomainIn(BaseModel):
-    ids: list[int]
+    ids: list[int] = Field(max_length=BULK_IDS_MAX)
     domain: str | None
 
 
@@ -158,14 +164,14 @@ class TemplateNameIn(BaseModel):
 
 
 class BulkMaskTemplateIn(BaseModel):
-    ids: list[int]
+    ids: list[int] = Field(max_length=BULK_IDS_MAX)
     template_id: int
     mode: Literal["add", "remove"] = "add"
 
 
 class BulkCameraIn(BaseModel):
     # 고른 이미지만 다른(등록된) 카메라로 옮긴다 (2026-11-15, camera_move.py). dry_run 은 무엇이 바뀔지만 센다(확인 문구용)
-    ids: list[int] = Field(min_length=1, max_length=20000)
+    ids: list[int] = Field(min_length=1, max_length=BULK_IDS_MAX)
     camera: str = Field(min_length=1, max_length=40)
     dry_run: bool = False
 
@@ -262,7 +268,7 @@ class CaptureStateIn(BaseModel):
     # 화면에서 고른 것 — 다시 열면 이어지게 남긴다. drop 은 화면이 아는 앞 upto 장 안에서 뺄 번호
     camera: str | None = Field(None, max_length=64)
     start: str | None = Field(None, max_length=40)
-    drop: list[int] | None = None
+    drop: list[int] | None = Field(None, max_length=CAPTURE_MAX_FRAMES)
     upto: int | None = Field(None, ge=0)
 
 
@@ -271,7 +277,7 @@ class CaptureCommitIn(BaseModel):
     camera: str | None = Field(None, max_length=64)
     # 영상 첫 프레임의 현지 시각. 비우면 시각 없는 이름으로 넣는다(촬영 시각 '모름' — capture.notime_name, 11-10 사용자 요청)
     start: str | None = Field(None, max_length=40)
-    keep: list[int]
+    keep: list[int] = Field(max_length=CAPTURE_MAX_FRAMES)
 
 
 class CameraIn(BaseModel):
@@ -733,9 +739,11 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     # ── 작업 배치 (2026-11-23 사용자 요청, workbatch.py · web/work.js): 한 번에 넣은 묶음을 따로 보고 검수한 뒤 데이터셋에 ──
     # 주소를 /api/images/… 밑에 두지 않는다({image_id} 경로와 겹치면 FastAPI 가 422 에서 멈춘다 — /api/bulk 와 같은 이유).
 
-    def _work_out(row: dict) -> dict:
-        """화면에 주는 배치 한 줄 — 카메라에 장소를 붙인다(장소는 화면에만 쓴다)."""
-        cams = _cameras()[0]
+    def _work_out(row: dict, cams: dict | None = None) -> dict:
+        """화면에 주는 배치 한 줄 — 카메라에 장소를 붙인다(장소는 화면에만 쓴다). 여러 줄을 낼 때는 등록(`cams`)을 한 번
+        읽어 넘긴다 — 안 넘기면 줄마다 cameras.yaml 을 다시 읽는다(2026-11-27: 목록이 배치 수만큼 읽었다)."""
+        if cams is None:
+            cams = _cameras()[0]
         return {**row, "kind_name": WORK_KIND_NAMES.get(row["kind"], row["kind"]),
                 "cameras": [{**c, "place": cams[c["key"]].place if c["key"] in cams else None} for c in row["cameras"]]}
 
@@ -751,7 +759,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     @app.get("/api/work-batches")
     def list_work_batches() -> dict:
         """작업 배치 전부(새것부터)와 배치 없는 이미지의 상태별 장수. 필터 칸과 '작업 배치' 보기가 함께 쓴다."""
-        return {"batches": [_work_out(r) for r in store.list_work_batches()],
+        cams = _cameras()[0]
+        return {"batches": [_work_out(r, cams) for r in store.list_work_batches()],
                 "unbatched": store.unbatched_counts(), "none_key": NO_WORK,
                 "name_max": WORK_NAME_MAX}
 
@@ -1714,7 +1723,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         """등록된 카메라를 고친다 (영상 캡처 탭의 '고치기…', 2026-11-10). 보낸 칸만 보고 그 줄만 고친다(provenance.edit_camera).
         **이미지가 있는 카메라의 키 바꾸기**는 폴더·파일 이름·DB 까지 함께 바꾼다(2026-11-11 사용자 요청 — _rename_with_files).
         막는 것(409, 아무것도 안 바꿈): 분할이 정해진 이미지가 있는 카메라의 고정 분할 바꾸기(split.py 는 정한 분할을 옮기지 않아
-        같은 카메라가 두 분할로 갈린다), 가릴 영역이 있는 이미지가 있는데 test 로 고정하기, 키 바꾸기에서 새 카메라 폴더에 파일이
+        같은 카메라가 두 분할로 갈린다), 키 바꾸기에서 새 카메라 폴더에 파일이
         있거나 다른 작업이 도는 때. 시간대를 바꾸면 그 카메라 이미지의 촬영 시각을 새 시간대로 다시 센다. 넣기·스캔과 겹치지
         않게 지우기와 같은 잠금을 쥔다."""
         values = payload.model_dump(exclude_unset=True)
@@ -1736,6 +1745,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
             cam, changed, recalculated, report = _rename_with_files(key, new_key, values)
         if "key" in changed:
             capman.rename_camera(key, cam.key)
+            upman.rename_camera(key, cam.key)       # 넣기 전인 이미지 올리기 묶음도 새 키로
         if changed:
             print(f"[{label}] 카메라 고침: {key}{f' -> {cam.key}' if cam.key != key else ''} ({', '.join(changed)})"
                   + (f", 파일 {report['files']}개·DB {report['db_camera']}장 함께" if report else "")
@@ -1757,6 +1767,13 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
                 why = "; ".join(f"{k}: " + ", ".join(([f"DB 이미지 {u['db']}장"] if u["db"] else [])
                                                        + [f"{f} 에 파일" for f in u["files"]]) for k, u in busy.items())
                 raise HTTPException(409, f"이미지가 남아 있는 카메라는 지울 수 없습니다(아무것도 안 지움) — {why}")
+            # 넣기 전인 이미지 올리기 묶음이 고른 카메라도 막는다 (2026-11-27) — 지우면 그 묶음은 넣을 수 없고, 묶음의
+            # 카메라를 바꾸는 길이 없어 올린 그림을 버려야 한다(영상 캡처 세션은 카메라를 다시 고를 수 있어 비우기만 한다)
+            waiting = upman.using(keys)
+            if waiting:
+                why = ", ".join(f"{k}({n}묶음)" for k, n in waiting.items())
+                raise HTTPException(409, "넣기 전인 이미지 올리기 묶음이 고른 카메라는 지울 수 없습니다(아무것도 안 지움) — "
+                                         f"{why}. 작업 배치 보기에서 그 묶음을 넣거나 버린 뒤 다시 하세요.")
             try:
                 removed = remove_cameras(cfg.cameras, keys, backup_dir=cfg.db.parent / "backups")
             except CameraMissing as exc:
@@ -1823,7 +1840,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
         """고른 이미지를 다른(이미 등록된) 카메라로 옮긴다 — 파일 이름 앞머리·카메라 폴더·DB(camera·path·name·촬영 시각)를
         함께, 묶음(grp)은 비운다(camera_move.py). 이미 그 카메라인 이미지는 건너뛴다(same).
         막는 것(409, 아무것도 안 바꿈): 등록 안 된 카메라, 없는·출처 없는 이미지, 분할이 정해진 이미지를 옮기면 그 카메라가 두
-        분할에 걸치는 때, 가릴 영역이 있는 이미지를 test 고정 카메라로, 새 경로가 이미 쓰이는 때, 다른 작업이 도는 때.
+        분할에 걸치는 때, 새 경로가 이미 쓰이는 때, 다른 작업이 도는 때.
         dry_run 이면 세기만 한다(화면의 확인 문구). /api/images/... 밑에 두지 않는다(위 '이미지 보기 탭' 주석)."""
         ids = list(dict.fromkeys(payload.ids))
         key = payload.camera.strip()

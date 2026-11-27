@@ -385,6 +385,21 @@ def wait_job(client, job: dict) -> dict:
     raise AssertionError("작업이 끝나지 않았습니다")
 
 
+def test_the_batch_list_reads_the_camera_file_once(client, store, add_image, cams, monkeypatch):
+    """배치가 여럿이어도 등록 파일은 한 번만 읽는다 (2026-11-27, Gemini 리뷰 묶음 8) — 전에는 배치 줄마다 cameras.yaml 을
+    다시 읽어, 필터 칸을 채우는 요청 하나가 배치 수만큼 읽었다."""
+    import autolabel.server as server
+
+    for k in range(5):
+        store.set_work_batch([add_image(f"b{k}.jpg", status="pending", camera="cam-01")], store.create_work_batch("scan"))
+    reads: list = []
+    real = server.load_cameras
+    monkeypatch.setattr(server, "load_cameras", lambda path: (reads.append(path), real(path))[1])
+    got = client.get("/api/work-batches").json()["batches"]
+    assert len(got) == 5 and all(b["cameras"][0]["place"] == "시험 장소 A" for b in got)
+    assert len(reads) == 1
+
+
 def test_the_api_lists_batches_and_filters_the_image_list(client, store, add_image, cams):
     a = store.create_work_batch("capture", note="clip.mp4")
     in_a = [add_image("a0.jpg", status="pending", camera="cam-01"), add_image("a1.jpg", status="approved", camera="cam-01")]

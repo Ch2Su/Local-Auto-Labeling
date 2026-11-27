@@ -219,6 +219,31 @@ def test_a_camera_is_required_and_must_be_registered(client, cfg, store):
     assert not (cfg.db.parent / "upload" / sid).exists()
 
 
+def test_a_bundle_follows_its_camera_when_the_key_is_renamed(client, cfg, store):
+    """카메라 키를 바꾸면 넣기 전인 묶음도 새 키로 간다 (2026-11-27, Gemini 리뷰 묶음 8) — 전에는 영상 캡처 세션만 따라가고
+    올리기 묶음은 옛 키로 남아, 넣을 때 '그사이 지워졌습니다'(400)로 막혔다(묶음의 카메라를 바꾸는 길은 없다)."""
+    sid = begin(client)
+    send(client, sid, "a.jpg", jpeg(10))
+    r = client.put("/api/cameras/cam-01", json={"new_key": "cam-07"})
+    assert r.status_code == 200 and r.json()["key"] == "cam-07", r.text
+    assert [s["camera"] for s in client.get("/api/upload").json()["sessions"]] == ["cam-07"]
+    done = client.post(f"/api/upload/{sid}/commit")
+    assert done.status_code == 200, done.text
+    assert [(im["name"], im["camera"]) for im in images(store)] == [("a.jpg", "cam-07")]
+
+
+def test_a_camera_picked_by_a_waiting_bundle_cannot_be_removed(client, cfg, store):
+    """등록을 지우면 그 묶음은 넣을 수 없다 — 묶음을 넣거나 버리기 전에는 지우기를 막는다(409, 아무것도 안 지움)."""
+    sid = begin(client)
+    send(client, sid, "a.jpg", jpeg(10))
+    before = cfg.cameras.read_bytes()
+    r = client.post("/api/cameras/remove", json={"keys": ["cam-01"]})
+    assert r.status_code == 409 and "cam-01(1묶음)" in r.json()["detail"]
+    assert cfg.cameras.read_bytes() == before
+    assert client.delete(f"/api/upload/{sid}").status_code == 200          # 버리면 지울 수 있다
+    assert client.post("/api/cameras/remove", json={"keys": ["cam-01"]}).json()["removed"] == ["cam-01"]
+
+
 def test_without_a_camera_one_is_registered_for_the_bundle(client, cfg, store):
     """카메라를 모르면 비워 둔다 — 이 묶음용 카메라를 다음 번호로 등록해 넣는다(분할이 카메라째라 출처 없이는 넣지 않는다)."""
     sid = begin(client, camera=None)
