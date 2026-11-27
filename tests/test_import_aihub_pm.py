@@ -380,8 +380,9 @@ def test_apply_writes_files_cameras_and_pending_rows(cfg, store, aihub, tmp_path
     cams = load_cameras(cfg.cameras)
     assert sorted(cams) == ["ah-0001", "ah-0002", "ah-0003", "ah-0004", "hw-01"]
     assert cams["ah-0001"].kind == "dataset"
-    # AI Hub 그림은 전부 train 이다(2026-11-23 사용자 결정) — 새로 등록하는 카메라에 고정을 적는다. 다른 카메라는 그대로
-    assert {k: c.split for k, c in cams.items()} == {**{f"ah-000{i}": "train" for i in range(1, 5)}, "hw-01": None}
+    # 11-27 사용자 결정 — AI Hub 카메라도 분할에 들어간다: 새로 등록하는 카메라에 고정을 적지 않는다(11-23 에는 train 을 적었다)
+    assert {k: c.split for k, c in cams.items()} == {**{f"ah-000{i}": None for i in range(1, 5)}, "hw-01": None}
+    assert "split: train" not in cfg.cameras.read_text("utf-8")
     assert cams["ah-0001"].place == f"AI Hub PM 영상 {picks[0].video}"
     assert len(list((cfg.db.parent / "backups").glob("cameras_*.yaml"))) == 1         # 쓰기 전 파일은 한 번만
     with store.connect() as con:
@@ -518,7 +519,8 @@ def test_pin_train_is_clean_when_every_camera_can_be_pinned(cfg, store, capsys):
 
 def test_pin_train_runs_without_the_aihub_folder_and_importing_points_at_it(cfg, store, registry, tmp_path, monkeypatch,
                                                                        capsys):
-    """`--pin-train` 은 색인·모델·AI Hub 폴더 없이 돈다. 넣으려는 실행은 고정 안 된 카메라가 있으면 먼저 알린다."""
+    """`--pin-train` 은 색인·모델·AI Hub 폴더 없이 돈다. 넣으려는 실행은 고정 안 된 카메라를 알리지 않는다(11-27 부터 그것이
+    기본이다 — 11-23 에는 알렸다)."""
     import yaml
 
     cfg.path.write_text(yaml.safe_dump(cfg.raw, allow_unicode=True), encoding="utf-8")
@@ -532,7 +534,7 @@ def test_pin_train_runs_without_the_aihub_folder_and_importing_points_at_it(cfg,
     capsys.readouterr()
     with pytest.raises(SystemExit, match="원천데이터"):
         ah.main()
-    assert "train 으로 고정되지 않은 ah-* 카메라 4대" in capsys.readouterr().out
+    assert "고정되지 않은" not in capsys.readouterr().out
 
     monkeypatch.setattr(sys, "argv", ["import_aihub_pm.py", "--config", str(cfg.path), "--root", str(nowhere),
                                       "--pin-train", "--apply"])

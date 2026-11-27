@@ -38,6 +38,8 @@ Runpod 를 먼저 권하지 않기·백업 전에 묻기)은 루트에도 남겼
      고정했다(`import_aihub_pm.py --pin-train --apply`, 새로 등록하는 카메라도 train — docs/provenance.md 의 그 항목 '넣은 것').
      사용자가 손으로 더 넣을 수 있다 — 넣기 전에 `import_aihub_pm.py --check <폴더>`(같은 그림·같은 영상·같은 자리를 이름과
      번호로 — 쓰지 않는다. 바이트만 볼 때는 `labeler.py dupcheck --folder`), 카메라 키는 `ah-NNNN` 으로 등록하고 `--pin-train` 을 다시.
+     **11-27 사용자 결정으로 train 고정을 풀었다**(아래 '같은 날 — AI Hub 를 train 고정에서 풀면' — 같은 자리 3쌍 6대만 train 고정,
+     도구도 새 카메라에 고정을 적지 않는다. `--pin-train` 은 옛 방식으로 되돌릴 때만).
      **첫 분할 때 정할 것이 하나 늘었다:** 고정한 AI Hub 그림도 분할 비율에 들어가서, 전부 승인되면 직접 모은 194장이
      train 106 · val 46 · test 42(55·24·22%)가 된다(사본 실측 — 지금 승인분만이면 66·16·18%). 그대로 둘지, 고정한 공개
      데이터셋을 비율 밖에 둘지(`split._stratify_groups` 가 고정 묶음도 센다), 비율을 바꿀지.

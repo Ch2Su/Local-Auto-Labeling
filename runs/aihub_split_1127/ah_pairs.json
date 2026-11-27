@@ -1,0 +1,41 @@
+[
+ {
+  "why": "same_camera",
+  "a": [
+   "ah-0047",
+   8373,
+   "approved"
+  ],
+  "b": [
+   "ah-0142",
+   8468,
+   "pending"
+  ]
+ },
+ {
+  "why": "same_camera",
+  "a": [
+   "ah-0063",
+   8389,
+   "approved"
+  ],
+  "b": [
+   "ah-0186",
+   8512,
+   "pending"
+  ]
+ },
+ {
+  "why": "same_camera",
+  "a": [
+   "ah-0117",
+   8443,
+   "pending"
+  ],
+  "b": [
+   "ah-0132",
+   8458,
+   "pending"
+  ]
+ }
+]

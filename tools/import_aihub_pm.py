@@ -46,12 +46,15 @@ PM 박스는 '여기에 이 종류의 탈것과 탄 사람이 있다' 는 단서
 등록한다(`provenance.add_camera` — kind dataset, place `AI Hub PM 영상 <영상 id>`, 쓰기 전 파일은 `backups/cameras_<시각>.yaml`
 에 한 번). 분할은 카메라째라, 같은 자리의 다른 영상을 나중에 넣게 되면 같은 키로 넣어야 한다(지금은 같은 화면이면 건너뛴다).
 
-**분할 — AI Hub 그림은 전부 train 이다 (2026-11-23 사용자 결정).** 카메라 키가 어림이라 같은 장소가 train 과 평가셋에 갈릴 수
-있는데, Claude 는 이 그림을 열지 않기로 해서(약관 — 아래 '주의') 눈으로 확인할 수 없다. 그래서 새로 등록하는 카메라에
-`split: train` 을 적고(`SPLIT`), 이미 등록된 것·사람이 손으로 등록한 `ah-NNNN` 은 `--pin-train` 으로 고정한다: 고정이 비어
-있는 것만 train 으로 바꾸고(`provenance.set_splits` — 한 번에, 쓰기 전 파일은 `backups/` 에 하나), 사람이 val·test 로 적어 둔
-것과 이미 train 아닌 분할에 이미지가 든 카메라는 바꾸지 않고 알린다(분할은 정한 것을 옮기지 않아 카메라가 두 분할에 걸친다).
-기본은 보기만이고 `--apply` 를 붙여야 고친다. 색인·모델·AI Hub 폴더는 쓰지 않는다.
+**분할 — AI Hub 카메라도 다른 카메라처럼 분할에 들어간다 (2026-11-27 사용자 결정 '고정 풀고 진행').** 11-23 에는 카메라 키가
+어림이라 같은 장소가 train 과 평가셋에 갈릴 수 있고 Claude 가 그림을 볼 수 없어(약관 — 아래 '주의') 전부 train 으로 고정했다.
+그랬더니 scooter 라벨의 95% 가 AI Hub 라 test 에 scooter 가 0개였고 클래스 비중이 24.9%p 어긋났다. 11-27 에 DB 의 AI Hub 200장을
+영상 id·`same_camera` 로 이어 보니 같은 자리는 3쌍뿐이었다(이 도구가 처음부터 같은 자리를 건너뛰고 골랐다) — 그래서 **새로
+등록하는 카메라에 고정을 적지 않고**(`split:` 빈 칸), 등록 파일의 고정도 풀었다(같은 자리 3쌍 6대만 train 고정 — 수치는
+docs/next.md 5번, 스크립트 `runs/aihub_split_1127/`). `same_camera` 가 못 잡는 '같은 교차로를 다른 자리·줌으로' 는 사람이 시트로
+본다. `--pin-train` 은 옛 방식(고정이 빈 `ah-NNNN` 을 전부 train)으로 되돌릴 때만 쓴다: 고정이 비어 있는 것만 train 으로 바꾸고
+(`provenance.set_splits` — 한 번에, 쓰기 전 파일은 `backups/` 에 하나), 사람이 val·test 로 적어 둔 것과 이미 train 아닌 분할에
+이미지가 든 카메라는 바꾸지 않고 알린다. 기본은 보기만이고 `--apply` 를 붙여야 고친다. 색인·모델·AI Hub 폴더는 쓰지 않는다.
 
 **손으로 고른 그림 점검 — `--check <폴더·파일…>` (2026-11-23 사용자 요청).** 사용자가 AI Hub 그림을 직접 골라 넣을 때, 넣기
 전에 이미 넣은 것과 겹치는지를 PC 안에서 재서 이름·번호로 알린다(Claude 가 그림을 볼 수 없어서다 — 아무것도 쓰지 않는다):
@@ -127,7 +130,7 @@ AIHUB_ROOT = Path(r"E:\datasets\120.개인형 이동장치 안전 데이터\01.�
 SOURCE = "aihub_pm"          # images.source — 공개 데이터셋은 데이터셋 이름을 쓴다(docs/provenance.md 'DB 변경')
 ORIGIN = "aihub"             # boxes.origin — AI Hub 단서로 넣거나 클래스를 바꾼 박스
 RIGHTS = "AI Hub(NIA) 개인형 이동장치 안전 데이터 — AI 학습용으로만, 제3자 제공·국외 반출 금지"
-SPLIT = "train"              # 등록 파일의 고정 분할 — AI Hub 그림은 전부 train (2026-11-23 사용자 결정, 머리말 '분할')
+SPLIT = "train"              # --pin-train 이 적는 고정 분할(11-23 방식). 넣을 때는 적지 않는다(11-27 — 머리말 '분할')
 KEY_RE = re.compile(r"^ah-(\d{4,})$")
 # <영상 id>_<클립>_<프레임>_<C|B 기기>_<D|N 주야>_<F|R 날씨>_<0|1 연출>
 NAME_RE = re.compile(r"^([A-Z]\d{6})_(\d{3})_(\d{4})_([CB])_([DN])_([FR])_([01])$")
@@ -900,7 +903,7 @@ def apply(cfg: Config, store: Store, picks: list[Pick], version: str, stamp: str
         for n, p in enumerate(picks):
             add_camera(cfg.cameras, p.camera,
                        {"kind": "dataset", "place": f"AI Hub PM 영상 {p.video}", "mount": "unknown",
-                        "view": view_text(p.rel), "resolution": f"{p.w}x{p.h}", "rights": RIGHTS, "split": SPLIT},
+                        "view": view_text(p.rel), "resolution": f"{p.w}x{p.h}", "rights": RIGHTS, "split": None},
                        backup_dir=backup_dir if n == 0 else None,        # 쓰기 전 파일은 한 번만 남긴다
                        comment=f"tools/import_aihub_pm.py {stamp}" if n == 0 else None)
             registered.append(p.camera)
@@ -1215,7 +1218,7 @@ def check_main(cfg: Config, store: Store, paths: list[Path]) -> int:
     print("(보기만 했다 — DB·등록 파일·그림은 그대로다.)")
     print("  같은 그림은 scan 이 등록하지 않는다. 같은 영상의 다른 프레임은 scan 이 못 잡으니 넣기 전에 뺀다.")
     print(f"  같은 자리를 넣는다면 그 카메라 키 폴더에 넣는다(카메라 = 화면 하나). 새 화면은 다음 번호 "
-          f"{next_keys(used_keys(cfg, store), 1)[0]} 부터 `ah-NNNN` 으로 등록하고 --pin-train --apply.")
+          f"{next_keys(used_keys(cfg, store), 1)[0]} 부터 `ah-NNNN` 으로 등록한다(고정 분할은 비워 둔다 — 11-27 부터).")
     return 0
 
 
@@ -1262,7 +1265,8 @@ def main() -> int:
     ap.add_argument("--no-sheet", action="store_true", help="대조 시트를 그리지 않는다")
     ap.add_argument("--apply", action="store_true", help="실제로 쓴다 (기본은 보기만)")
     ap.add_argument("--pin-train", action="store_true",
-                    help="넣지 않고, 고정 분할이 비어 있는 ah-* 카메라를 train 으로 고정한다 (--apply 없이는 보기만)")
+                    help="넣지 않고, 고정 분할이 비어 있는 ah-* 카메라를 train 으로 고정한다 — 11-23 방식으로 되돌릴 때만 "
+                         "(11-27 부터 AI Hub 도 분할에 들어간다. --apply 없이는 보기만)")
     ap.add_argument("--check", nargs="+", type=Path, metavar="경로",
                     help="넣지 않고, 손으로 고른 그림(폴더·파일)이 이미 넣은 AI Hub 그림과 같은 그림·같은 영상·같은 자리인지 본다")
     args = ap.parse_args()
@@ -1274,10 +1278,7 @@ def main() -> int:
         return pin_train(cfg, store, write=args.apply)
     if args.check:
         return check_main(cfg, store, args.check)
-    loose, other, blocked = pin_plan(cfg, store)
-    if loose or other or blocked:
-        print(f"[알림] {SPLIT} 으로 고정되지 않은 ah-* 카메라 {len(loose) + len(other) + len(blocked)}대 — "
-              "`--pin-train` 으로 볼 것(AI Hub 그림은 전부 train 이다)")
+    # 11-23 에는 고정 안 된 ah-* 를 여기서 알렸다 — 11-27 부터 AI Hub 도 분할에 들어가 고정이 비어 있는 것이 기본이다
     warn_odd_keys(cfg)
     classes = store.get_classes()
     label_root = args.root / "1.Training" / "라벨링데이터"
