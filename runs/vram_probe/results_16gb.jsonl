@@ -1,0 +1,6 @@
+{"model": "s", "imgsz": 1280, "batch": 8, "params_m": 10.0, "reserved": 10.32, "allocated": 9.22, "device_used": 11.51, "total": 15.9, "ms_per_step": 454, "status": "ok", "wall_s": 25}
+{"model": "s", "imgsz": 1280, "batch": 10, "params_m": 10.0, "reserved": 12.76, "allocated": 11.53, "device_used": 13.9, "total": 15.9, "ms_per_step": 459, "status": "ok", "wall_s": 22}
+{"model": "s", "imgsz": 1280, "batch": 12, "params_m": 10.0, "reserved": 15.32, "allocated": 13.68, "device_used": 15.9, "total": 15.9, "ms_per_step": 366, "status": "over", "wall_s": 24}
+{"model": "m", "imgsz": 1280, "batch": 4, "params_m": 21.9, "reserved": 9.72, "allocated": 8.77, "device_used": 10.93, "total": 15.9, "ms_per_step": 254, "status": "ok", "wall_s": 18}
+{"model": "m", "imgsz": 1280, "batch": 5, "params_m": 21.9, "reserved": 11.98, "allocated": 10.85, "device_used": 13.19, "total": 15.9, "ms_per_step": 311, "status": "ok", "wall_s": 19}
+{"model": "m", "imgsz": 1280, "batch": 6, "params_m": 21.9, "reserved": 14.38, "allocated": 12.94, "device_used": 15.58, "total": 15.9, "ms_per_step": 362, "status": "over", "wall_s": 21}
