@@ -4,7 +4,10 @@
 """
 import collections, json, re, sqlite3, sys, time
 from pathlib import Path
-REPO = Path(r"C:\local_auto_labeling"); W = Path(__file__).resolve().parent
+REPO = Path(r"C:\local_auto_labeling")
+# 사본 DB·설정 사본을 쓰는 곳 — 2026-11-27 에는 그날의 Claude 임시 폴더에서 돌렸고 결과 json 만 이 폴더(runs/)로 옮겼다.
+# 여기서 다시 돌리면 사본이 이 폴더에 생긴다(runs/ 의 .db 는 git 이 빼지만, 다 본 뒤 지울 것).
+W = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO / "src")); sys.path.insert(0, str(REPO / "tools"))
 import import_aihub_pm as ah
 from autolabel.config import Config

@@ -63,6 +63,12 @@ Runpod 를 먼저 권하지 않기·백업 전에 묻기)은 루트에도 남겼
      1,831개(car 708 · person 554 · truck 128 · pickup 87 · bicycle 80 · scooter 78 · motorcycle 69 · bus 50 · cone 40 ·
      responder 37). scooter 는 78개 중 74개가 AI Hub(train 고정) 61장에 있고 직접 모은 것은 카메라 한 대의 2장 4개뿐이라
      사정이 그대로다 — Gemini 도 첫 분할 전에 scooter 가 나오는 직접 모은 카메라를 한두 대 더 승인하기를 권했다.
+     **같은 날 — AI Hub 를 train 고정에서 풀면 (사본, `runs/aihub_split_1127/` — 사용자가 'AI Hub 도 split 이 필요해 보인다'):**
+     DB 의 AI Hub 200장을 영상 id·`same_camera` 로 이어 보니 197묶음(이어진 것은 같은 자리 3쌍뿐 — 넣는 도구가 이미 같은 자리를
+     건너뛰고 골랐다). ah-* 의 고정을 비우고 그 묶음째(사본에서 묶음마다 카메라 키 하나로) 첫 분할을 돌리면 이미지 train·val·test
+     201·50·44(직접 모은 것 123·46·25, AI Hub 78·4·19), 라벨에 남는 박스 1,320·205·306, scooter 57·9·12, 목표에서 벗어난 폭
+     24.9 → 6.9%p 이고 val·test 에 박스가 없는 클래스가 없어진다(고정한 채로는 scooter test 0). 대신 test 의 43% 가 AI Hub 가
+     되고, `same_camera` 가 못 잡는 '같은 교차로를 다른 자리·줌으로' 는 남는다(Claude 는 그림을 못 본다 — 사람이 볼 시트가 필요).
 6. **라벨링 모델을 DetectView 배포 모델과 떼어 무겁게 (11-10 사용자 결정 — 새 데이터의 검수가 쌓이면 준비).** 자동 라벨링·
    P·label_qa 가 쓰는 `best.pt` 는 DetectView(m 640×384 — 그쪽이 `~/rfdetr_work` 에서 따로 학습)에 맞출 필요가 없다. 근거는
    09-18 A40 비교(docs/experiments.md — s640 대조 0.6515 → l960 0.7264·x960 0.7243, 크기와 해상도를 함께 바꿔 어느 쪽 덕인지는 모름).
