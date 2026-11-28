@@ -5,6 +5,10 @@
 이 파일은 `src/autolabel/` 아래 파일을 다룰 때만 읽힌다.
 
 사용자 문서·단축키는 README '검수 UI 사용법'. 작업자가 알아야 할 것만:
+- **자리(설정 파일·데이터의 기준·화면 파일·소스 저장소)는 `paths.py` 의 `APP` 한 곳에서 정한다 (2026-11-28, 포터블 앱 1단계 —
+  docs/portable/m01-survey.md).** `config.ROOT`·`resolve()` 는 사용자 데이터 기준(개발 모드 = 저장소 루트, 전과 같다), 화면 파일은
+  `APP.resource_dir`, '저장소 안이면' 은 `APP.source_dir`(배포판에서는 None). **패키지에서 `__file__` 로 자리를 새로 구하지 말 것**
+  (`tests/test_paths.py` 가 막는다 — 배포판에서는 소스 자리와 데이터 자리가 다르다). 환경 변수 `LAL_USER_DATA` 로 데이터만 다른 폴더로.
 - **이 폴더를 고친 뒤에는 회귀 테스트를 돌릴 것**(2026-11-12, `tests/` — `.venv\Scripts\python.exe -m pytest`, 루트 CLAUDE.md
   '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`maskSlabs`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`MASK_MAX`·
   `MASK_SAME`·`MASK_MAX_PTS` 는 `tests/test_js_parity.py` 가 화면과 서버를 대조한다.

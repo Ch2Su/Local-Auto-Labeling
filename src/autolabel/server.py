@@ -39,6 +39,7 @@ from .capture import MAX_EVERY, MAX_FRAMES, MIN_EVERY, CaptureError, CaptureMana
 from .capture import MAX_FRAMES as CAPTURE_MAX_FRAMES
 from .capture import MIN_FREE as CAPTURE_MIN_FREE
 from .config import ROOT, Config, resolve
+from .paths import APP
 from .export import default_export_dir, export_yolo
 from .health import GRID as HEALTH_GRID
 from .health import SCOPES as HEALTH_SCOPES
@@ -68,7 +69,7 @@ from .workbatch import KIND_NAMES as WORK_KIND_NAMES
 from .workbatch import ingest_as_batch
 from .yolo_io import IMG_EXTS, Box, display_size, plain_image_open
 
-WEB_DIR = Path(__file__).parent / "web"
+WEB_DIR = APP.resource_dir / "web"           # 화면 파일 — 프로그램에 딸린 읽기 전용 리소스(paths.py, 개발 모드 = src/autolabel/web)
 
 # 이미지를 열거나 EXIF 를 읽다 나는 예외 (2026-11-05). OSError(열 수 없는 파일)만 잡았더니 손상된 EXIF 는
 # SyntaxError('not a TIFF file'), 아주 큰 이미지는 DecompressionBombError, 일부 손상은 ValueError 로 나와 500 이 됐다.
@@ -596,7 +597,7 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     # ------------------------------------------------------------- 상태 / 목록
 
     def _rel(p: Path) -> str:
-        """확인창에 보여 줄 경로 — 저장소 안이면 상대경로, 밖이면 그대로."""
+        """확인창에 보여 줄 경로 — 사용자 데이터 폴더(개발 모드 = 저장소) 안이면 상대경로, 밖이면 그대로."""
         try:
             return Path(p).resolve().relative_to(ROOT).as_posix()
         except ValueError:

@@ -28,7 +28,8 @@ from pathlib import Path
 
 import yaml
 
-from .config import ROOT, Config, resolve
+from .config import Config, resolve
+from .paths import APP
 from .masks import IGNORE_DIR, UNREADABLE, paints, split_boxes, write_ignore, write_masked
 from .split import SPLITS
 from .store import Store
@@ -127,7 +128,9 @@ def _prepare(out_dir: Path, cfg: Config) -> bool:
         cleared = True
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_marker(out_dir, {"db": str(cfg.db), "finished": False})
-    if out_dir.resolve().is_relative_to(ROOT) and not (out_dir / ".gitignore").exists():
+    # 소스 저장소(git) 안에 내보낼 때만 — 배포판에는 저장소가 없다(APP.source_dir None, paths.py). 개발 모드에서는 전과 같은 자리다
+    src_repo = APP.source_dir
+    if src_repo is not None and out_dir.resolve().is_relative_to(src_repo) and not (out_dir / ".gitignore").exists():
         (out_dir / ".gitignore").write_text("# labeler.py export 가 만든 폴더 — git 에 담지 않는다\n*\n", encoding="utf-8")
     return cleared
 

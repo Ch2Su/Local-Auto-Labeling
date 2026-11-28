@@ -8,13 +8,16 @@ from typing import Any
 
 import yaml
 
-# src/autolabel/config.py -> 프로젝트 루트
-ROOT = Path(__file__).resolve().parents[2]
+from .paths import APP
+
+# 설정·데이터의 기준 폴더(사용자 데이터 — paths.py). 개발 모드에서는 저장소 루트라 2026-11-28 전의 `ROOT` 와 같은 값이다.
+# 이름은 옛 것을 그대로 둔다(부르는 곳이 많다). 화면 파일(web/)은 `APP.resource_dir`, 소스 저장소는 `APP.source_dir` 로 따로 본다.
+ROOT = APP.user_data_dir
 DEFAULT_CONFIG = ROOT / "config.yaml"
 
 
 def resolve(p: str | Path) -> Path:
-    """설정에 적힌 경로를 프로젝트 루트 기준 절대경로로."""
+    """설정에 적힌 경로를 사용자 데이터 기준 절대경로로(개발 모드 = 저장소 루트 기준)."""
     path = Path(p)
     return path if path.is_absolute() else (ROOT / path)
 

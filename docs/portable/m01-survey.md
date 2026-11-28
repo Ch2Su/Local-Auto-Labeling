@@ -151,6 +151,11 @@
 | 7 | **의존성 나누기** | `pyproject.toml` + 플랫폼별 잠금(CPU·CUDA·macOS) — 이 PC·노트북의 지금 조합은 개발용 잠금으로 | 중간 — `.venv` 를 다른 프로젝트가 쓴다 | 새 venv 에서만 시험 | 파일만 더하는 단계 |
 | 8 | **macOS·Linux 에서 테스트** | GitHub Actions 로 세 OS 에서 CPU 테스트(GPU·모델 안 쓰는 지금 테스트가 그대로 대상) | 낮음 | — | — |
 
+**진행 (같은 날 사용자 '1단계 시작'):** 1단계를 했다 — `src/autolabel/paths.py`(`AppPaths`·`APP`), `config.ROOT`·`DEFAULT_CONFIG`·
+`resolve`·`pretrained_path` 는 `APP.user_data_dir`, `server.WEB_DIR` 은 `APP.resource_dir`, 내보내기의 `.gitignore` 는
+`APP.source_dir` 기준. 개발 모드 값은 그대로다(사본 서버를 켜서 화면·`/api/state` 확인, 테스트 717개). `ROOT` 는 이름을 그대로 두었다.
+배포판 쪽 규칙(포터블 표식·OS 기본 자리·번들 리소스 자리)은 패키징 전이라 규칙만 테스트했다. `wsl_train.REPO` 는 2단계에서.
+
 6번이 유일하게 위험한 단계다. 1–5번은 동작을 바꾸지 않거나 설정으로 되돌릴 수 있고, 6번은 그 위에서 사본으로 먼저 한다.
 패키징(PyInstaller)은 8번까지 소스 모드로 세 OS 가 도는 것을 본 뒤다(인수인계 문서 14절 8번과 같다).
 
