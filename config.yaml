@@ -76,7 +76,7 @@ model:
   # 학습 후 생성되는 가중치. 존재하면 자동 라벨링에 이 파일을 사용.
   weights: models/best.pt
   imgsz: 640
-  device: 0            # 0 = 첫 번째 GPU, "cpu" = CPU
+  device: 0            # 0 = 첫 번째 GPU, "cpu" = CPU, "mps" = Apple GPU, "auto" = 있는 것으로(CUDA → MPS → CPU — 키를 빼도 auto)
 
 train:
   # 운영 m(8클래스 첫 학습 — DetectView y26m 과 같은 설정)과 같게 100 으로 맞췄다 (2026-11-08, 사용자

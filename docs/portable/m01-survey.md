@@ -162,6 +162,12 @@
 보이고 켜지는 것을 봤다(`supported`·`available` 참). 다른 OS 는 `sys.platform` 을 갈아 흉내 냈을 뿐이다(8단계에서 실제로).
 `wsl/train_wsl.py`(DetectView 가 부른다)는 건드리지 않았다.
 
+**3단계도 했다 (같은 날 사용자 '3단계 시작'):** `src/autolabel/devices.py`(`resolve_device`·`auto_device` — CUDA → MPS → CPU),
+`Config.device` 가 그것을 거치고 **키가 없으면 `auto`**(그 전에는 `0`). 사람이 적은 장치는 그대로 넘긴다. 이 저장소의
+`config.yaml` 은 `0` 그대로라 이 PC 의 동작은 같다(주석에 `auto`·`mps` 를 적었다). torch 는 장치를 쓸 때만 불러 온다.
+화면에 고른 장치를 보여 주는 것은 하지 않았다(`/api/state` 에서 고르면 첫 화면이 torch 를 불러 오느라 느려진다 — Ultralytics 가
+학습·추론 로그에 장치를 찍는다). MPS 에서 SAM·타일 추론이 되는지는 macOS 에서 볼 것.
+
 6번이 유일하게 위험한 단계다. 1–5번은 동작을 바꾸지 않거나 설정으로 되돌릴 수 있고, 6번은 그 위에서 사본으로 먼저 한다.
 패키징(PyInstaller)은 8번까지 소스 모드로 세 OS 가 도는 것을 본 뒤다(인수인계 문서 14절 8번과 같다).
 

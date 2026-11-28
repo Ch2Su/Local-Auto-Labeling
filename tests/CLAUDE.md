@@ -176,5 +176,9 @@
   않는가(`subprocess.run` 을 부르면 실패하는 대역), 작업이 GPU 를 잡지 않는가(`jobs._gpu_owner`), 화면의 `refreshWslButtons`(node —
   `supported: false` 면 감춤, 옛 서버·오류면 보이되 꺼짐). 다른 OS 에서 실제로 돌려 본 것은 아니다. 고치기 전 코드로는 따로 만든
   worktree 에서 돌려 다섯 다 실패하는 것을 봤다(작업 트리를 되돌리는 동안 다른 세션의 자동 커밋이 옛 코드를 담지 않게).
+- `tests/test_devices.py`(11-28, 포터블 앱 3단계)는 `devices.resolve_device`·`Config.device` 를 본다 — `torch.cuda.is_available`·
+  `torch.backends.mps.is_available` 을 갈아 CUDA·MPS 가 있고 없는 PC 를 흉내 낸다(실제 GPU 없는 PC·macOS 는 아니다). 새 프로세스로
+  `import autolabel.config, autolabel.server` 뒤 `torch` 가 올라오지 않았는지도. 고치기 전 config.py 로는 worktree 에서 '키가 없으면
+  auto' 테스트가 실패하는 것을 봤다(`devices.py` 만 옮겨 놓고).
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.

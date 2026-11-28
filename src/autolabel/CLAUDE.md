@@ -13,6 +13,9 @@
   (`server` 안의 `_wsl`) — **맨 위에서 import 하지 말 것**(`tests/test_wsl_optional.py`). `wsl_train.supported()` 가 서브프로세스 없이
   Windows·WSL 스크립트를 먼저 보고, 아니면 `/api/wsl` 이 `supported: false`(화면은 버튼을 감춤)·작업 요청은 GPU 를 잡기 전에 400.
   WSL 스크립트 자리는 `wsl_train.SCRIPTS`(`paths.APP` — 개발 모드는 저장소의 `wsl/`).
+- **장치는 `cfg.device` 하나로 읽는다 (2026-11-28, 포터블 앱 3단계 — `devices.py`).** `auto` 면 CUDA → MPS → CPU 로 고르고, 설정에
+  키가 없으면 `auto`(그 전에는 `0`). 사람이 적은 장치는 CUDA 가 없어도 바꾸지 않는다(몰래 CPU 로 돌리지 않는다). 이 저장소의
+  config.yaml 은 `0` 그대로다. **`torch.cuda.is_available()` 을 여기저기서 따로 부르지 말 것** — 장치를 정하는 곳은 `devices.py` 하나다.
 - **이 폴더를 고친 뒤에는 회귀 테스트를 돌릴 것**(2026-11-12, `tests/` — `.venv\Scripts\python.exe -m pytest`, 루트 CLAUDE.md
   '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`maskSlabs`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`MASK_MAX`·
   `MASK_SAME`·`MASK_MAX_PTS` 는 `tests/test_js_parity.py` 가 화면과 서버를 대조한다.

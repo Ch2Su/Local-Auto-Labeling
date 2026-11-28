@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from .devices import AUTO, resolve_device
 from .paths import APP
 
 # 설정·데이터의 기준 폴더(사용자 데이터 — paths.py). 개발 모드에서는 저장소 루트라 2026-11-28 전의 `ROOT` 와 같은 값이다.
@@ -125,7 +126,9 @@ class Config:
 
     @property
     def device(self) -> Any:
-        return self.get("model.device", 0)
+        """Ultralytics 에 넘길 장치. `auto` 면 CUDA → MPS → CPU 로 고른다(devices.py, 2026-11-28). **키가 없으면 `auto`**
+        (그 전에는 `0` — CUDA 없는 PC 에서 오류). 숫자·`cpu`·`cuda:1`·`mps` 는 적힌 그대로 넘긴다."""
+        return resolve_device(self.get("model.device", AUTO))
 
     @property
     def imgsz(self) -> int:
