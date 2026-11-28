@@ -131,6 +131,9 @@
   Ultralytics 8.4.212 의 검증기는 혼동 행렬을 val 의 conf 0.001·IoU 0.5 로 세서, 같은 119장에서 헛 박스가 에러 없이 20 → 988 이
   됐다(mAP 는 8.4.142 와 같았다 — docs/experiments.md '새 풀 프레임 데이터'). **Ultralytics 를 올리면 이 테스트부터 볼 것.** val 에
   `conf=0.25` 를 넘겨 고치지 말 것(mAP 까지 0.25 위에서만 센다) — 혼동 행렬이 받는 값만 바꾼다(`pin_confusion_thresholds`).
+  11-28 에 IoU 문턱별 AP(`ap_iou`, Ultralytics `box.all_ap` — 행은 `ap_class_index` 순서)를 더했다: 클래스마다·전체 평균이 맞는가,
+  `all_ap` 가 비면 칸만 빼는가. 같은 날 더한 `--heads`(one2many+NMS·one2one)는 모델이 필요해 테스트가 없다 — 헤드마다 모델을
+  새로 읽는 이유(`Detect.fuse` 가 안 쓰는 헤드를 지운다)는 yolo26n 으로 손으로 봤다(docs/experiments.md 11-28 절).
 - **Gemini 리뷰 묶음 6 (2026-11-25)** — 전부 고치기 전 코드로 돌려 실패하는 것을 봤다. `tests/test_workbatch.py` 의 꺼진 넣기
   다시 하기(`cut_short_session` — 프레임의 일부·전부를 unlabeled 로 옮겨 두고 상태가 `committing` 인 세션을 손으로 만든다:
   전부 옮긴 때도 스캔하는가, `registered`·`other_new`·배치 장수, 이미 등록된 이름뿐이면 스캔하지 않는가), `tests/test_js_capture.py`
