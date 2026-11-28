@@ -204,9 +204,11 @@ venv 에 깔고 `pip install -e . --no-deps` → pytest. 건너뛴 테스트가 
 setup-python v7.1.0), Windows 러너의 `core.autocrlf` 를 체크아웃 전에 끈다, Linux 는 OpenCV 용 libgl1·glib. 공개 저장소라 러너는 무료.
 **push 전에 Linux 를 WSL 로 미리 돌렸다** — Ubuntu 의 Python 3.14.4 로 새 venv(ensurepip 이 없어 pip 만 `.venv` 에서 옮겨 깔았다)에
 `linux-cpu-py314` → 처음 703 통과·3 실패, 셋 다 테스트가 Windows 를 가정한 것이라 테스트만 고쳐 706 통과(화면 JS 101개는 node 가 없어
-건너뜀 — CI 에는 node 가 있다). Windows `.venv` 807개 통과. `tests/test_ci_workflow.py` 가 워크플로를 파일만으로 본다. **남은 것**:
-첫 push 에서 macOS 가 처음 돈다(MPS 가 실제로 되는지는 CPU 테스트로 알 수 없다 — 모델을 쓰지 않는다) · 다른 OS 에서 서버를 띄워 화면을
-본 것은 아니다 · 패키징(PyInstaller)은 이 다음이다(인수인계 문서 14절).
+건너뜀 — CI 에는 node 가 있다). Windows `.venv` 807개 통과. `tests/test_ci_workflow.py` 가 워크플로를 파일만으로 본다. **같은 날 사용자 'push 하기' 로 올려 첫 실행이 세 OS
+모두 통과했다**(run 46139301829, 커밋 4e3139a — Python 3.14.10 · torch 2.15.0(+cpu) · Ultralytics 8.4.212, 각 807개 통과·건너뜀 0:
+ubuntu 51초 · macos 61초 · windows 145초, node 24·24·22). **macOS 러너의 GPU 는 가상 장치라 MPS 를 못 쓴다**(torch 가 'Apple Paravirtual
+device … does not support Metal 2.0' 경고 — `auto` 가 CPU 를 골랐다) — MPS 로 추론·학습이 되는지는 실제 Mac 에서만 알 수 있다. **남은 것**:
+MPS 실기 확인 · 다른 OS 에서 서버를 띄워 화면을 본 것은 아니다 · 패키징(PyInstaller)은 이 다음이다(인수인계 문서 14절).
 
 6번이 유일하게 위험한 단계였다. 1–5번은 동작을 바꾸지 않거나 설정으로 되돌릴 수 있고, 6번은 그 위에서 사본으로 먼저 했다.
 패키징(PyInstaller)은 8번까지 소스 모드로 세 OS 가 도는 것을 본 뒤다(인수인계 문서 14절 8번과 같다).
