@@ -181,8 +181,8 @@ def main() -> int:
         return 0
 
     store = Store(cfg.db)            # 열·표가 없으면 여기서 더한다(직전에 사본 — store.migrated_from)
-    if store.migrated_from is not None:
-        print(f"DB 에 작업 배치(표 work_batches · 열 images.work_batch)를 더했습니다. 더하기 직전의 DB 사본: {store.migrated_from}")
+    for line in store.open_notes():      # 열을 더함(직전 사본)·옮긴 DB 의 이미지 경로 다시 찾기
+        print(line)
     if args.dissolve is not None:
         ok = store.delete_work_batch(args.dissolve)
         print(f"작업 {args.dissolve} 을 지웠습니다." if ok else f"작업 {args.dissolve} 가 그사이 없어졌습니다.")

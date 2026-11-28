@@ -530,10 +530,9 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
     """프로젝트 하나의 앱. guard 는 바깥 앱일 때만 켠다 — 탭 서버(create_multi_app)는 바깥 앱이 한 번 건다.
     bind_host 는 서버가 연 주소(labeler.py review 의 --host, 없으면 config 의 server.host) — _RequestGuard 참고."""
     store = Store(cfg.db)
-    if store.migrated_from is not None:
-        # 작업 배치 열·표를 처음 더했다 (2026-11-23 — Store.__init__). 더하기 직전의 DB 가 어디 있는지 알린다
-        print(f"[{label}] DB 에 작업 배치(표 work_batches · 열 images.work_batch)를 더했습니다. 더하기 직전의 DB 사본: "
-              f"{store.migrated_from}")
+    # 열 때 한 일 — 열을 더함(작업 배치 2026-11-23·상대경로 11-28, 직전 사본 경로)·옮긴 DB 의 이미지 경로 다시 찾기(Store.__init__)
+    for line in store.open_notes():
+        print(f"[{label}] {line}")
     jobs = JobManager(label)          # label 은 'GPU 를 누가 쓰는 중' 안내에 쓰인다
     # 스캔(ingest)은 '폴더 스캔' 작업과 영상 캡처의 '넣기'(작업 큐 밖, capture.py)가 함께 부른다 — 겹치지 않게
     ingest_lock = threading.Lock()

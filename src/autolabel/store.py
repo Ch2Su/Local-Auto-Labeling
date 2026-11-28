@@ -589,6 +589,13 @@ class Store:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # 이미지 경로의 기준 — DB 폴더 (2026-11-28, 포터블 앱 6단계 — 아래 '이미지 경로'). 이미지 경로는 resolve() 로 적으니 같게 푼다.
+        self.base = self.db_path.resolve().parent
+        self._base_prefix = os.path.normcase(str(self.base))
+        if not self._base_prefix.endswith(os.sep):
+            self._base_prefix += os.sep
+        self.migrated: str | None = None       # 열 때 더한 것(사람이 읽을 글) — migrated_from 과 짝
+        self.relocated: dict | None = None     # 열 때 다시 찾은 이미지 경로 — _relocate
         # 작업 배치 (2026-11-23, 사용자 결정 — '서버를 새 코드로 켤 때 자동으로, 직전에 사본'). 표 work_batches 와 열
         # images.work_batch 를 더하기 **전에** DB 를 통째로 떠 둔다(`<DB 폴더>/backups/<이름>_before_workbatch_<시각>.db` —
         # 하루 사본의 이름 꼴이 아니라 keep 정리에 지워지지 않는다). 사본을 못 뜨면 DB 를 바꾸지 않고 멈춘다.
@@ -599,15 +606,21 @@ class Store:
             raise RuntimeError(
                 f"이 DB 는 더 새 프로그램이 만든 것입니다(스키마 {found}, 이 프로그램은 {SCHEMA_VERSION}) — 열지 않았습니다. "
                 f"프로그램을 새 것으로 바꾸세요: {self.db_path}")
-        if needs_work_batch_migration(self.db_path):
+        # 상대경로 열(images.rel, 스키마 2 — 2026-11-28)도 같은 규칙: 이미지가 든 DB 에 더하기 전에 사본. 둘 다 없는 옛 DB 는 한 번만 뜬다.
+        need_wb = needs_work_batch_migration(self.db_path)
+        need_rel = need_wb or needs_rel_migration(self.db_path)
+        if need_rel:
+            what, tag = (("작업 배치(표 work_batches · 열 images.work_batch)와 상대경로 열(images.rel)", "workbatch") if need_wb
+                         else ("이미지 상대경로 열(images.rel)", "relpath"))
             dst = (self.db_path.parent / "backups"
-                   / f"{self.db_path.stem}_before_workbatch_{datetime.now():%Y%m%d_%H%M%S}.db")
+                   / f"{self.db_path.stem}_before_{tag}_{datetime.now():%Y%m%d_%H%M%S}.db")
             try:
                 self.migrated_from = copy_db(self.db_path, dst)
             except Exception as exc:
                 raise RuntimeError(
-                    f"작업 배치 열을 더하기 전에 DB 사본을 뜨지 못해 DB 를 바꾸지 않았습니다 ({dst}): "
+                    f"{what}을 더하기 전에 DB 사본을 뜨지 못해 DB 를 바꾸지 않았습니다 ({dst}): "
                     f"{type(exc).__name__}: {exc}") from exc
+            self.migrated = what
         with self.connect() as con:
             con.executescript(_SCHEMA)
             # 이미 있는 DB 에는 CREATE TABLE IF NOT EXISTS 가 열을 더해 주지 않는다.
@@ -632,9 +645,116 @@ class Store:
             # x1~y2(바깥 사각형)만 읽는다 — 옛 코드로 그 장의 영역을 다시 저장하면 다각형이 바깥 사각형으로 바뀐다.
             if "poly" not in {r["name"] for r in con.execute("PRAGMA table_info(masks)")}:
                 con.execute("ALTER TABLE masks ADD COLUMN poly TEXT")
-            # 스키마 버전 (2026-11-28 — 위 SCHEMA_VERSION). 위의 열 맞추기가 끝난 지금의 꼴이 1 이다 — 번호만 적는다(값은 그대로).
+            # 이미지 경로의 DB 폴더 기준 상대경로 (2026-11-28, 스키마 2 — 아래 '이미지 경로'). 옛 코드는 이 열을 모르고 지나간다.
+            if "rel" not in cols:
+                con.execute("ALTER TABLE images ADD COLUMN rel TEXT")
+        # 폴더를 옮긴 DB 면 이미지 경로를 다시 찾는다(바꿀 것이 있으면 그 전에 사본) → rel 을 지금 경로에 맞춘다 → 번호.
+        self._relocate()
+        with _write_lock, self.connect() as con:
+            self._refresh_rel(con)
+            # 스키마 버전 (위 SCHEMA_VERSION). 열 맞추기와 rel 채우기가 끝난 지금의 꼴이 2 다.
             if int(con.execute("PRAGMA user_version").fetchone()[0]) < SCHEMA_VERSION:
                 con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    # ------------------------------------------------------------------ 이미지 경로 (2026-11-28, 포터블 앱 6단계)
+    # `images.path` 는 절대경로 그대로다 — 패키지·도구 백여 곳이 그것을 읽고, 이 PC 에서는 값이 바뀌지 않는다. 그 옆의 `rel` 은
+    # DB 폴더(`self.base`) 기준 상대경로('/' 로 잇는다, DB 폴더 밖이면 NULL)로, path 를 쓰는 길(넣기·정리·카메라 키 바꾸기·
+    # 몇 장 옮기기·파일 바꾸기)이 함께 적고, 열 때마다 `_refresh_rel` 이 다시 맞춘다(옛 코드가 path 만 바꾼 행을 고친다).
+    # DB 폴더째 다른 자리·다른 PC·다른 OS 로 옮기면 열 때 `_relocate` 가 **path 의 파일이 없고 `DB 폴더/rel` 에 파일이 있는
+    # 행만** path 를 그 자리로 바꾼다(바꾸기 전에 사본) — 파일이 있는 행은 건드리지 않으니 '파일 없음' 이 늘지 않는다(prune 이
+    # 그것으로 행을 지운다). 그래서 DB 사본만 다른 폴더에 둔 시험 서버는 원래 이미지를 그대로 가리킨다. 그 전에는 README '새 PC
+    # 에서 시작하기' 5단계의 손 SQL 로 바꿨다(rel 이 없는 행 — 옛 코드가 넣고 새 코드가 한 번도 열지 않은 DB — 은 여전히 그 길).
+
+    def rel_path(self, path) -> str | None:
+        """이미지 경로의 DB 폴더 기준 상대경로('/' 로 이음) — DB 폴더 밖이거나 다른 OS 꼴의 경로면 None."""
+        s = str(path)
+        norm = os.path.normcase(s)
+        if not norm.startswith(self._base_prefix):
+            return None
+        if len(norm) == len(s):
+            tail = s[len(self._base_prefix):]
+        else:                                   # 대소문자를 바꾸면 길이가 달라지는 글자 — 드물다
+            try:
+                tail = str(Path(s).relative_to(self.base))
+            except ValueError:
+                return None
+        if os.altsep:
+            tail = tail.replace(os.altsep, os.sep)
+        parts = [p for p in tail.split(os.sep) if p]
+        if not parts or any(p in (".", "..") for p in parts):
+            return None
+        return "/".join(parts)
+
+    def _refresh_rel(self, con: sqlite3.Connection) -> int:
+        """DB 폴더 아래 경로인데 rel 이 다른 행의 rel 을 고친다(고친 수). DB 폴더 밖의 행은 건드리지 않는다 — 옮긴 DB 에서
+        못 찾은 행의 rel 은 다음에 찾을 단서이고, 시험용 DB 사본(이미지는 원래 자리)에서는 그대로 둬도 쓰이지 않는다."""
+        fix = []
+        for r in con.execute("SELECT id, path, rel FROM images"):
+            rel = self.rel_path(r["path"])
+            if rel is not None and rel != r["rel"]:
+                fix.append((rel, int(r["id"])))
+        if fix:
+            con.executemany("UPDATE images SET rel=? WHERE id=?", fix)
+        return len(fix)
+
+    def _relocate(self) -> None:
+        """폴더를 옮긴 DB 의 이미지 경로를 다시 찾는다 — path 의 파일이 없고 `DB 폴더/rel` 에 파일이 있는 행만. 바꿀 행이
+        있으면 먼저 사본(`backups/<이름>_before_relocate_<시각>.db`, 못 뜨면 아무것도 안 바꾸고 RuntimeError)을 뜨고, 한
+        트랜잭션에서 그사이 path 가 그대로인 행만 바꾼다. 그 자리를 이미 다른 행이 쓰면(같은 사진을 두 번 등록한 DB) 건너뛴다.
+        updated_at 은 그대로다(라벨이 아니라 자리만 바뀐다 — rename_camera_rows 와 같은 이유). 결과는 self.relocated."""
+        with self.connect() as con:
+            rows = con.execute("SELECT id, path, rel FROM images WHERE rel IS NOT NULL").fetchall()
+        plan: list[tuple[int, str, str]] = []
+        missing = 0
+        for r in rows:
+            target = self.base.joinpath(*r["rel"].split("/"))
+            if os.path.normcase(str(target)) == os.path.normcase(r["path"]) or os.path.exists(r["path"]):
+                continue                        # 제자리이거나 지금 경로에 파일이 있다 — 건드리지 않는다
+            if not target.is_file():
+                missing += 1                    # 적힌 자리에도 DB 폴더에도 없다
+                continue
+            plan.append((int(r["id"]), r["path"], str(target.resolve())))
+        if not plan:
+            if missing:
+                self.relocated = {"moved": 0, "missing": missing, "taken": 0, "backup": None}
+            return
+        dst = (self.db_path.parent / "backups"
+               / f"{self.db_path.stem}_before_relocate_{datetime.now():%Y%m%d_%H%M%S}.db")
+        try:
+            backup = copy_db(self.db_path, dst)
+        except Exception as exc:
+            raise RuntimeError(
+                f"폴더를 옮긴 DB 의 이미지 경로 {len(plan)}개를 고치기 전에 DB 사본을 뜨지 못해 DB 를 바꾸지 않았습니다 ({dst}): "
+                f"{type(exc).__name__}: {exc}") from exc
+        moved = taken = 0
+        with _write_lock, self.connect() as con:
+            con.execute("BEGIN IMMEDIATE")
+            for i, src, new in plan:
+                if con.execute("SELECT 1 FROM images WHERE path=? AND id<>?", (new, i)).fetchone():
+                    taken += 1
+                    continue
+                moved += con.execute("UPDATE images SET path=?, name=? WHERE id=? AND path=?",
+                                     (new, Path(new).name, i, src)).rowcount
+        self.relocated = {"moved": moved, "missing": missing, "taken": taken, "backup": backup}
+
+    def open_notes(self) -> list[str]:
+        """열 때 한 일을 사람이 읽을 줄로 — 서버·명령이 찍는다(열을 더함·이미지 경로를 다시 찾음)."""
+        out = []
+        if self.migrated_from is not None:
+            out.append(f"DB 에 {self.migrated or '새 열'}을 더했습니다. 더하기 직전의 DB 사본: {self.migrated_from}")
+        r = self.relocated
+        if r:
+            if r["moved"]:
+                out.append(f"DB 폴더를 옮긴 것으로 보고 이미지 경로 {r['moved']}개를 DB 폴더 기준으로 고쳤습니다"
+                           f"(라벨·검수 상태는 그대로). 고치기 전의 DB 사본: {r['backup']}")
+            if r["taken"]:
+                out.append(f"[알림] 다시 찾은 자리를 이미 다른 행이 쓰는 이미지 {r['taken']}개는 고치지 않았습니다"
+                           " — 같은 사진이 두 번 등록된 것일 수 있습니다(labeler.py check).")
+            if r["missing"]:
+                out.append(f"[경고] 이미지 {r['missing']}개는 적힌 자리에도 DB 폴더({self.base})에도 파일이 없습니다 — "
+                           "이미지 폴더를 DB 와 함께 옮겼는지 볼 것. 경로를 맞추기 전에는 정리·prune 을 쓰지 말 것"
+                           "(파일 없는 행을 라벨째 지운다).")
+        return out
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -759,7 +879,8 @@ class Store:
             boxes = [Box(**dict(r)) for r in con.execute(
                 "SELECT cls, cx, cy, w, h, conf, origin FROM boxes WHERE image_id=? ORDER BY id", (image_id,))]
             move()
-            con.execute("UPDATE images SET path=?, name=?, updated_at=? WHERE id=?", (p, Path(p).name, _now(), image_id))
+            con.execute("UPDATE images SET path=?, rel=?, name=?, updated_at=? WHERE id=?",
+                        (p, self.rel_path(p), Path(p).name, _now(), image_id))
         return boxes
 
     def delete_missing(self, rows: list[tuple[int, str]]) -> int:
@@ -777,8 +898,8 @@ class Store:
         p = str(Path(new_path).resolve())
         with _write_lock, self.connect() as con:
             con.execute(
-                "UPDATE images SET path=?, name=?, updated_at=? WHERE id=?",
-                (p, Path(p).name, _now(), image_id),
+                "UPDATE images SET path=?, rel=?, name=?, updated_at=? WHERE id=?",
+                (p, self.rel_path(p), Path(p).name, _now(), image_id),
             )
 
     def update_size(self, image_id: int, width: int, height: int) -> None:
@@ -1134,7 +1255,8 @@ class Store:
         with _write_lock, self.connect() as con:
             con.execute("BEGIN IMMEDIATE")      # 읽고 쓰는 사이에 다른 연결이 끼지 않게 처음부터 쓰기 잠금
             for i, src, dst in moves:
-                cur = con.execute("UPDATE images SET path=?, name=? WHERE id=? AND path=?", (dst, Path(dst).name, i, src))
+                cur = con.execute("UPDATE images SET path=?, rel=?, name=? WHERE id=? AND path=?",
+                                  (dst, self.rel_path(dst), Path(dst).name, i, src))
                 if cur.rowcount != 1:
                     raise RuntimeError(f"이미지 id {i} 의 경로가 그사이 바뀌었습니다 — 아무것도 바꾸지 않았습니다. 다시 하세요.")
             cams = [int(r[0]) for r in con.execute("UPDATE images SET camera=? WHERE camera=? RETURNING id", (new, old))]
@@ -1146,8 +1268,8 @@ class Store:
         """rename_camera_rows 를 되돌린다(그 뒤 cameras.yaml 을 못 고쳤을 때) — 경로는 새 경로인 행만 옛 경로로."""
         with _write_lock, self.connect() as con:
             con.execute("BEGIN IMMEDIATE")
-            con.executemany("UPDATE images SET path=?, name=? WHERE id=? AND path=?",
-                            [(src, Path(src).name, i, dst) for i, src, dst in moves])
+            con.executemany("UPDATE images SET path=?, rel=?, name=? WHERE id=? AND path=?",
+                            [(src, self.rel_path(src), Path(src).name, i, dst) for i, src, dst in moves])
             con.executemany("UPDATE images SET camera=? WHERE id=?", [(old, i) for i in undo["camera_ids"]])
             con.executemany("UPDATE mask_templates SET camera=? WHERE id=?", [(old, i) for i in undo["template_ids"]])
 
@@ -1185,8 +1307,9 @@ class Store:
             con.execute("BEGIN IMMEDIATE")      # 읽고 쓰는 사이에 다른 연결이 끼지 않게 처음부터 쓰기 잠금
             templates = 0
             for i, src, dst, old, new, captured_at in rows:
-                cur = con.execute("UPDATE images SET path=?, name=?, camera=?, captured_at=?, grp=NULL"
-                                  " WHERE id=? AND path=? AND camera=?", (dst, Path(dst).name, new, captured_at, i, src, old))
+                cur = con.execute("UPDATE images SET path=?, rel=?, name=?, camera=?, captured_at=?, grp=NULL"
+                                  " WHERE id=? AND path=? AND camera=?",
+                                  (dst, self.rel_path(dst), Path(dst).name, new, captured_at, i, src, old))
                 if cur.rowcount != 1:
                     raise RuntimeError(f"이미지 id {i} 의 경로나 카메라가 그사이 바뀌었습니다 — 아무것도 바꾸지 않았습니다. 다시 하세요.")
                 templates += con.execute("UPDATE mask_templates SET camera=? WHERE image_id=? AND camera=?",
@@ -1596,11 +1719,11 @@ class Store:
             self._replace_boxes(con, image_id, new, source=source, batch=None,
                                 masks=None if masks is None else clean_masks(masks))
             con.execute(
-                "UPDATE images SET path=?, name=?, width=?, height=?, dhash=NULL,"
+                "UPDATE images SET path=?, rel=?, name=?, width=?, height=?, dhash=NULL,"
                 + ("" if keep_status else " status='pending',")
                 + " uncertainty=?, model_version=?, updated_at=? WHERE id=?",
-                (path, Path(path).name, int(width), int(height), float(uncertainty), model_version, _now(),
-                 image_id),
+                (path, self.rel_path(path), Path(path).name, int(width), int(height), float(uncertainty), model_version,
+                 _now(), image_id),
             )
         return True
 
@@ -1990,8 +2113,8 @@ class Store:
                 cur = con.execute(
                     "INSERT INTO images"
                     "(path, name, width, height, source, status, uncertainty, model_version, updated_at,"
-                    " camera, captured_at, work_batch)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+                    " camera, captured_at, work_batch, rel)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
                     " ON CONFLICT(path) DO NOTHING",
                     (
                         it["path"],
@@ -2006,6 +2129,7 @@ class Store:
                         it.get("camera"),
                         it.get("captured_at"),
                         it.get("work_batch"),
+                        self.rel_path(it["path"]),
                     ),
                 )
                 if cur.rowcount == 0:

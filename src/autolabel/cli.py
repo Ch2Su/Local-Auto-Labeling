@@ -36,7 +36,10 @@ from .workbatch import ingest_as_batch
 
 def _setup(args) -> tuple[Config, Store]:
     cfg = Config.load(args.config)
-    return cfg, Store(cfg.db)
+    store = Store(cfg.db)
+    for line in store.open_notes():      # 열을 더함·옮긴 DB 의 이미지 경로를 다시 찾음 (Store.__init__)
+        print(line)
+    return cfg, store
 
 
 def cmd_scan(args) -> int:
