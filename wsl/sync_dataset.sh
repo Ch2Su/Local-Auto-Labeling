@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Windows 프로젝트가 만든 YOLO 데이터셋을 WSL 홈으로 복사한다 (이미지 + 라벨 + test 의 ignore/ 그림만).
 #
-#   bash /mnt/e/local_auto_labeling/wsl/sync_dataset.sh                  # 가시광
-#   bash /mnt/e/local_auto_labeling/wsl/sync_dataset.sh <원본 dataset> <WSL 폴더>   # 다른 프로젝트
+#   bash <저장소>/wsl/sync_dataset.sh                  # 가시광
+#   bash <저장소>/wsl/sync_dataset.sh <원본 dataset> <WSL 폴더>   # 다른 프로젝트
+#
+# <저장소> 는 이 저장소를 WSL 에서 보는 경로다(노트북 /mnt/e/local_auto_labeling, 집 데스크탑 /mnt/c/local_auto_labeling).
+# 인자 없이 돌리면 이 스크립트가 있는 저장소의 data/visible/dataset 을 쓴다(2026-11-28 — 전에는 /mnt/e 로 박혀 있었다).
 #
 # 왜 복사하나
-#   - /mnt/e 는 Windows 드라이브를 거쳐 읽어서 느리다. WSL 자체 파일시스템이 빠르다.
-#   - **DB 는 가져가지 않는다.** data/labeling.db 는 SQLite 인데 /mnt/e 경로로는
+#   - /mnt/<드라이브> 는 Windows 드라이브를 거쳐 읽어서 느리다. WSL 자체 파일시스템이 빠르다.
+#   - **DB 는 가져가지 않는다.** data/labeling.db 는 SQLite 인데 /mnt/<드라이브> 경로로는
 #     파일 잠금이 제대로 안 먹는다. Windows 검수 서버가 떠 있는 동안 WSL 이 같은 DB 를
 #     쓰면 손상될 수 있다. 학습에는 이미지와 라벨 .txt 만 있으면 된다.
 #
@@ -20,7 +23,8 @@ set -euo pipefail
 
 # 기본값은 가시광. 다른 프로젝트는 첫 인자로 준다 (웹 UI 의 WSL 학습 버튼은 config 의
 # data.dataset 을 그대로 넘긴다). 2026-09-21 에 data/dataset -> data/visible/dataset.
-SRC="${1:-/mnt/e/local_auto_labeling/data/visible/dataset}"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"    # 이 스크립트(<저장소>/wsl/)의 한 단계 위
+SRC="${1:-$REPO/data/visible/dataset}"
 DST="${2:-$HOME/datasets/visible}"
 
 if [ ! -f "$SRC/data.yaml" ]; then

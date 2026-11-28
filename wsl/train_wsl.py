@@ -1,10 +1,13 @@
 """WSL(Linux)에서 돌리는 학습 스크립트. Windows 프로젝트와 독립적이다.
 
+    # <저장소> = 이 저장소를 WSL 에서 보는 경로 — 노트북 /mnt/e/local_auto_labeling, 집 데스크탑 /mnt/c/local_auto_labeling.
+    # 이 스크립트가 찍는 안내는 자기 자리(REPO)로 적는다(2026-11-28 — 전에는 /mnt/e 로 박혀 있어 데스크탑에서 틀렸다).
+
     # 1) Windows 에서 만든 데이터셋을 WSL 홈으로 옮긴다 (한 번, 또는 데이터가 바뀔 때마다)
-    bash /mnt/e/local_auto_labeling/wsl/sync_dataset.sh
+    bash <저장소>/wsl/sync_dataset.sh
 
     # 2) 학습
-    ~/miniconda3/envs/yolo_final/bin/python /mnt/e/local_auto_labeling/wsl/train_wsl.py
+    ~/miniconda3/envs/yolo_final/bin/python <저장소>/wsl/train_wsl.py
 
     # 3) 멈추기 — 아무 창에서나 (다음 배치에서 멈추고 resume.pt 를 남긴다)
     touch ~/new_env/yolo/runs_wsl/STOP
@@ -12,7 +15,7 @@
     #    STOP 이라는 빈 파일을 만들면 된다.
 
     # 4) 이어하기
-    ~/miniconda3/envs/yolo_final/bin/python /mnt/e/local_auto_labeling/wsl/train_wsl.py --resume
+    ~/miniconda3/envs/yolo_final/bin/python <저장소>/wsl/train_wsl.py --resume
 
     # 인자 하나만 바꿔 보기 / 실제로 무엇이 넘어가는지만 확인
     ... train_wsl.py --hyp flipud=0.5 mosaic=0.8
@@ -69,7 +72,7 @@ from pathlib import Path
 HOME = Path.home()
 DEFAULT_DATA = HOME / "datasets" / "visible" / "data.yaml"
 DEFAULT_PROJECT = HOME / "new_env" / "yolo" / "runs_wsl"
-# 이 파일은 /mnt/e/local_auto_labeling/wsl/ 에 있다. 사전학습 가중치는 저장소의 weights/
+# 이 파일은 <저장소>/wsl/ 에 있다(REPO — 드라이브는 PC 마다 다르다). 사전학습 가중치는 저장소의 weights/
 # 것을 쓴다 — 이름만 주면 Ultralytics 가 실행한 폴더에서 찾다가 없으면 새로 받는다.
 REPO = Path(__file__).resolve().parents[1]
 _W = REPO / "weights" / "yolo26s.pt"
@@ -291,7 +294,7 @@ def main() -> int:
         data = Path(args.data).expanduser()
         if not data.exists():
             print(f"데이터셋이 없습니다: {data}\n"
-                  "  먼저 bash /mnt/e/local_auto_labeling/wsl/sync_dataset.sh")
+                  f"  먼저 bash {REPO / 'wsl' / 'sync_dataset.sh'}")
             return 1
         kw, ignored = build_kwargs(args, data, project)
         if args.dry_run:
@@ -394,7 +397,7 @@ epoch       : {g['epochs']}  (patience {g['patience']}, close_mosaic {g['close_m
     if best.exists():
         print(f"best.pt   : {best}")
         print("\nWindows 로 가져오려면 (운영 가중치를 바로 덮지 않도록 다른 이름으로):")
-        print(f"  cp {best} /mnt/e/local_auto_labeling/models/best_wsl_{args.name}.pt")
+        print(f"  cp {best} {REPO / 'models' / f'best_wsl_{args.name}.pt'}")
     print("=" * 64)
     # 웹 UI 'WSL 학습' 버튼이 읽는 줄. Ultralytics 는 같은 이름이 있으면 name2, name3
     # 으로 바꾸므로 결과 폴더를 호출한 쪽이 추측할 수 없다. 형식을 바꾸지 말 것.

@@ -3,7 +3,7 @@
 '8GB 카드에서 어디까지 무겁게 돌릴 수 있나'를 추측 대신 실측으로 정하려고 만들었다.
 학습은 WSL 에서 하므로(CLAUDE.md, Windows 보다 약 4배 빠름) 여기서 잰다.
 
-    ~/miniconda3/envs/yolo_final/bin/python /mnt/e/local_auto_labeling/wsl/probe_vram.py
+    ~/miniconda3/envs/yolo_final/bin/python <저장소>/wsl/probe_vram.py     # <저장소> = /mnt/c/… 또는 /mnt/e/…(PC 마다)
     ... probe_vram.py --models s m l x --imgsz 640 960 1280        # 기본 격자
     ... probe_vram.py --models s-p2 m-p2 --imgsz 640 960           # 작은 객체용 P2 헤드
 
@@ -36,7 +36,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
-PROJECT = HERE.parents[1]                      # /mnt/e/local_auto_labeling
+PROJECT = HERE.parents[1]                      # <저장소> — 이 파일의 두 단계 위(드라이브는 PC 마다 다르다)
 WORKDIR = Path("/tmp/vram_probe")
 LIMIT_FRAC = 0.94                              # 이보다 많이 쓰면 '한도 초과' 로 본다
 

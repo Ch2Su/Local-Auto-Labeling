@@ -304,7 +304,7 @@ def hyp_tokens(cfg: Config) -> list[str]:
 
 def train_cmd(cfg: Config, s: WslSettings) -> list[str]:
     """새 학습을 시작하는 train_wsl.py 명령 (WSL 안에서 돌 인자 목록)."""
-    # 사전학습 가중치는 Windows 쪽 weights/ 의 것을 /mnt/e 경로로 넘긴다. 이름만
+    # 사전학습 가중치는 Windows 쪽 weights/ 의 것을 /mnt/<드라이브> 경로로 넘긴다(to_linux). 이름만
     # 넘기면 WSL 의 Ultralytics 가 실행 폴더에서 찾다가 없으면 새로 받는다.
     base = Path(cfg.base_weights)
     model_arg = to_linux(base) if base.exists() else base.name

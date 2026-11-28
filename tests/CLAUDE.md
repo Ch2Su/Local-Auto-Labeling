@@ -160,5 +160,9 @@
   (`server.load_cameras` 를 세는 것으로 갈아), `tests/test_js_lists.py`(`loadState`·`loadSplits`·`listRequest`·`listStale`·
   한 줄 `const LIST_LAST` — 요청마다 풀어 줄 손잡이를 쥐고 응답 순서를 뒤집는다), `tests/test_server.py` 의 목록 상한,
   `tests/test_yolo_io.py` 의 '모델을 올리는 도구의 함수를 가져다 쓰는 도구'(가져오는 줄로 찾는다 — `domain_review.py`).
+- `tests/test_wsl_paths.py`(11-28)는 WSL 스크립트가 저장소 자리를 제 위치에서 구하는지 본다 — 파이썬은 ast 로 문서 글(docstring)을 뺀
+  문자열에, 셸은 `#` 로 시작하지 않는 줄에 `/mnt/<글자>/` 가 있으면 실패한다(주석·머리말의 노트북 예시는 괜찮다). `train_wsl.main()` 을
+  없는 데이터로 불러 안내가 `REPO` 경로를 찍는지도. 셸 스크립트를 실제로 돌리지는 않는다(돌리면 데이터셋이 있는 PC 에서 WSL 홈으로
+  복사한다) — 11-28 에 WSL 에서 손으로 돌려 데스크탑의 `/mnt/c/…` 를 찍는 것을 봤다. 고치기 전 코드로 돌려 셋 다 실패하는 것을 봤다.
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.
