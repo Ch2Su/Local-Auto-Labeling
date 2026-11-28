@@ -217,5 +217,11 @@
   막기·cross-fit·McNemar 양쪽·1:1·차량 정리·크기 확인·car 기준)을 메모리에서만 끄고 돌려 전부 실패하는 것을 봤다. 두 도구는 YOLO 를
   올리므로 `tests/test_yolo_io.py` 의 모델 도구 목록에 넣었다. 같은 날 A0b 용 `a0 --only-fold`·`--tag`·`merge` 도 본다(그 fold 의 크롭만,
   없는 fold 는 멈춤, 합칠 때 같은 크롭 두 번이면 멈춤, 견줄 클래스는 조각들의 교집합).
+- `tests/test_deps.py`(11-28, 포터블 앱 7단계)는 `pyproject.toml`·`locks/*.txt`·`requirements.txt` 를 읽어 견주기만 한다(네트워크·설치
+  없음 — `tomllib`·`packaging`, `packaging` 이 없으면 건너뛴다). 패키지(src/autolabel)·tests·wsl·tools 의 바깥 import 를 ast 로 모아 범위에
+  있는지 보는데, import 이름과 배포 이름이 다른 것은 `DIST`(PIL→pillow 등), 일부러 뺀 것은 `ELSEWHERE`(transformers — ovd_propose 의 다른
+  venv)에 적는다. **바깥 패키지를 새로 import 하면 pyproject 에 넣고 잠금을 다시 만들 것**(`python locks/compile.py`). 2026-11-28 에 열
+  가지(의존성 빠짐·도구 묶음 빠짐·Ultralytics 위쪽 없음·범위 밖 잠금·잠금에서 빠짐·cpu 인덱스 줄 없음·PC 자리·개발과 다른 판·노트북 판이
+  범위 밖·화면 파일이 package-data 밖)를 저장소 사본에서 하나씩 망가뜨려 전부 실패하는 것을 봤다.
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.

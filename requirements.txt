@@ -1,3 +1,5 @@
+# 노트북의 개발 잠금이다(그대로 둔다). 2026-11-28 부터 의존성 범위는 pyproject.toml, OS·GPU 별 잠금은 locks/ 다(locks/README.md) —
+# 이 파일의 판도 pyproject 범위 안이어야 한다(tests/test_deps.py).
 # Windows `.venv`(Python 3.14.3) 에서 검증한 버전으로 고정한다 (2026-10-31 `pip freeze`). Python 3.14.1 은
 # 안 된다 — torchvision 0.29.0 이 그 버전만 받지 않는다(Requires-Python: !=3.14.1).
 # 이 저장소가 직접 쓰는 패키지만 적었다. 나머지 간접 의존성은 pip 가 고르므로 그날의 `.venv` 와
@@ -18,7 +20,7 @@ torchvision==0.29.0+cu130
 # 정지·스냅샷·이어하기는 Ultralytics 내부 순서에 기댄다(CLAUDE.md 함정 8).
 # 8.4.50(WSL) 과 8.4.142(Windows) 에서 소스로 확인했다. 올리면 다시 확인할 것.
 ultralytics==8.4.142
-# 직접 import 하지는 않지만 Ultralytics 가 학습·추론 이미지를 이것으로 읽는다(AVIF 는 PIL 폴백).
+# Ultralytics 가 학습·추론 이미지를 이것으로 읽고, 영상 캡처(capture.py·autopick.py)가 직접 import 한다(AVIF 는 PIL 폴백).
 opencv-python==5.0.0.93
 
 # --- 검수 웹 UI ---

@@ -56,6 +56,12 @@
 .venv/Scripts/python.exe -m pip install torch==2.14.0+cu130 torchvision==0.29.0+cu130 --index-url https://download.pytorch.org/whl/cu130
 ```
 
+**의존성 범위는 `pyproject.toml`, OS·GPU 별 잠금은 `locks/` 다 (11-28, 포터블 앱 7단계 — [locks/README.md](locks/README.md)).**
+`requirements.txt` 는 노트북의 개발 잠금으로 그대로 두고, 이 데스크탑 `.venv` 는 `locks/win-cu134-py315.txt` 와 같은 판이다.
+**이 `.venv` 에 `pip install -e .`·`-r locks/…` 를 하지 말 것**(다른 프로젝트가 빌려 쓴다 — 시험은 새 venv 에서). 범위를 바꾸거나
+`.venv` 의 패키지를 올리면 `python locks/compile.py`(`--dev-venv .venv`) 로 잠금을 다시 만들고 `tests/test_deps.py` 를 돌린다.
+Ultralytics 는 범위 위쪽이 함정 8 을 소스로 확인한 판(8.4.212)이다 — 올리려면 확인한 뒤 위쪽을 고친다.
+
 **`autolabel` 패키지를 import 하면 `YOLO_AUTOINSTALL=false` 가 기본으로 놓인다 (11-25).** Ultralytics 가 모자란 패키지를 만나도
 이 `.venv`(다른 프로젝트도 쓴다)에 스스로 깔지 않는다 — 필요한 것은 `requirements.txt` 로 깐다. 켜려면 환경 변수를 `true` 로.
 
@@ -386,7 +392,7 @@ docs/experiments.md '8클래스 첫 학습'. **학습 설정도 같은 날 운�
    중단이 확정된 epoch 의 `last.pt` 를 `resume.pt` 로 복사해 두고, 이어하기는 그것으로 한다. 강제 종료(kill·정전)는 오히려
    `last.pt` 가 온전하다.
    - 복사할 수 있는 자리는 `on_fit_epoch_end`(`save_model()` 직후·`final_eval()` 전) 하나뿐이고, Ultralytics 는 patience 조기
-     종료에도 `trainer.stop` 을 세운다 — **Ultralytics 를 올리면 이 두 가지를 소스로 다시 볼 것**(requirements.txt 주석). 이
+     종료에도 `trainer.stop` 을 세운다 — **Ultralytics 를 올리면 이 두 가지를 소스로 다시 볼 것**(requirements.txt 주석 · pyproject.toml 의 위쪽 `<=8.4.212`). 이
      로직은 `trainer.py` 와 `train_wsl.py`(Windows 코드를 import 하지 않는다)에 따로 있어, 고칠 때는 둘 다 고친다.
    - **정상 중단은 정지 파일로** — `runs/STOP`(WSL 은 `~/new_env/yolo/runs_wsl/STOP`)을 만들면 다음 배치 경계에서 멈추고
      resume.pt 를 남긴다(그 epoch 의 나머지는 건너뛴다). 웹 UI 중단 버튼도 같다. **Ctrl+C 는 가로채지 않는다**(즉시 종료 —
