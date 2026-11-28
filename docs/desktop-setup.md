@@ -138,7 +138,7 @@ robocopy X:\move\models C:\local_auto_labeling\models /E /COPY:DAT /R:1 /W:1
 robocopy X:\move\weights C:\local_auto_labeling\weights /E /COPY:DAT /R:1 /W:1
 ```
 
-**④ 경로 맞추기 — 반드시 한다.** DB 가 이미지를 `E:\local_auto_labeling\…` 절대경로로 들고 있어, 이대로 두면 전부 '파일 없음' 이다. **README '새 PC 에서 시작하기' 5단계의 파이썬 스니펫**을 그대로 쓴다(`old` 는 `E:\\local_auto_labeling\\`, `new` 는 스니펫이 `ROOT` 에서 알아서 가져온다). **고치기 전에는 scan·학습·prune·정리 버튼을 쓰지 않는다**(파일 없음이 절반 넘으면 scan 이 멈추고, prune·정리는 그 행을 라벨째 지운다). 끝나면:
+**④ 경로 맞추기 — 반드시 한다.** DB 가 이미지를 `E:\local_auto_labeling\…` 절대경로로 들고 있어, 이대로 두면 전부 '파일 없음' 이다. 2026-11-28 코드(스키마 2)가 한 번이라도 연 DB 를 이미지와 함께 옮겼다면 열 때 저절로 맞춰진다(README 5단계 — `labeler.py check` 로 확인만). 그 전 DB 면 **README '새 PC 에서 시작하기' 5단계의 파이썬 스니펫**을 그대로 쓴다(`old` 는 `E:\\local_auto_labeling\\`, `new` 는 스니펫이 `ROOT` 에서 알아서 가져온다). **고치기 전에는 scan·학습·prune·정리 버튼을 쓰지 않는다**(파일 없음이 절반 넘으면 scan 이 멈추고, prune·정리는 그 행을 라벨째 지운다). 끝나면:
 
 ```powershell
 .venv\Scripts\python.exe labeler.py check

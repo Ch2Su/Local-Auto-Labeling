@@ -169,7 +169,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-28 까지 754개·87초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-28 까지 782개·100초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
@@ -278,10 +278,14 @@ width/height 는 회전 전 원시 크기다**(`labeler.py check` 도 원시 크
 - `train.test_ratio`(또는 val_ratio)를 0 으로 바꿔 이미 배정된 분할이 비율에서 빠지면, reset 이 아닌 한 **아무것도 쓰기 전에
   멈춘다**(11-05 — 전에는 test 가 경고 없이 train·val 로 흡수됐다).
 
-**폴더는 `data/visible/` 다.** DB 는 이미지를 **절대경로**로 들고 있어 폴더를 옮기면 `images.path` 도 치환해야 한다(스니펫은
-README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 스캔·학습·`prune`·정리 버튼을 쓰지 말 것** — 스캔은 시드를 검수
-전 라벨로 다시 넣고(그래서 DB 의 절반 넘게 '파일 없음' 이면 멈춘다, `scan --force` 로 강행), 웹 UI 의 정리(tidy)는 뒤이어
-`prune` 을 돌려 '파일 없음' 행을 **검수 상태·라벨째 지운다**(절반 넘게 없을 때만 멈추니, 일부만 되살린 상태면 그만큼 지운다).
+**폴더는 `data/visible/` 다.** DB 는 이미지를 **절대경로**(`images.path`)로 들고 있고, **11-28 부터(스키마 2, 포터블 앱 6단계) 그
+옆에 DB 폴더 기준 상대경로 `images.rel` 을 함께 적는다** — DB 폴더째(이미지와 함께) 옮기면 새 코드가 DB 를 열 때 **path 의 파일이
+없고 `DB 폴더/rel` 에 있는 행만** path 를 고친다(그 전에 `backups/labeling_before_relocate_<시각>.db` 사본, 서버·명령이 몇 개
+고쳤는지 찍는다). 파일이 있는 행은 안 건드리니 DB 사본만 다른 폴더에 둔 시험 서버는 원래 이미지를 그대로 가리킨다. rel 이 없는
+행(새 코드가 한 번도 안 연 옛 DB)은 여전히 README '새 PC 에서 시작하기' 5단계의 손 SQL 이다. **경로가 맞기 전에는 스캔·학습·
+`prune`·정리 버튼을 쓰지 말 것** — 스캔은 시드를 검수 전 라벨로 다시 넣고(그래서 DB 의 절반 넘게 '파일 없음' 이면 멈춘다,
+`scan --force` 로 강행), 웹 UI 의 정리(tidy)는 뒤이어 `prune` 을 돌려 '파일 없음' 행을 **검수 상태·라벨째 지운다**(절반 넘게
+없을 때만 멈추니, 일부만 되살린 상태면 그만큼 지운다). 열 때 못 찾은 이미지가 있으면 `[경고] 이미지 N개는 … 파일이 없습니다` 가 뜬다.
 - **새 수집은 전부 출처(카메라)를 밝힌다.**
 - 시드: `seed_coco: data/visible/seed`(지금은 없다 — 없으면 시드 없이 돈다)는 하위 폴더까지 COCO 주석 json 을 **전부** 찾아
   (`coco_io.find_annotation_files`) 검수 없이 승인으로 넣으니, 검토 전 데이터나 json 사본을 그 아래에 두지 말 것(회차마다
@@ -295,8 +299,9 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개 — 켤 때, 켜 둔 채 날이 바뀌면 그날 첫 변경 요청 앞에서).
-  **스키마 버전은 SQLite 의 `PRAGMA user_version` 이다(11-28, 포터블 앱 5단계 — `store.SCHEMA_VERSION` 1)** — 새 코드가 `Store` 를
-  처음 열 때 번호만 적고(값은 그대로), 더 새 번호의 DB 는 열지 않는다. `classes.txt` 는 DB 옆이다. `thumbs/`(11-04)는 이미지 보기 썸네일 캐시 — 지워도 되고 백업하지 않는다. `capture/`(11-10)는
+  **스키마 버전은 SQLite 의 `PRAGMA user_version` 이다(11-28, 포터블 앱 5단계 — 지금 `store.SCHEMA_VERSION` 2: 열 `images.rel`)** —
+  새 코드가 `Store` 를 처음 열 때 열을 더하고(이미지가 든 DB 는 그 전에 `backups/labeling_before_relpath_<시각>.db`) 번호를 적으며,
+  더 새 번호의 DB 는 열지 않는다(11-28 의 5단계 코드는 번호 2 인 DB 를 안 연다 — 새 코드로). `classes.txt` 는 DB 옆이다. `thumbs/`(11-04)는 이미지 보기 썸네일 캐시 — 지워도 되고 백업하지 않는다. `capture/`(11-10)는
   영상 캡처 탭의 임시 세션(올린 영상 사본·뽑은 프레임 — 넣거나 닫으면 서버가 지운다)이라 백업하지 않는다(수 GB 일 수 있다).
   `autocapture/`(11-12)는 `tools/auto_capture.py` 의 처리 기록 `videos.jsonl`(지우면 처리한 영상을 다시 올린다)·후보 프레임별
   기록 `frames/`·대조 시트 `sheets/` 다 — 영상 경로·검출 기록이라 git 밖(data/)에 둔다.

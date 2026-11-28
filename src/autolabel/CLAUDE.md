@@ -20,9 +20,16 @@
   도중에 멈추면 옛 세트가 그대로다(그 전에는 먼저 지우고 검사했다). 옛 세트의 학습 캐시(`.npy`·`.cache`)는 만들기 전에 지운다 —
   만드는 동안 디스크는 옛 그림·라벨 + 새 세트만큼 쓴다. `data.yaml` 의 `path` 는 최종 자리다. 옆에 `.building`·`.old` 가 남아 있으면
   지난번 만들기가 멈춘 것이고 다음 만들기가 치운다. `tests/test_dataset_swap.py`.
-- **DB 스키마 버전은 `PRAGMA user_version`(`store.SCHEMA_VERSION`, 2026-11-28 포터블 앱 5단계 — 지금 1).** `Store.__init__` 이 열
+- **DB 스키마 버전은 `PRAGMA user_version`(`store.SCHEMA_VERSION`, 2026-11-28 포터블 앱 5단계 — 지금 2).** `Store.__init__` 이 열
   맞추기(ALTER TABLE ADD COLUMN)를 마친 뒤 번호를 적고, 더 새 번호의 DB 는 아무것도 쓰기 전에 거절한다. **값을 바꾸는 새
-  마이그레이션(경로 옮기기 같은)은 번호를 올리고 '지금 번호 < N' 으로 가르며, 바꾸기 전에 `copy_db` 로 사본을 뜰 것.**
+  마이그레이션은 번호를 올리고 '지금 번호 < N' 으로 가르며, 바꾸기 전에 `copy_db` 로 사본을 뜰 것**(이름은 `_before_copy` — 같은 초에도 안 덮는다).
+- **이미지 경로는 `images.path`(절대경로)와 `images.rel`(DB 폴더 기준, '/' 로 이음 — DB 폴더 밖이면 NULL) 둘이다 (2026-11-28, 포터블 앱
+  6단계·스키마 2).** 읽는 쪽은 전처럼 path 만 읽는다(패키지·도구 백여 곳 — 바꾸지 않았다). **path 를 쓰는 SQL 은 rel 도 함께
+  적는다**(`rel=?` + `self.rel_path(경로)` — `tests/test_image_relpath.py` 가 패키지의 SQL 문자열을 모아 막는다). 열 때마다
+  `_relocate`(옮긴 DB — path 의 파일이 없고 `DB 폴더/rel` 에 있는 행만, 그 전에 `_before_relocate_` 사본) → `_refresh_rel`(DB 폴더
+  아래 행의 rel 을 path 에 맞춤) 순서다 — 거꾸로 하면 DB 폴더가 옛 DB 폴더의 위가 된 때 못 찾는다. **파일이 있는 행은 다시 찾지
+  않는다**(파일 없음이 늘면 prune 이 행을 지운다 — DB 사본만 옮긴 시험 서버도 그래서 원래 그림을 가리킨다). 열 때 한 일은
+  `store.open_notes()` 로 서버·명령(`cli._setup`)·`tools/work_batch.py` 가 찍는다 — `Store` 를 여는 새 진입점도 찍을 것.
 - **이 폴더를 고친 뒤에는 회귀 테스트를 돌릴 것**(2026-11-12, `tests/` — `.venv\Scripts\python.exe -m pytest`, 루트 CLAUDE.md
   '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`maskSlabs`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`MASK_MAX`·
   `MASK_SAME`·`MASK_MAX_PTS` 는 `tests/test_js_parity.py` 가 화면과 서버를 대조한다.

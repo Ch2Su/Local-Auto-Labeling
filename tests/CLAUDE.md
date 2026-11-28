@@ -193,8 +193,20 @@
   안 남는지, 옛 세트의 `.npy`·`.cache` 만 먼저 지우는지, 지난번 잔재(`.building`·`.old`)를 치우는지. 고치기 전 코드로는 worktree 에서
   여섯 중 다섯이 실패하는 것을 봤다('다시 만들면 바뀐다' 는 전에도 됐다).
 - `tests/test_schema_version.py`(11-28, 포터블 앱 5단계)는 `store.SCHEMA_VERSION`·`schema_version` 을 본다 — 새 DB·번호 0 인 DB·작업
-  배치 열이 없는 옛 DB(`test_workbatch.old_db`)를 열면 1 이 되고 행 수가 그대로인가, 더 새 번호의 DB 는 파일 바이트를 그대로 두고 거절
-  하는가(사본도 안 뜬다), `copy_db` 가 번호를 옮기는가. **스키마를 바꾸는 새 마이그레이션은 번호를 올리고 여기에 'N-1 → N' 을 더할 것.**
+  배치 열이 없는 옛 DB(`test_workbatch.old_db` — 작업 배치·상대경로를 사본 하나로)를 열면 지금 번호가 되고 행 수가 그대로인가, 더 새 번호의
+  DB 는 파일 바이트를 그대로 두고 거절하는가(사본도 안 뜬다), `copy_db` 가 번호를 옮기는가. 1 → 2(6단계): `rel` 열을 지운(`DROP COLUMN`)
+  번호 1 의 DB 가 `_before_relpath_` 사본 뒤 rel 을 채우는가(DB 폴더 밖은 NULL). **스키마를 바꾸는 새 마이그레이션은 번호를 올리고 여기에
+  'N-1 → N' 을 더할 것.**
+- `tests/test_image_relpath.py`(11-28, 포터블 앱 6단계)는 이미지 경로의 DB 폴더 기준 상대경로(`images.rel`)를 본다 — 진짜 파일 셋을
+  `root/data/unlabeled/cam-01/` 에 두고 DB 폴더째 `shutil.move`·`copytree` 한다(그림 내용은 안 본다). 본다: `rel_path`(DB 폴더 밖·이름만
+  같은 옆 폴더·다른 OS 꼴은 None), 경로를 쓰는 길마다(`move_row`·`update_path`·카메라 키 바꾸기와 되돌리기·몇 장 옮기기·`replace_file`)
+  rel 이 함께 바뀌는가, **패키지의 SQL 가운데 images 에 넣거나 `SET path` 하는 문자열은 rel 도 적는가**(ast 로 문자열을 모은다 — 새로
+  path 를 쓰는 SQL 을 만들면 rel 도), 옛 코드가 path 만 바꾼 행을 다음에 열 때 맞추는가, 옮긴 DB 를 열면 파일이 없는 행만 고치고
+  (이름·상태·updated_at·박스·영역·이력 그대로, 사본은 고치기 전 경로) 다시 열면 할 일이 없는가, DB 폴더가 옛 DB 폴더의 위가 된 때
+  (다시 찾기가 rel 맞추기보다 먼저), 복사만 해 옛 파일이 남은 때·DB 파일만 옮긴 때 그대로인가, 일부만 옮긴 때(찾은 것만 · 마저 옮기고
+  다시 열면 · 같은 초의 사본 둘이 서로 안 덮음), 아무것도 못 찾으면 DB 바이트 그대로, 이미 다른 행이 쓰는 자리는 건너뜀(UNIQUE),
+  다른 OS 꼴의 경로, 사본을 못 뜨면 아무것도 안 바꿈. 2026-11-28 에 규칙 일곱(파일이 있는 행 건드리지 않기·자리 겹침·다시 찾기가
+  먼저·사본 이름 겹침·넣기의 rel·사본 먼저·못 찾은 수)을 하나씩 끄고 돌려 전부 실패하는 것을 봤다.
 - `tests/test_refiner.py`(11-28)는 `tools/train_refiner.py`·`tools/eval_refiner.py`(VehicleRefiner 1단계)를 본다 — 학습 쪽: 목록 거르기·
   주변 사각형이 크롭 안(흔들려 밖으로 나간 박스도 1px)·'1280 시야' 배율·평가 표본이 rng 와 무관·클래스 가중 평균 1·**torchvision 가중치가
   캐시에 없으면 `load_state_dict_from_url` 을 부르지 않고 멈춤**·`tinycnn` 으로 CPU 교차 검증 끝까지(test fold 는 학습·OOF 밖, final 만 예측)·
