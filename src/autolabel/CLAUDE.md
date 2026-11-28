@@ -16,6 +16,10 @@
 - **장치는 `cfg.device` 하나로 읽는다 (2026-11-28, 포터블 앱 3단계 — `devices.py`).** `auto` 면 CUDA → MPS → CPU 로 고르고, 설정에
   키가 없으면 `auto`(그 전에는 `0`). 사람이 적은 장치는 CUDA 가 없어도 바꾸지 않는다(몰래 CPU 로 돌리지 않는다). 이 저장소의
   config.yaml 은 `0` 그대로다. **`torch.cuda.is_available()` 을 여기저기서 따로 부르지 말 것** — 장치를 정하는 곳은 `devices.py` 하나다.
+- **학습 세트는 검사 → 옆 폴더(`<dataset>.building`)에 만들기 → 바꿔 끼우기로 만든다 (2026-11-28, 포터블 앱 4단계 — `trainer.build_dataset`).**
+  도중에 멈추면 옛 세트가 그대로다(그 전에는 먼저 지우고 검사했다). 옛 세트의 학습 캐시(`.npy`·`.cache`)는 만들기 전에 지운다 —
+  만드는 동안 디스크는 옛 그림·라벨 + 새 세트만큼 쓴다. `data.yaml` 의 `path` 는 최종 자리다. 옆에 `.building`·`.old` 가 남아 있으면
+  지난번 만들기가 멈춘 것이고 다음 만들기가 치운다. `tests/test_dataset_swap.py`.
 - **이 폴더를 고친 뒤에는 회귀 테스트를 돌릴 것**(2026-11-12, `tests/` — `.venv\Scripts\python.exe -m pytest`, 루트 CLAUDE.md
   '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`maskSlabs`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`MASK_MAX`·
   `MASK_SAME`·`MASK_MAX_PTS` 는 `tests/test_js_parity.py` 가 화면과 서버를 대조한다.

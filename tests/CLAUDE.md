@@ -187,5 +187,10 @@
   그룹·한 fold·`local_only=1`, `assign_folds` 가 그룹을 쪼개지 않고 responder 하나짜리 그룹 다섯을 fold 다섯에 하나씩, 표식 없는
   폴더는 안 쓰고 표식 있는 폴더는 지난 크롭을 지움, 보기만이면 폴더를 안 만듦. 그날 규칙 여덟(가려짐 빼기·EXIF·test 빼기·짝·
   local_only·드문 클래스 먼저·표식·크기 확인)을 메모리에서만 끄고 돌려 전부 실패하는 것을 봤다.
+- `tests/test_dataset_swap.py`(11-28, 포터블 앱 4단계)는 `build_dataset` 의 '검사 → 옆 폴더(`dataset.building`)에 만들기 → 바꿔
+  끼우기' 를 본다 — 진짜 작은 JPEG 세 장으로 한 번 만들어 둔 뒤, 가릴 영역이 있는 그림을 깨뜨려 멈추게 하거나·승인을 풀거나·
+  두 번째 이름 바꾸기(`Path.rename` 을 `.building` 에서만 실패하는 대역으로)를 막아도 옛 세트의 파일 목록이 그대로이고 옆 폴더가
+  안 남는지, 옛 세트의 `.npy`·`.cache` 만 먼저 지우는지, 지난번 잔재(`.building`·`.old`)를 치우는지. 고치기 전 코드로는 worktree 에서
+  여섯 중 다섯이 실패하는 것을 봤다('다시 만들면 바뀐다' 는 전에도 됐다).
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.
