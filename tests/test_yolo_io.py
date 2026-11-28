@@ -150,7 +150,8 @@ def test_the_tools_that_load_a_model_open_images_the_same_way():
     괄호까지 쓰면 걸린다). `wsl/eval_test.py` 는 프로젝트 코드를 import 하지 않아 자동 설치 끄기도 제 손으로 둔다."""
     from helpers import ROOT
 
-    loaders = [ROOT / "tools" / n for n in ("import_aihub_pm.py", "label_qa.py", "import_virat.py", "legacy_groups.py")]
+    loaders = [ROOT / "tools" / n for n in ("import_aihub_pm.py", "label_qa.py", "import_virat.py", "legacy_groups.py",
+                                             "train_refiner.py", "eval_refiner.py")]
     loaders.append(ROOT / "wsl" / "eval_test.py")
     for p in loaders:
         text = p.read_text(encoding="utf-8")

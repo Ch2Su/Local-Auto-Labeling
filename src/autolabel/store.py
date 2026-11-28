@@ -506,9 +506,12 @@ def copy_db(src: Path, dst: Path) -> Path:
 # 열 하나는 충분했지만, 이미지 경로처럼 **값을 바꾸는** 마이그레이션(계획 6단계)은 '어디까지 했나' 를 알아야 한다.
 #   1 — 2026-11-28 의 스키마 그대로(표 11개: images·boxes·box_history·hist_lists·masks·mask_templates·tags·image_tags·
 #       work_batches·classes·sqlite_sequence 밖의 것 — `_SCHEMA` 와 아래 ALTER). 값을 바꾸지 않고 번호만 적었다.
+#   2 — 2026-11-28, 포터블 앱 6단계: 열 `images.rel`(이미지 경로를 **DB 폴더 기준** 상대경로로, '/' 로 이은 것 — DB 폴더 밖이면
+#       NULL). `images.path`(절대경로)는 그대로 두고 지금처럼 모두가 읽는다 — rel 은 폴더를 옮겼을 때 path 를 다시 찾는 데만
+#       쓴다(`Store._relocate` — 아래 '이미지 경로'). 더하기 전에 사본을 뜬다(`<이름>_before_relpath_<시각>.db`).
 # 버전을 올리는 새 마이그레이션은 `Store.__init__` 에서 '지금 번호 < N 이면' 으로 가르고, 값을 바꾸기 전에 `copy_db` 로 사본을 뜬다.
 # **이 프로그램보다 새 버전의 DB 는 열지 않는다** — 옛 코드가 모르는 꼴의 값을 덮을 수 있다(그 전 코드는 이 번호를 안 본다).
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def schema_version(db_path: Path) -> int:
@@ -555,6 +558,30 @@ def needs_work_batch_migration(db_path: Path) -> bool:
         return look(sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=30.0))
     except sqlite3.OperationalError:
         # 읽기 전용으로 못 여는 자리(WAL 색인을 만들 수 없는 폴더 등) — 보통 연결로 읽기만 한다
+        return look(sqlite3.connect(db_path, timeout=30.0))
+
+
+def needs_rel_migration(db_path: Path) -> bool:
+    """이미지가 든 DB 인데 상대경로 열(images.rel — 스키마 2)이 아직 없는가 — 읽기 전용으로만 본다. 새 DB 는 False."""
+    db_path = Path(db_path)
+    try:
+        if not db_path.is_file() or db_path.stat().st_size == 0:
+            return False
+    except OSError:
+        return False
+
+    def look(con: sqlite3.Connection) -> bool:
+        try:
+            cols = {r[1] for r in con.execute("PRAGMA table_info(images)")}
+            if not cols or "rel" in cols:
+                return False
+            return con.execute("SELECT 1 FROM images LIMIT 1").fetchone() is not None
+        finally:
+            con.close()
+
+    try:
+        return look(sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=30.0))
+    except sqlite3.OperationalError:
         return look(sqlite3.connect(db_path, timeout=30.0))
 
 

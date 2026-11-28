@@ -347,7 +347,7 @@ def train_one(rows: list[dict], images: dict, args, seed: int, device, log) -> o
             opt.step()
             sched.step()
             step += 1
-            run_loss += float(loss) * len(idx)
+            run_loss += loss.detach().item() * len(idx)
         log({"epoch": epoch + 1, "loss": round(run_loss / len(order), 4), "sec": round(time.time() - t0, 1)})
     return model
 

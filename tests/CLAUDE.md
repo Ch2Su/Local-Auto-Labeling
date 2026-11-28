@@ -195,5 +195,14 @@
 - `tests/test_schema_version.py`(11-28, 포터블 앱 5단계)는 `store.SCHEMA_VERSION`·`schema_version` 을 본다 — 새 DB·번호 0 인 DB·작업
   배치 열이 없는 옛 DB(`test_workbatch.old_db`)를 열면 1 이 되고 행 수가 그대로인가, 더 새 번호의 DB 는 파일 바이트를 그대로 두고 거절
   하는가(사본도 안 뜬다), `copy_db` 가 번호를 옮기는가. **스키마를 바꾸는 새 마이그레이션은 번호를 올리고 여기에 'N-1 → N' 을 더할 것.**
+- `tests/test_refiner.py`(11-28)는 `tools/train_refiner.py`·`tools/eval_refiner.py`(VehicleRefiner 1단계)를 본다 — 학습 쪽: 목록 거르기·
+  주변 사각형이 크롭 안(흔들려 밖으로 나간 박스도 1px)·'1280 시야' 배율·평가 표본이 rng 와 무관·클래스 가중 평균 1·**torchvision 가중치가
+  캐시에 없으면 `load_state_dict_from_url` 을 부르지 않고 멈춤**·`tinycnn` 으로 CPU 교차 검증 끝까지(test fold 는 학습·OOF 밖, final 만 예측)·
+  크롭보다 넓은 `--pad` 멈춤·있는 결과 폴더 안 덮음. 평가 쪽: 1:1 짝짓기·정확 McNemar(6:0 → 0.03125)·β 맞추기가 참값 0.5 근처(4,000 표본)·
+  ECE·**cross-fit 보정에서 fold 0 의 logits 를 바꿔도 fold 0 의 β 는 그대로**·A0 대비 통과 기준(고친 경우 통과, car 재현율을 깎으면 미달,
+  A0 놓침은 안 견줌)·`a0` 를 가짜 YOLO(`sys.modules['ultralytics']` 를 갈아 끼움)로 — 크기 다른 그림 건너뛰기, 겹친 car·pickup 을 차량 정리로
+  car 하나만(정리를 끄면 앞의 pickup 과 짝이 되게 순서를 두었다)·`report` 끝까지(jsonl 한 줄). 그날 규칙 아홉(test 새기·내려받기 막기·pad
+  막기·cross-fit·McNemar 양쪽·1:1·차량 정리·크기 확인·car 기준)을 메모리에서만 끄고 돌려 전부 실패하는 것을 봤다. 두 도구는 YOLO 를
+  올리므로 `tests/test_yolo_io.py` 의 모델 도구 목록에 넣었다.
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.
