@@ -40,8 +40,8 @@ def test_config_and_server_read_their_places_from_here():
 
 def test_only_paths_py_works_out_where_things_are_from_its_own_file():
     """패키지에서 `__file__` 로 자리를 구하는 곳은 paths.py 하나다 — 다른 모듈이 저장소 루트를 따로 구하면 배포판에서 어긋난다.
-    `wsl_train.py` 는 WSL 스크립트(저장소의 wsl/)를 찾는다 — 2단계(WSL 을 선택 기능으로)에서 옮길 곳이라 지금은 둔다."""
-    allowed = {"paths.py", "wsl_train.py"}
+    (`wsl_train.py` 도 2단계(11-28)에서 `paths.APP` 로 옮겼다.)"""
+    allowed = {"paths.py"}
     found = sorted(p.name for p in (ROOT / "src" / "autolabel").glob("*.py")
                    if p.name not in allowed and re.search(r"\b__file__\b", p.read_text(encoding="utf-8")))
     assert found == []

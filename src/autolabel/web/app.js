@@ -4208,6 +4208,8 @@ async function refreshWslButtons() {
   } catch {
     S.wsl = { available: false, reason: "WSL 상태를 확인하지 못했습니다" };
   }
+  // 이 PC 에 없는 기능이면(Windows 가 아님 — 2026-11-28 포터블 2단계) 버튼을 감춘다. 옛 서버는 supported 를 안 준다(그대로 보임)
+  train.classList.toggle("hidden", S.wsl.supported === false);
   train.disabled = !S.wsl.available;
   train.title = S.wsl.available
     ? "WSL(Linux)에서 학습합니다. 같은 설정에서 epoch 258초 → 62초로 약 4배 빠릅니다."

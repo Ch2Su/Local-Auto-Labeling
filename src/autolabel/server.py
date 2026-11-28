@@ -55,7 +55,6 @@ from .masks import clean as clean_masks
 from .provenance import (SPLITS, CameraExists, CameraMissing, add_camera, camera_fields, capture_time, edit_camera,
                          load_cameras, remove_cameras, tz_text)
 from .scoring import image_uncertainty
-from . import wsl_train
 from .segmenter import Segmenter, SegmenterUnavailable
 from .stopper import StopSignal
 from .store import (DOMAINS, LIVE, NO_CAMERA, NO_DOMAIN, NO_SPLIT, NO_TAG, NO_WORK, WORK_NAME_MAX, Store, TagFilter,
@@ -1451,12 +1450,28 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
 
     # -------------------------------------------------------------- WSL 학습
 
+    # WSL 학습은 Windows 의 선택 기능이다 (2026-11-28, 포터블 2단계) — 모듈은 WSL 요청이 올 때만 불러 온다(`_wsl`).
+    # `supported` 가 거짓이면(Windows 가 아니거나 WSL 스크립트가 없다) 화면은 버튼을 감추고, 작업은 GPU 를 잡기 전에 400.
+
+    def _wsl():
+        from . import wsl_train
+        return wsl_train
+
+    def _wsl_supported():
+        ok, why = _wsl().supported()
+        if not ok:
+            raise HTTPException(400, why)
+        return _wsl()
+
     @app.get("/api/wsl")
     def get_wsl() -> dict:
-        """WSL 학습을 쓸 수 있는지, 이어 학습할 지점이 있는지."""
+        """WSL 학습을 쓸 수 있는지, 이어 학습할 지점이 있는지. `supported` 가 거짓이면 이 PC 에는 없는 기능이다(화면은 버튼을 감춘다)."""
+        wsl_train = _wsl()
+        supported, _ = wsl_train.supported()
         ok, why = wsl_train.check(cfg)
         point = wsl_train.find_resume(cfg) if ok else None
         return {
+            "supported": supported,
             "available": ok,
             "reason": why,
             "resume": None if point is None else {
@@ -1470,6 +1485,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
 
     @app.post("/api/jobs/train_wsl")
     def job_train_wsl() -> dict:
+        wsl_train = _wsl_supported()
+
         def work(job) -> dict:
             # WSL 도 같은 RTX 를 쓴다. Windows 쪽 SAM·예측 비교가 잡은 몫도 돌려준다.
             free_gpu()
@@ -1479,6 +1496,8 @@ def create_app(cfg: Config, *, label: str = "이 프로젝트", bind_host: str |
 
     @app.post("/api/jobs/resume_wsl")
     def job_resume_wsl() -> dict:
+        wsl_train = _wsl_supported()
+
         def work(job) -> dict:
             free_gpu()
             return wsl_train.train(cfg, store, job, resume=True)

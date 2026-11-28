@@ -20,6 +20,12 @@ Ultralytics 8.4.142·같은 인자): epoch 258초 → 62초 (중앙값). 288 epo
 
 **서버를 죽이면 WSL 학습은 계속 돈다.** 별개 프로세스라서다. 그때는 STOP 파일을
 직접 만들어 멈출 것 (`\\\\wsl.localhost\\Ubuntu\\...\\runs_wsl\\STOP`).
+
+**Windows 의 선택 기능이다 (2026-11-28, 포터블 앱 2단계 — docs/portable/m01-survey.md).** 서버는 이 모듈을 WSL 요청이 올 때만
+불러 오고(`server._wsl`), `supported()` 가 '여기서 쓸 수 있는 기능인가'(Windows 인가·WSL 스크립트가 있는가)를 서브프로세스 없이
+먼저 본다 — 아니면 화면은 WSL 버튼을 감추고, 작업 요청은 GPU 를 잡기 전에 400 으로 막는다. `check()` 는 그 위에서 wsl.exe·WSL 의
+파이썬까지 본다. WSL 스크립트(`wsl/`)는 소스 저장소의 것을 쓴다(`paths.APP` — 배포판에 넣게 되면 번들 리소스 자리).
+**`wsl/train_wsl.py` 의 인자·정지 파일·`RESULT_DIR` 줄은 DetectView 도 부르니 바꾸지 말 것**(CLAUDE.md 머리).
 """
 
 from __future__ import annotations
@@ -40,14 +46,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Config
+from .paths import APP
 from .store import Store
 from .trainer import (
     ResumePoint, build_dataset, promote_if_finished, resume_point_in, train_args, uses_dataset,
 )
 
-REPO = Path(__file__).resolve().parents[2]          # 저장소 루트
-SCRIPT_TRAIN = REPO / "wsl" / "train_wsl.py"
-SCRIPT_SYNC = REPO / "wsl" / "sync_dataset.sh"
+# WSL 스크립트 자리 — 개발 모드는 저장소의 wsl/, 배포판은 번들 리소스의 wsl/(넣게 되면 — 아직 정하지 않았다)
+SCRIPTS = (APP.source_dir / "wsl") if APP.source_dir is not None else (APP.resource_dir / "wsl")
+SCRIPT_TRAIN = SCRIPTS / "train_wsl.py"
+SCRIPT_SYNC = SCRIPTS / "sync_dataset.sh"
 WSL_EXE = shutil.which("wsl") or r"C:\Windows\System32\wsl.exe"
 
 # wsl.exe 가 직접 내는 메시지(배포판 없음 등)는 기본이 UTF-16 이라 그대로 읽으면 깨진다.
@@ -128,8 +136,22 @@ _check_cache: dict[str, tuple[float, tuple[bool, str]]] = {}
 _CHECK_TTL = 60.0
 
 
+def supported(platform: str | None = None) -> tuple[bool, str]:
+    """이 PC 에서 WSL 학습이 **있을 수 있는** 기능인가 — Windows 이고 WSL 스크립트가 있는가. 서브프로세스를 띄우지 않는다.
+    아니면 화면은 버튼을 감추고(`/api/wsl` 의 `supported`), 서버는 작업을 시작하기 전에 막는다(2026-11-28, 포터블 2단계)."""
+    plat = sys.platform if platform is None else platform
+    if not plat.startswith("win"):
+        return False, "WSL 학습은 Windows 에서만 됩니다."
+    if not SCRIPT_TRAIN.is_file():
+        return False, f"WSL 학습 스크립트가 없습니다: {SCRIPT_TRAIN}"
+    return True, ""
+
+
 def check(cfg: Config) -> tuple[bool, str]:
     """WSL 학습을 쓸 수 있는가. 서브프로세스를 띄우므로 60초 동안 결과를 재사용한다."""
+    ok, why = supported()
+    if not ok:
+        return False, why
     if not bool(cfg.get("wsl.enabled", True)):
         return False, "config.yaml 의 wsl.enabled 가 꺼져 있습니다."
     key = str(cfg.path)
