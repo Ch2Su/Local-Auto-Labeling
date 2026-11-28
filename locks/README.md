@@ -6,7 +6,7 @@
 
 | 파일 | 대상 | Python | 확인한 것 |
 |---|---|---|---|
-| `win-cu134-py315.txt` | Windows x64 · NVIDIA (CUDA 13.4 빌드) | 3.15 | **이 데스크탑 `.venv` 의 판 그대로**(그 venv 의 `pip freeze` 를 제약으로 골랐다) — 회귀 테스트 801개가 이 판에서 돈다 |
+| `win-cu134-py315.txt` | Windows x64 · NVIDIA (CUDA 13.4 빌드) | 3.15 | **이 데스크탑 `.venv` 의 판 그대로**(그 venv 의 `pip freeze` 를 제약으로 골랐다) — 회귀 테스트 809개가 이 판에서 돈다 |
 | `win-cpu-py314.txt` | Windows x64 · CPU | 3.14 | 새 가상 환경(3.14.10)에 이것만 깔고 회귀 테스트 801개 통과(2026-11-28, 건너뜀 0) |
 | `linux-cpu-py314.txt` | Linux x86_64 (glibc 2.28+) · CPU | 3.14 | GitHub Actions `ubuntu-latest` 에서 807개 통과·건너뜀 0(2026-11-28, 8단계). 그 전에 WSL 의 새 venv 로도 |
 | `macos-arm64-py314.txt` | macOS 14+ · Apple Silicon (CPU — MPS 는 적은 사람만) | 3.14 | GitHub Actions `macos-latest` 에서 807개 통과·건너뜀 0(2026-11-28). 그 러너는 MPS 를 못 써(가상 GPU) CPU 로만 — MPS 는 실제 Mac 에서 볼 것 |
