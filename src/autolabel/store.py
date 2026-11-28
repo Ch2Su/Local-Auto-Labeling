@@ -612,8 +612,7 @@ class Store:
         if need_rel:
             what, tag = (("작업 배치(표 work_batches · 열 images.work_batch)와 상대경로 열(images.rel)", "workbatch") if need_wb
                          else ("이미지 상대경로 열(images.rel)", "relpath"))
-            dst = (self.db_path.parent / "backups"
-                   / f"{self.db_path.stem}_before_{tag}_{datetime.now():%Y%m%d_%H%M%S}.db")
+            dst = self._before_copy(tag)
             try:
                 self.migrated_from = copy_db(self.db_path, dst)
             except Exception as exc:
@@ -718,8 +717,7 @@ class Store:
             if missing:
                 self.relocated = {"moved": 0, "missing": missing, "taken": 0, "backup": None}
             return
-        dst = (self.db_path.parent / "backups"
-               / f"{self.db_path.stem}_before_relocate_{datetime.now():%Y%m%d_%H%M%S}.db")
+        dst = self._before_copy("relocate")
         try:
             backup = copy_db(self.db_path, dst)
         except Exception as exc:
@@ -733,9 +731,19 @@ class Store:
                 if con.execute("SELECT 1 FROM images WHERE path=? AND id<>?", (new, i)).fetchone():
                     taken += 1
                     continue
-                moved += con.execute("UPDATE images SET path=?, name=? WHERE id=? AND path=?",
-                                     (new, Path(new).name, i, src)).rowcount
+                moved += con.execute("UPDATE images SET path=?, rel=?, name=? WHERE id=? AND path=?",
+                                     (new, self.rel_path(new), Path(new).name, i, src)).rowcount
         self.relocated = {"moved": moved, "missing": missing, "taken": taken, "backup": backup}
+
+    def _before_copy(self, tag: str) -> Path:
+        """바꾸기 직전 사본의 자리 — `backups/<이름>_before_<tag>_<시각>.db`, 같은 초에 이미 있으면 `_2`·`_3` 을 붙인다(덮지 않게 —
+        옮긴 DB 를 두 번 연달아 열면 같은 이름이 됐다). 하루 사본의 이름 꼴이 아니라 keep 정리가 지우지 않는다."""
+        head = self.db_path.parent / "backups" / f"{self.db_path.stem}_before_{tag}_{datetime.now():%Y%m%d_%H%M%S}"
+        dst, k = head.with_name(head.name + ".db"), 1
+        while dst.exists():
+            k += 1
+            dst = head.with_name(f"{head.name}_{k}.db")
+        return dst
 
     def open_notes(self) -> list[str]:
         """열 때 한 일을 사람이 읽을 줄로 — 서버·명령이 찍는다(열을 더함·이미지 경로를 다시 찾음)."""
