@@ -501,6 +501,37 @@ def copy_db(src: Path, dst: Path) -> Path:
     return dst
 
 
+# DB 스키마 버전 — SQLite 머리의 `PRAGMA user_version` 에 적는다 (2026-11-28, 포터블 앱 5단계 — docs/portable/m01-survey.md).
+# 그 전에는 버전이 없었고(0), 열을 더하는 일은 `Store.__init__` 이 '없으면 더한다'(ALTER TABLE ADD COLUMN)로 맞췄다. 그것으로
+# 열 하나는 충분했지만, 이미지 경로처럼 **값을 바꾸는** 마이그레이션(계획 6단계)은 '어디까지 했나' 를 알아야 한다.
+#   1 — 2026-11-28 의 스키마 그대로(표 11개: images·boxes·box_history·hist_lists·masks·mask_templates·tags·image_tags·
+#       work_batches·classes·sqlite_sequence 밖의 것 — `_SCHEMA` 와 아래 ALTER). 값을 바꾸지 않고 번호만 적었다.
+# 버전을 올리는 새 마이그레이션은 `Store.__init__` 에서 '지금 번호 < N 이면' 으로 가르고, 값을 바꾸기 전에 `copy_db` 로 사본을 뜬다.
+# **이 프로그램보다 새 버전의 DB 는 열지 않는다** — 옛 코드가 모르는 꼴의 값을 덮을 수 있다(그 전 코드는 이 번호를 안 본다).
+SCHEMA_VERSION = 1
+
+
+def schema_version(db_path: Path) -> int:
+    """DB 의 스키마 버전(`PRAGMA user_version`) — 읽기 전용으로 본다. 파일이 없거나 비었으면 0."""
+    db_path = Path(db_path)
+    try:
+        if not db_path.is_file() or db_path.stat().st_size == 0:
+            return 0
+    except OSError:
+        return 0
+
+    def read(con: sqlite3.Connection) -> int:
+        try:
+            return int(con.execute("PRAGMA user_version").fetchone()[0])
+        finally:
+            con.close()
+
+    try:
+        return read(sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True, timeout=30.0))
+    except sqlite3.OperationalError:
+        return read(sqlite3.connect(db_path, timeout=30.0))
+
+
 def needs_work_batch_migration(db_path: Path) -> bool:
     """이미지가 든 DB 인데 작업 배치 열(images.work_batch)이 아직 없는가 — 읽기 전용으로만 본다(아무것도 만들지 않는다).
     DB 파일이 없거나 비었거나 images 표가 없으면(새 DB) False."""
@@ -536,6 +567,11 @@ class Store:
         # 하루 사본의 이름 꼴이 아니라 keep 정리에 지워지지 않는다). 사본을 못 뜨면 DB 를 바꾸지 않고 멈춘다.
         # 이미지가 없는 DB(새 DB·테스트)는 뜨지 않는다. 그 사본의 경로를 migrated_from 에 남긴다(서버가 알린다).
         self.migrated_from: Path | None = None
+        found = schema_version(self.db_path)
+        if found > SCHEMA_VERSION:          # 아무것도 쓰기 전에 — 더 새 프로그램이 만든 DB 다
+            raise RuntimeError(
+                f"이 DB 는 더 새 프로그램이 만든 것입니다(스키마 {found}, 이 프로그램은 {SCHEMA_VERSION}) — 열지 않았습니다. "
+                f"프로그램을 새 것으로 바꾸세요: {self.db_path}")
         if needs_work_batch_migration(self.db_path):
             dst = (self.db_path.parent / "backups"
                    / f"{self.db_path.stem}_before_workbatch_{datetime.now():%Y%m%d_%H%M%S}.db")
@@ -569,6 +605,9 @@ class Store:
             # x1~y2(바깥 사각형)만 읽는다 — 옛 코드로 그 장의 영역을 다시 저장하면 다각형이 바깥 사각형으로 바뀐다.
             if "poly" not in {r["name"] for r in con.execute("PRAGMA table_info(masks)")}:
                 con.execute("ALTER TABLE masks ADD COLUMN poly TEXT")
+            # 스키마 버전 (2026-11-28 — 위 SCHEMA_VERSION). 위의 열 맞추기가 끝난 지금의 꼴이 1 이다 — 번호만 적는다(값은 그대로).
+            if int(con.execute("PRAGMA user_version").fetchone()[0]) < SCHEMA_VERSION:
+                con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

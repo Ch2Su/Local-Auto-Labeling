@@ -192,5 +192,8 @@
   두 번째 이름 바꾸기(`Path.rename` 을 `.building` 에서만 실패하는 대역으로)를 막아도 옛 세트의 파일 목록이 그대로이고 옆 폴더가
   안 남는지, 옛 세트의 `.npy`·`.cache` 만 먼저 지우는지, 지난번 잔재(`.building`·`.old`)를 치우는지. 고치기 전 코드로는 worktree 에서
   여섯 중 다섯이 실패하는 것을 봤다('다시 만들면 바뀐다' 는 전에도 됐다).
+- `tests/test_schema_version.py`(11-28, 포터블 앱 5단계)는 `store.SCHEMA_VERSION`·`schema_version` 을 본다 — 새 DB·번호 0 인 DB·작업
+  배치 열이 없는 옛 DB(`test_workbatch.old_db`)를 열면 1 이 되고 행 수가 그대로인가, 더 새 번호의 DB 는 파일 바이트를 그대로 두고 거절
+  하는가(사본도 안 뜬다), `copy_db` 가 번호를 옮기는가. **스키마를 바꾸는 새 마이그레이션은 번호를 올리고 여기에 'N-1 → N' 을 더할 것.**
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.

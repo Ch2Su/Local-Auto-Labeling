@@ -20,6 +20,9 @@
   도중에 멈추면 옛 세트가 그대로다(그 전에는 먼저 지우고 검사했다). 옛 세트의 학습 캐시(`.npy`·`.cache`)는 만들기 전에 지운다 —
   만드는 동안 디스크는 옛 그림·라벨 + 새 세트만큼 쓴다. `data.yaml` 의 `path` 는 최종 자리다. 옆에 `.building`·`.old` 가 남아 있으면
   지난번 만들기가 멈춘 것이고 다음 만들기가 치운다. `tests/test_dataset_swap.py`.
+- **DB 스키마 버전은 `PRAGMA user_version`(`store.SCHEMA_VERSION`, 2026-11-28 포터블 앱 5단계 — 지금 1).** `Store.__init__` 이 열
+  맞추기(ALTER TABLE ADD COLUMN)를 마친 뒤 번호를 적고, 더 새 번호의 DB 는 아무것도 쓰기 전에 거절한다. **값을 바꾸는 새
+  마이그레이션(경로 옮기기 같은)은 번호를 올리고 '지금 번호 < N' 으로 가르며, 바꾸기 전에 `copy_db` 로 사본을 뜰 것.**
 - **이 폴더를 고친 뒤에는 회귀 테스트를 돌릴 것**(2026-11-12, `tests/` — `.venv\Scripts\python.exe -m pytest`, 루트 CLAUDE.md
   '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`maskSlabs`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`MASK_MAX`·
   `MASK_SAME`·`MASK_MAX_PTS` 는 `tests/test_js_parity.py` 가 화면과 서버를 대조한다.

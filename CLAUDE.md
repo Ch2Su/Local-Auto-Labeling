@@ -169,7 +169,7 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-28 까지 749개·75초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-28 까지 754개·87초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
@@ -295,7 +295,8 @@ README '새 PC 에서 시작하기' 5단계). **경로를 고치기 전에는 �
 - `dataset/` — 학습할 때마다 DB 로 새로 만든다(Windows 학습은 `.npy` 디스크 캐시 약 14GB 를 더 얹는다). **test 는 이 폴더 말고
   `tools/test_baseline.py` 로 잴 것.** 이어하기는 없으면 다시 만든다(`ensure_resume_dataset`).
 - `labeling.db` — **작업물 그 자체**(함정 5). 옆의 `backups/` 에 검수 서버가 하루 한 번 사본을 남긴다(최근 14개 — 켤 때, 켜 둔 채 날이 바뀌면 그날 첫 변경 요청 앞에서).
-  `classes.txt` 는 DB 옆이다. `thumbs/`(11-04)는 이미지 보기 썸네일 캐시 — 지워도 되고 백업하지 않는다. `capture/`(11-10)는
+  **스키마 버전은 SQLite 의 `PRAGMA user_version` 이다(11-28, 포터블 앱 5단계 — `store.SCHEMA_VERSION` 1)** — 새 코드가 `Store` 를
+  처음 열 때 번호만 적고(값은 그대로), 더 새 번호의 DB 는 열지 않는다. `classes.txt` 는 DB 옆이다. `thumbs/`(11-04)는 이미지 보기 썸네일 캐시 — 지워도 되고 백업하지 않는다. `capture/`(11-10)는
   영상 캡처 탭의 임시 세션(올린 영상 사본·뽑은 프레임 — 넣거나 닫으면 서버가 지운다)이라 백업하지 않는다(수 GB 일 수 있다).
   `autocapture/`(11-12)는 `tools/auto_capture.py` 의 처리 기록 `videos.jsonl`(지우면 처리한 영상을 다시 올린다)·후보 프레임별
   기록 `frames/`·대조 시트 `sheets/` 다 — 영상 경로·검출 기록이라 git 밖(data/)에 둔다.
