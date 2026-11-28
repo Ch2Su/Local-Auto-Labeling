@@ -45,6 +45,12 @@ os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 MATCH_IOU = 0.45        # 혼동 행렬에서 예측과 정답을 짝짓는 IoU — 11-12 기록(Ultralytics 8.4.142)이 이 값으로 센 것이다
 IGNORE_DIR = "ignore"   # 채점에서 뺄 자리 그림의 폴더 — src/autolabel/masks.py 의 IGNORE_DIR 와 같아야 한다(고치면 둘 다)
 IGNORE_COVER = 0.5      # 예측 박스의 이만큼 이상이 그 자리면 뺀다 — masks.DROP(정답 박스를 라벨에서 빼는 문턱)과 같다
+# YOLO26 의 두 추론 헤드 (2026-11-28 — Ultralytics 8.4.212 소스로 확인). `nms` 인자를 안 주면(None) 검증기·예측기가
+# `end2end = (nms is False)` = False 로 모델을 열어 **one2many 헤드 + NMS** 로 잰다 — 이 파일의 11-28 전 기록과 프로젝트의 자동
+# 라벨링(nms 를 안 넘긴다)이 이쪽이다. `nms=False` 면 NMS 없는 one2one 헤드다. fuse 가 안 쓰는 헤드를 모델에서 **그 자리에서
+# 지우므로**(Detect.fuse) 한 모델 객체로 두 헤드를 연달아 재면 둘째가 에러 없이 첫째 헤드로 돈다 — 그래서 헤드마다 새로 읽고,
+# 기록의 `head` 는 고른 값이 아니라 검증기가 실제로 쓴 것(`end2end`)을 적는다.
+HEADS = ("nms", "one2one")
 
 
 def ignore_path(im_file) -> Path | None:
@@ -189,15 +195,23 @@ def sha256_head(path: Path) -> str:
 
 
 def summarize(res, names: dict, conf: float, match_iou: float = MATCH_IOU) -> dict:
+    """`ap_iou`(2026-11-28) — IoU 문턱 0.50, 0.55, …, 0.95 마다의 AP(Ultralytics `box.all_ap`, 클래스 × 10). 클래스마다와
+    전체(클래스 평균)를 남긴다. mAP50 은 높은데 mAP50-95 가 낮은 클래스가 박스 자리 탓인지(높은 문턱에서만 무너진다)를 본다."""
     b = res.box
     nt = getattr(res, "nt_per_class", None)
+    all_ap = getattr(b, "all_ap", None)
+    has_iou = all_ap is not None and len(all_ap) == len(res.ap_class_index) > 0
     per = {}
     for k, c in enumerate(res.ap_class_index):
         p, r, ap50, ap = b.class_result(k)
         per[names[int(c)]] = {"map": round(float(ap), 4), "map50": round(float(ap50), 4), "p": round(float(p), 4),
                               "r": round(float(r), 4), "n": int(nt[int(c)]) if nt is not None else None}
+        if has_iou:
+            per[names[int(c)]]["ap_iou"] = [round(float(v), 4) for v in all_ap[k]]
     out = {"map": round(float(b.map), 4), "map50": round(float(b.map50), 4), "precision": round(float(b.mp), 4),
            "recall": round(float(b.mr), 4), "classes": per}
+    if has_iou:
+        out["ap_iou"] = [round(float(sum(row[j] for row in all_ap) / len(all_ap)), 4) for j in range(len(all_ap[0]))]
     cm = getattr(res, "confusion_matrix", None)
     if cm is not None:
         m = cm.matrix                       # m[예측 클래스, 정답 클래스], 마지막 줄·칸 = 배경
@@ -225,6 +239,8 @@ def main() -> int:
     ap.add_argument("--iou", type=float, default=0.6, help="NMS IoU (config.yaml 의 predict.iou 와 같게)")
     ap.add_argument("--device", default="0")
     ap.add_argument("--project", default="/tmp/eval_test", help="Ultralytics 가 그림을 쓰는 곳")
+    ap.add_argument("--heads", nargs="+", choices=HEADS, default=["nms"],
+                    help="nms: Ultralytics 기본(8.4.212 는 one2many 헤드 + NMS) · one2one: NMS 없는 헤드(nms=False) — HEADS 주석")
     ap.add_argument("--note", default="")
     args = ap.parse_args()
 
@@ -247,24 +263,31 @@ def main() -> int:
         if not wp.exists():
             print(f"[건너뜀] 가중치가 없습니다: {w}", flush=True)
             continue
-        model = YOLO(w)
         digest = sha256_head(wp)
-        for name, data in sets:
-            for sz in args.imgsz:
-                t0 = time.time()
-                res = model.val(data=data, split=args.split, imgsz=sz, batch=args.batch, device=args.device,
-                                iou=args.iou, plots=True, verbose=False, project=args.project,
-                                name=f"{wp.stem}_{name}_{sz}", exist_ok=True, validator=validator)
-                rec = {"weights": wp.name, "sha256": digest, "set": name, "split": args.split, "imgsz": sz,
-                       "seconds": round(time.time() - t0, 1), "note": args.note, "batch": args.batch,
-                       "ultralytics": ultralytics.__version__, "torch": torch.__version__,
-                       **summarize(res, model.names, args.conf, args.match_iou),
-                       "ignore": ignore_summary(validator, args.conf)}
-                with open(out, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                a = rec.get("at_conf", {})
-                print(f"RESULT {wp.name} {name} imgsz={sz} map={rec['map']} map50={rec['map50']} "
-                      f"hit={a.get('hit')} missed={a.get('missed')} false={a.get('false')}", flush=True)
+        for head in args.heads:
+            model = YOLO(w)                 # 헤드마다 새로 — fuse 가 안 쓰는 헤드를 지운다(HEADS 주석)
+            extra = {"nms": False} if head == "one2one" else {}
+            for name, data in sets:
+                for sz in args.imgsz:
+                    t0 = time.time()
+                    res = model.val(data=data, split=args.split, imgsz=sz, batch=args.batch, device=args.device,
+                                    iou=args.iou, plots=True, verbose=False, project=args.project,
+                                    name=f"{wp.stem}_{name}_{sz}_{head}", exist_ok=True, validator=validator, **extra)
+                    used = "one2one" if getattr(validator.last, "end2end", False) else "nms"
+                    if used != head:
+                        print(f"[알림] {wp.name}: {head} 를 골랐는데 {used} 로 쟀습니다 — 기록에는 {used} 로 남깁니다",
+                              flush=True)
+                    rec = {"weights": wp.name, "sha256": digest, "set": name, "split": args.split, "imgsz": sz,
+                           "head": used, "seconds": round(time.time() - t0, 1), "note": args.note, "batch": args.batch,
+                           "ultralytics": ultralytics.__version__, "torch": torch.__version__,
+                           **summarize(res, model.names, args.conf, args.match_iou),
+                           "ignore": ignore_summary(validator, args.conf)}
+                    with open(out, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    a = rec.get("at_conf", {})
+                    print(f"RESULT {wp.name} {name} imgsz={sz} head={used} map={rec['map']} map50={rec['map50']} "
+                          f"hit={a.get('hit')} missed={a.get('missed')} false={a.get('false')} "
+                          f"wrong={a.get('wrong_class')}", flush=True)
     return 0
 
 

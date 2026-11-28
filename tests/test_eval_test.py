@@ -123,3 +123,29 @@ def test_at_conf_records_the_thresholds(ev):
     a = ev.summarize(res, NAMES, 0.25, 0.45)["at_conf"]
     assert (a["conf"], a["match_iou"]) == (0.25, 0.45)
     assert (a["hit"], a["missed"], a["false"], a["wrong_class"]) == (7, 5, 3, 1)
+
+
+def test_ap_by_iou_threshold_is_recorded(ev):
+    """IoU 문턱 10개마다의 AP 가 클래스마다·전체(클래스 평균)로 남는다 (2026-11-28) — all_ap 의 행은 ap_class_index 순서다."""
+    import numpy as np
+    from types import SimpleNamespace
+
+    all_ap = np.array([[0.9 - 0.05 * j for j in range(10)], [0.8] * 10])
+    res = SimpleNamespace(box=SimpleNamespace(map=0.5, map50=0.7, mp=0.8, mr=0.6, all_ap=all_ap,
+                                              class_result=lambda k: (0.8, 0.6, 0.7, 0.5)),
+                          ap_class_index=[1, 0], nt_per_class=[8, 5])
+    s = ev.summarize(res, NAMES, 0.25, 0.45)
+    assert s["classes"]["truck"]["ap_iou"][0] == 0.9 and s["classes"]["truck"]["ap_iou"][-1] == 0.45
+    assert s["classes"]["car"]["ap_iou"] == [0.8] * 10
+    assert s["ap_iou"][0] == 0.85 and len(s["ap_iou"]) == 10
+
+
+def test_ap_by_iou_is_skipped_without_all_ap(ev):
+    """all_ap 가 없는(다른 버전·빈 결과) 경우에는 칸을 빼고 나머지는 그대로 남긴다."""
+    from types import SimpleNamespace
+
+    res = SimpleNamespace(box=SimpleNamespace(map=0.5, map50=0.7, mp=0.8, mr=0.6, all_ap=[],
+                                              class_result=lambda k: (0.8, 0.6, 0.7, 0.5)),
+                          ap_class_index=[0], nt_per_class=[8, 5])
+    s = ev.summarize(res, NAMES, 0.25, 0.45)
+    assert "ap_iou" not in s and "ap_iou" not in s["classes"]["car"] and s["map"] == 0.5
