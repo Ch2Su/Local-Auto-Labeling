@@ -290,15 +290,15 @@ def show(name: str, m: dict) -> str:
     return "\n".join(lines)
 
 
-def show_a0(v: dict) -> str:
+def show_a0(v: dict, name: str = "A0") -> str:
     c = v["criteria"]
     mc = v["S_mcnemar"]
     return "\n".join([
-        f"   A0 대비 (A0 가 찾은 {v['n_compared']}개, A0 놓침 {v['a0_missed']}, A0 클래스 {','.join(v['a0_classes'])}): "
-        f"정확도 {v['acc_refiner']} 대 A0 {v['acc_a0']}",
+        f"   기준선 {name} 대비 (기준선이 찾은 {v['n_compared']}개, 놓침 {v['a0_missed']}, 견준 클래스 {','.join(v['a0_classes'])}): "
+        f"정확도 {v['acc_refiner']} 대 {name} {v['acc_a0']}",
         f"   S(car·pickup·truck {v['S_n']}개): {v['S_acc_refiner']} 대 {v['S_acc_a0']} · pickup 낀 틀림 {v['pickup_errors_refiner']} 대 "
-        f"{v['pickup_errors_a0']} (줄어든 몫 {c['pickup_cut']}) · McNemar 분류기만 맞힘 {mc['a_only']} / A0 만 맞힘 {mc['b_only']}, p={mc['p']}",
-        f"   car 재현율 {v['car_recall_refiner']} 대 A0 {v['car_recall_a0']}",
+        f"{v['pickup_errors_a0']} (줄어든 몫 {c['pickup_cut']}) · McNemar 분류기만 맞힘 {mc['a_only']} / {name} 만 맞힘 {mc['b_only']}, p={mc['p']}",
+        f"   car 재현율 {v['car_recall_refiner']} 대 {name} {v['car_recall_a0']}",
         f"   기준 1(pickup) {'통과' if c['1_pickup'] else '미달'} · 기준 2(car 재현율) {'통과' if c['2_car_recall'] else '미달'}"])
 
 
@@ -330,7 +330,7 @@ def cmd_report(args) -> int:
             v = versus_a0(rows, a0, a0_classes)
             v["criteria"]["3_ece"] = m["ece_cal"] <= CRITERIA["ece"]
             rec["vs_a0"] = {"baseline": args.baseline, **v}
-            print(show_a0(v) + f" · 기준 3(ECE ≤ {CRITERIA['ece']}) {'통과' if v['criteria']['3_ece'] else '미달'}")
+            print(show_a0(v, args.baseline) + f" · 기준 3(ECE ≤ {CRITERIA['ece']}) {'통과' if v['criteria']['3_ece'] else '미달'}")
         with open(jsonl, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     for pair in args.compare or []:

@@ -1,0 +1,302 @@
+{
+ "crops_made_at": "2026-11-28T18:49:32",
+ "approved": 383,
+ "approved_not_in_manifest": 65,
+ "folds": {
+  "0": {
+   "images": {
+    "val": 56,
+    "train": 283,
+    "test": 44
+   },
+   "boxes": {
+    "responder": {
+     "train": 19,
+     "val": 14,
+     "test": 8
+    },
+    "car": {
+     "train": 583,
+     "val": 143,
+     "test": 119
+    },
+    "person": {
+     "train": 624,
+     "val": 89,
+     "test": 69
+    },
+    "pickup": {
+     "train": 62,
+     "val": 15,
+     "test": 13
+    },
+    "cone": {
+     "train": 33,
+     "val": 23,
+     "test": 7
+    },
+    "truck": {
+     "train": 94,
+     "val": 23,
+     "test": 20
+    },
+    "motorcycle": {
+     "train": 66,
+     "val": 18,
+     "test": 12
+    },
+    "bus": {
+     "train": 40,
+     "val": 10,
+     "test": 6
+    },
+    "bicycle": {
+     "train": 86,
+     "val": 16,
+     "test": 14
+    },
+    "scooter": {
+     "train": 113,
+     "val": 23,
+     "test": 11
+    }
+   }
+  },
+  "1": {
+   "images": {
+    "train": 273,
+    "val": 66,
+    "test": 44
+   },
+   "boxes": {
+    "responder": {
+     "train": 28,
+     "val": 5,
+     "test": 8
+    },
+    "car": {
+     "train": 580,
+     "val": 146,
+     "test": 119
+    },
+    "person": {
+     "train": 545,
+     "val": 168,
+     "test": 69
+    },
+    "pickup": {
+     "train": 62,
+     "val": 15,
+     "test": 13
+    },
+    "cone": {
+     "train": 52,
+     "val": 4,
+     "test": 7
+    },
+    "truck": {
+     "train": 93,
+     "val": 24,
+     "test": 20
+    },
+    "motorcycle": {
+     "train": 73,
+     "val": 11,
+     "test": 12
+    },
+    "bus": {
+     "train": 40,
+     "val": 10,
+     "test": 6
+    },
+    "bicycle": {
+     "train": 90,
+     "val": 12,
+     "test": 14
+    },
+    "scooter": {
+     "train": 123,
+     "val": 13,
+     "test": 11
+    }
+   }
+  },
+  "2": {
+   "images": {
+    "train": 279,
+    "test": 44,
+    "val": 60
+   },
+   "boxes": {
+    "responder": {
+     "train": 29,
+     "val": 4,
+     "test": 8
+    },
+    "car": {
+     "train": 580,
+     "val": 146,
+     "test": 119
+    },
+    "person": {
+     "train": 604,
+     "val": 109,
+     "test": 69
+    },
+    "pickup": {
+     "train": 62,
+     "val": 15,
+     "test": 13
+    },
+    "cone": {
+     "train": 52,
+     "val": 4,
+     "test": 7
+    },
+    "truck": {
+     "train": 94,
+     "val": 23,
+     "test": 20
+    },
+    "motorcycle": {
+     "train": 70,
+     "val": 14,
+     "test": 12
+    },
+    "bus": {
+     "train": 40,
+     "val": 10,
+     "test": 6
+    },
+    "bicycle": {
+     "train": 93,
+     "val": 9,
+     "test": 14
+    },
+    "scooter": {
+     "train": 111,
+     "val": 25,
+     "test": 11
+    }
+   }
+  },
+  "3": {
+   "images": {
+    "train": 286,
+    "test": 44,
+    "val": 53
+   },
+   "boxes": {
+    "responder": {
+     "train": 28,
+     "val": 5,
+     "test": 8
+    },
+    "car": {
+     "train": 581,
+     "val": 145,
+     "test": 119
+    },
+    "person": {
+     "train": 591,
+     "val": 122,
+     "test": 69
+    },
+    "pickup": {
+     "train": 61,
+     "val": 16,
+     "test": 13
+    },
+    "cone": {
+     "train": 54,
+     "val": 2,
+     "test": 7
+    },
+    "truck": {
+     "train": 93,
+     "val": 24,
+     "test": 20
+    },
+    "motorcycle": {
+     "train": 64,
+     "val": 20,
+     "test": 12
+    },
+    "bus": {
+     "train": 40,
+     "val": 10,
+     "test": 6
+    },
+    "bicycle": {
+     "train": 85,
+     "val": 17,
+     "test": 14
+    },
+    "scooter": {
+     "train": 119,
+     "val": 17,
+     "test": 11
+    }
+   }
+  },
+  "4": {
+   "images": {
+    "train": 283,
+    "test": 44,
+    "val": 56
+   },
+   "boxes": {
+    "responder": {
+     "train": 28,
+     "val": 5,
+     "test": 8
+    },
+    "car": {
+     "train": 580,
+     "val": 146,
+     "test": 119
+    },
+    "person": {
+     "train": 620,
+     "val": 93,
+     "test": 69
+    },
+    "pickup": {
+     "train": 61,
+     "val": 16,
+     "test": 13
+    },
+    "cone": {
+     "train": 45,
+     "val": 11,
+     "test": 7
+    },
+    "truck": {
+     "train": 94,
+     "val": 23,
+     "test": 20
+    },
+    "motorcycle": {
+     "train": 70,
+     "val": 14,
+     "test": 12
+    },
+    "bus": {
+     "train": 40,
+     "val": 10,
+     "test": 6
+    },
+    "bicycle": {
+     "train": 85,
+     "val": 17,
+     "test": 14
+    },
+    "scooter": {
+     "train": 116,
+     "val": 20,
+     "test": 11
+    }
+   }
+  }
+ }
+}
