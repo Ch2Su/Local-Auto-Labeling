@@ -190,6 +190,14 @@
 절대경로(`trainer.uses_dataset` — 2.3절)는 이 단계 밖 · 두 PC 가 같은 DB 를 동기화 폴더로 함께 쓰면 열 때마다 서로의 자리로 고친다
 (그때마다 사본 — 그렇게 쓰지 말 것).
 
+**7단계도 했다 (같은 날 사용자 '7단계 시작'):** `pyproject.toml`(범위 — 아래쪽은 노트북 requirements.txt 의 판, Ultralytics 만 위쪽을
+함정 8 을 확인한 8.4.212 로 막음, `requires-python >=3.14`, 묶음 test·claude·roadplus, `labeler` 명령, 편집 설치만)과 `locks/`(uv 로 고른 잠금
+넷 — 데스크탑 개발 `win-cu134-py315`(이 `.venv` 의 판 그대로 58개) · 배포 `win-cpu`·`linux-cpu`·`macos-arm64`(모두 py314, 개발 잠금과
+같은 판), 다시 만드는 `locks/compile.py`). `requirements.txt` 는 노트북 잠금으로 그대로 뒀다(주석만). **`.venv` 에는 아무것도 깔지
+않았다** — 새 가상 환경(Python 3.14.10)에 `win-cpu-py314` 와 `pip install -e . --no-deps` 만 깔아 `pip check` 깨끗 · `labeler --help` ·
+회귀 테스트 801개 통과(건너뜀 0). Linux·macOS 잠금은 고르기만 했다(8단계). 배포 Python 3.14 는 잠정(8절 2번). macOS 는 torch 2.15.0 휠이
+macOS 14 부터라 그 아래는 안 된다. `tests/test_deps.py` 가 import·범위·잠금을 파일만으로 견준다. 해시 고정은 아직이다.
+
 6번이 유일하게 위험한 단계였다. 1–5번은 동작을 바꾸지 않거나 설정으로 되돌릴 수 있고, 6번은 그 위에서 사본으로 먼저 했다.
 패키징(PyInstaller)은 8번까지 소스 모드로 세 OS 가 도는 것을 본 뒤다(인수인계 문서 14절 8번과 같다).
 
