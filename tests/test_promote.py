@@ -67,6 +67,8 @@ def wsl(cfg, run, monkeypatch, stopped: bool) -> dict:
                                cache="ram", stop_file=run.parent / "STOP", cmd=lambda *a: list(a),
                                unc=lambda p: run if p == "/runs/visible" else Path(p))
     monkeypatch.setattr(wsl_train, "check", lambda cfg: (True, ""))
+    # Windows 경로(C:\…)를 /mnt/c/… 로 바꾸는 함수 — 다른 OS 의 임시 폴더(/tmp/…)에는 드라이브가 없다(2026-11-28, CI 8단계)
+    monkeypatch.setattr(wsl_train, "to_linux", lambda p: Path(p).as_posix())
     monkeypatch.setattr(wsl_train.WslSettings, "from_cfg", classmethod(lambda cls, cfg: settings))
     monkeypatch.setattr(wsl_train, "train_cmd", lambda cfg, s: ["train"])
     monkeypatch.setattr(wsl_train, "build_dataset", lambda cfg, store: SimpleNamespace(summary=lambda: "요약"))

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -332,7 +333,10 @@ def test_an_intake_that_registers_nothing_leaves_no_batch(cfg, store, cams):
     assert store.list_work_batches() == []                                   # 묻기 전에는 만들지 않는다
     made = intake(str(cfg.unlabeled / "cam-01" / "a.jpg"))
     assert [b["id"] for b in store.list_work_batches()] == [made]
-    assert intake(str(cfg.unlabeled / "cam-01" / "A.JPG")) == made           # Windows 는 대소문자를 가리지 않는다 — 같은 파일
+    # 경로를 normcase 로 견준다 — Windows 는 대소문자를 가리지 않아 같은 파일(같은 배치), 그 밖(Linux·macOS 의 normcase)은 다른 파일
+    # 이라 '이번에 넣는 것' 밖의 새 이미지로 따로 묶인다(2026-11-28, CI 8단계 — Linux 에서 이 줄이 실패했다)
+    same_file = os.path.normcase("A.JPG") == os.path.normcase("a.jpg")
+    assert (intake(str(cfg.unlabeled / "cam-01" / "A.JPG")) == made) is same_file
     assert intake.finish() == {"main": None, "other": None} and store.list_work_batches() == []
 
 
@@ -377,7 +381,9 @@ def client(cfg, store):
 
 
 def wait_job(client, job: dict) -> dict:
-    for _ in range(500):
+    # 60초까지 — 끝나는 대로 돌아온다. 10초였는데, 작업이 그 프로세스에서 처음으로 torch 를 불러 오면(GPU 비우기) 느린 디스크에서
+    # 넘쳤다(2026-11-28 WSL 의 /mnt/c venv — CI 러너도 느릴 수 있다). 넘치면 그 작업이 GPU 자리를 쥔 채라 다음 테스트도 409 로 깨진다.
+    for _ in range(3000):
         got = client.get(f"/api/jobs/{job['id']}").json()
         if got["status"] != "running":
             return got
