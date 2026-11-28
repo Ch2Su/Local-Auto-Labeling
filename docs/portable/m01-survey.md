@@ -198,6 +198,16 @@
 회귀 테스트 801개 통과(건너뜀 0). Linux·macOS 잠금은 고르기만 했다(8단계). 배포 Python 3.14 는 잠정(8절 2번). macOS 는 torch 2.15.0 휠이
 macOS 14 부터라 그 아래는 안 된다. `tests/test_deps.py` 가 import·범위·잠금을 파일만으로 견준다. 해시 고정은 아직이다.
 
+**8단계도 했다 (같은 날 사용자 '8단계 시작') — 워크플로까지, 아직 GitHub 에서 돌지는 않았다(push 해야 돈다).**
+`.github/workflows/tests.yml`: push(main)·PR·손 실행에 windows/ubuntu/macos-latest 세 러너가 Python 3.14 로 그 OS 의 배포용 잠금을 새
+venv 에 깔고 `pip install -e . --no-deps` → pytest. 건너뛴 테스트가 있으면 실패, 읽기 권한만, 액션은 커밋 해시(checkout v7.0.1 ·
+setup-python v7.1.0), Windows 러너의 `core.autocrlf` 를 체크아웃 전에 끈다, Linux 는 OpenCV 용 libgl1·glib. 공개 저장소라 러너는 무료.
+**push 전에 Linux 를 WSL 로 미리 돌렸다** — Ubuntu 의 Python 3.14.4 로 새 venv(ensurepip 이 없어 pip 만 `.venv` 에서 옮겨 깔았다)에
+`linux-cpu-py314` → 처음 703 통과·3 실패, 셋 다 테스트가 Windows 를 가정한 것이라 테스트만 고쳐 706 통과(화면 JS 101개는 node 가 없어
+건너뜀 — CI 에는 node 가 있다). Windows `.venv` 807개 통과. `tests/test_ci_workflow.py` 가 워크플로를 파일만으로 본다. **남은 것**:
+첫 push 에서 macOS 가 처음 돈다(MPS 가 실제로 되는지는 CPU 테스트로 알 수 없다 — 모델을 쓰지 않는다) · 다른 OS 에서 서버를 띄워 화면을
+본 것은 아니다 · 패키징(PyInstaller)은 이 다음이다(인수인계 문서 14절).
+
 6번이 유일하게 위험한 단계였다. 1–5번은 동작을 바꾸지 않거나 설정으로 되돌릴 수 있고, 6번은 그 위에서 사본으로 먼저 했다.
 패키징(PyInstaller)은 8번까지 소스 모드로 세 OS 가 도는 것을 본 뒤다(인수인계 문서 14절 8번과 같다).
 

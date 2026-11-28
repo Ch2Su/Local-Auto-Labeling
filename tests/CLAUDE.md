@@ -223,5 +223,13 @@
   venv)에 적는다. **바깥 패키지를 새로 import 하면 pyproject 에 넣고 잠금을 다시 만들 것**(`python locks/compile.py`). 2026-11-28 에 열
   가지(의존성 빠짐·도구 묶음 빠짐·Ultralytics 위쪽 없음·범위 밖 잠금·잠금에서 빠짐·cpu 인덱스 줄 없음·PC 자리·개발과 다른 판·노트북 판이
   범위 밖·화면 파일이 package-data 밖)를 저장소 사본에서 하나씩 망가뜨려 전부 실패하는 것을 봤다.
+- `tests/test_ci_workflow.py`(11-28, 포터블 앱 8단계)는 `.github/workflows/tests.yml` 을 PyYAML 로 읽어 본다(push 해야 도는 CI 를 그 전에) —
+  배포용 잠금(`locks/*-py314.txt`)마다 그 OS 러너, Python 판, 액션의 40자리 커밋 해시, `permissions: contents: read`·`shell: bash`·체크아웃 전
+  `core.autocrlf false`·`persist-credentials: false`, 건너뜀을 실패로 치는 줄. PyYAML 은 키 `on` 을 True 로 읽는다.
+- **테스트는 세 OS 의 CI 에서 돈다 — Windows 를 가정하지 말 것 (11-28).** WSL 의 새 venv(Python 3.14 · `locks/linux-cpu-py314.txt`)로 돌려
+  셋이 깨졌다: `test_promote` 의 WSL 학습 두 개(`wsl_train.to_linux` 가 드라이브 없는 `/tmp/…` 에서 IndexError — 테스트에서 갈아 끼웠다,
+  실제로는 Windows 에서만 도는 길이다), `test_workbatch` 의 `A.JPG`(Windows 만 대소문자를 안 가린다 — `os.path.normcase` 로 기대를 가른다).
+  `test_workbatch.wait_job` 은 10초 → 60초(작업이 처음 torch 를 불러 오면 느린 디스크에서 넘쳐, GPU 자리를 쥔 채 다음 테스트까지 409 로 깼다).
+  macOS 는 그 PC 가 없어 CI 에서 처음 돈다.
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.

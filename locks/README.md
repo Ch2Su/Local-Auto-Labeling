@@ -8,8 +8,8 @@
 |---|---|---|---|
 | `win-cu134-py315.txt` | Windows x64 · NVIDIA (CUDA 13.4 빌드) | 3.15 | **이 데스크탑 `.venv` 의 판 그대로**(그 venv 의 `pip freeze` 를 제약으로 골랐다) — 회귀 테스트 801개가 이 판에서 돈다 |
 | `win-cpu-py314.txt` | Windows x64 · CPU | 3.14 | 새 가상 환경(3.14.10)에 이것만 깔고 회귀 테스트 801개 통과(2026-11-28, 건너뜀 0) |
-| `linux-cpu-py314.txt` | Linux x86_64 (glibc 2.28+) · CPU | 3.14 | 고르기만 했다 — 깔아 보는 것은 8단계(GitHub Actions) |
-| `macos-arm64-py314.txt` | macOS 14+ · Apple Silicon (MPS) | 3.14 | 고르기만 했다 — 8단계 |
+| `linux-cpu-py314.txt` | Linux x86_64 (glibc 2.28+) · CPU | 3.14 | WSL Ubuntu 의 새 venv(3.14.4)에 깔아 706개 통과 · 화면(JS) 101개는 node 가 없어 건너뜀(2026-11-28). CI(8단계)가 node 와 함께 돌린다 |
+| `macos-arm64-py314.txt` | macOS 14+ · Apple Silicon (MPS) | 3.14 | 고르기만 했다 — CI(8단계, `macos-latest`)에서 처음 깐다 |
 | `../requirements.txt` | Windows x64 · NVIDIA (CUDA 13.0 빌드) | 3.14 | 노트북의 개발 환경(직접 쓰는 패키지만 고정, 2026-10-31). 그대로 둔다 |
 
 배포용 잠금(3.14)은 개발 잠금의 판을 제약으로 골라 **같은 판**이다 — 다른 것은 플랫폼에만 있는 패키지(Linux·macOS 의 `uvloop`,

@@ -175,11 +175,15 @@ PATH="/c/Program Files/nodejs:$PATH" node "C:/Users/chisu/AppData/Roaming/npm/no
 ## 회귀 테스트
 
 `tests/`(2026-11-12 — 표·사용법은 README '회귀 테스트'). **코드를 고친 뒤 돌릴 것:** `.venv\Scripts\python.exe -m pytest`
-(11-28 까지 801개·95초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
+(11-28 까지 807개·110초쯤. 임시 폴더의 DB 만 쓰고 GPU·모델은 안 쓴다. pytest 는 기본 설치에 없다 — `requirements.txt` 끝).
 - **화면(JS) 테스트는 node 가 없어도 돈다 (11-16).** `tests/test_js_parity.find_node` 가 `NODE_BIN` → PATH 의 node →
   `C:\Program Files\nodejs\node.exe` → VS Code(`Code.exe` 를 `ELECTRON_RUN_AS_NODE=1` 로)를 차례로 찾는다. 하나도 없을 때만
   건너뛴다 — **건너뛴 테스트가 있으면 화면 코드를 확인한 것이 아니니 그렇게 보고할 것**(집 데스크탑은 그 전까지 38개가 늘 건너뛰어졌다).
 - **버그를 고치면 그 버그를 다시 내는 입력을 테스트로 남긴다** — 일회용 스크립트로 확인하고 버리지 말 것.
+- **push 하면 GitHub Actions 가 Windows·macOS·Linux 에서 돌린다 (11-28, 포터블 앱 8단계 — `.github/workflows/tests.yml`).** OS 마다
+  `locks/` 의 잠금을 새 venv 에 깔고(Python 3.14·CPU) pytest — **건너뛴 테스트가 있어도 실패**다. 저장소가 공개라 결과도 공개다.
+  그래서 **테스트에 Windows 를 가정하지 말 것** — 대소문자(같은 파일인지는 `os.path.normcase` 로), 드라이브 경로(`C:\`·`to_linux`),
+  줄끝(러너는 체크아웃 전에 `core.autocrlf false`). 11-28 에 WSL 의 새 venv 로 돌려 셋이 그래서 깨진 것을 고쳤다(tests/CLAUDE.md).
 - 테스트의 `cfg`(`tests/conftest.py`)는 `data.*` 경로를 전부 임시 폴더의 절대경로로 적는다. 새 경로 설정을 쓰는 코드를 시험하면
   거기에도 넣을 것 — 빼면 `config.resolve` 가 저장소의 `data/` 를 가리킨다.
 - 테스트 파일마다 무엇을 지키는지와 화면(JS) 함수를 글자로 떼는 규칙은 [tests/CLAUDE.md](tests/CLAUDE.md) 로 옮겼다(2026-11-17 —
