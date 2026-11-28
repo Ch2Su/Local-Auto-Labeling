@@ -1,0 +1,74 @@
+# 회귀 테스트를 Windows·macOS·Linux 에서 CPU 로 (2026-11-28, 포터블 앱 8단계 — docs/portable/m01-survey.md).
+#
+# OS 마다 그 잠금 파일(locks/)을 새 가상 환경에 깔고 pytest 를 돌린다. GPU·모델·실제 데이터는 쓰지 않는다(tests/ 는 임시 폴더만 —
+# data/·weights/·models/ 는 git 에 없다). 비밀(secrets)도 쓰지 않는다. 공개 저장소라 표준 러너는 무료다.
+# 액션은 커밋 해시로 고정했다(태그는 옮겨질 수 있다) — 올릴 때는 그 릴리스의 해시로 바꾸고 옆의 판 주석도 고칠 것.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # Windows 의 기본 셸(pwsh)은 여러 줄 중 가운데 명령이 실패해도 마지막 명령의 결과만 본다 — bash(-e)로 통일
+    shell: bash
+
+jobs:
+  pytest:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            lock: locks/win-cpu-py314.txt
+          - os: ubuntu-latest
+            lock: locks/linux-cpu-py314.txt
+          - os: macos-latest          # Apple Silicon (arm64) — torch 2.15.0 휠이 macOS 14 부터다
+            lock: locks/macos-arm64-py314.txt
+    steps:
+      # 줄끝은 바이트 그대로다(CLAUDE.md git '줄끝' — CRLF·LF 가 섞인 채). Windows 러너는 core.autocrlf=true 라 체크아웃 전에 끈다.
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: ${{ matrix.lock }}
+
+      # opencv-python(헤드리스가 아닌 판)이 Linux 에서 libGL·glib 를 찾는다
+      - name: System libraries for OpenCV (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+
+      - name: Install from the lock file
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r "${{ matrix.lock }}"
+          python -m pip install -e . --no-deps
+          python -m pip check
+          python -c "import sys, torch, ultralytics; print(sys.version.split()[0], torch.__version__, ultralytics.__version__)"
+
+      # 화면(JS) 테스트는 node 를 쓴다(러너에 있다). 건너뛴 테스트가 있으면 그 OS 에서 확인하지 않은 것이니 실패로 친다.
+      - name: Regression tests
+        run: |
+          node --version
+          python -m pytest -rs -p no:cacheprovider | tee pytest.log
+          if grep -Eq "[0-9]+ skipped" pytest.log; then echo "::error::건너뛴 테스트가 있다 — 위의 SKIPPED 줄을 볼 것"; exit 1; fi
