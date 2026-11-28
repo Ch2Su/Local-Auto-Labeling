@@ -35,7 +35,9 @@ def test_config_and_server_read_their_places_from_here():
     assert config.resolve(APP.user_data_dir / "abs") == APP.user_data_dir / "abs"            # 절대경로는 그대로
     assert server.WEB_DIR == APP.resource_dir / "web" and (server.WEB_DIR / "index.html").is_file()
     if APP.user_data_dir == ROOT:           # LAL_USER_DATA 를 두고 돌린 것이 아니면 — 그 전의 ROOT 그대로
-        assert Path(config.pretrained_path("yolo26n.pt")) == ROOT / "weights" / "yolo26n.pt"
+        # weights/ 는 git 밖이라 새로 받은 저장소(CI·worktree)에는 없다 — 없으면 이름 그대로 돌려준다(pretrained_path 3번)
+        w = ROOT / "weights" / "yolo26n.pt"
+        assert config.pretrained_path("yolo26n.pt") == (str(w) if w.exists() else "yolo26n.pt")
 
 
 def test_only_paths_py_works_out_where_things_are_from_its_own_file():

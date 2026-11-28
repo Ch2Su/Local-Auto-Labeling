@@ -156,6 +156,12 @@
 `APP.source_dir` 기준. 개발 모드 값은 그대로다(사본 서버를 켜서 화면·`/api/state` 확인, 테스트 717개). `ROOT` 는 이름을 그대로 두었다.
 배포판 쪽 규칙(포터블 표식·OS 기본 자리·번들 리소스 자리)은 패키징 전이라 규칙만 테스트했다. `wsl_train.REPO` 는 2단계에서.
 
+**2단계도 했다 (같은 날 사용자 '2단계 시작'):** `server.py` 의 `wsl_train` import 를 WSL 요청 안으로, `wsl_train.supported()`
+(Windows·WSL 스크립트 — 서브프로세스 없이), Windows 가 아니면 `/api/wsl` 이 `supported: false` 를 주고 화면은 버튼을 감추며
+작업 요청은 GPU 를 잡기 전에 400. `wsl_train.REPO` 대신 `SCRIPTS`(`paths.APP`). 이 PC 에서는 사본 서버로 WSL 버튼이 그대로
+보이고 켜지는 것을 봤다(`supported`·`available` 참). 다른 OS 는 `sys.platform` 을 갈아 흉내 냈을 뿐이다(8단계에서 실제로).
+`wsl/train_wsl.py`(DetectView 가 부른다)는 건드리지 않았다.
+
 6번이 유일하게 위험한 단계다. 1–5번은 동작을 바꾸지 않거나 설정으로 되돌릴 수 있고, 6번은 그 위에서 사본으로 먼저 한다.
 패키징(PyInstaller)은 8번까지 소스 모드로 세 OS 가 도는 것을 본 뒤다(인수인계 문서 14절 8번과 같다).
 

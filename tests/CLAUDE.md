@@ -171,5 +171,10 @@
   상대경로·`weights/`·`web/`), 패키지에서 `__file__` 로 자리를 구하는 곳이 `paths.py`(와 2단계에서 옮길 `wsl_train.py`)뿐인가,
   `LAL_USER_DATA`, 배포판(얼린 실행)의 포터블 표식·OS 기본 자리 — 실행 파일·번들·OS·환경 변수는 `discover()` 인자로 흉내 낸다.
   고치기 전 코드로 돌리면 `__file__` 검사와 `.gitignore` 검사 둘만 실패한다(나머지는 값이 같아서 — 이 단계는 동작을 바꾸지 않는다).
+- `tests/test_wsl_optional.py`(11-28, 포터블 앱 2단계)는 WSL 학습이 Windows 의 선택 기능인지 본다 — 새 프로세스로 `import autolabel.server`
+  뒤 `autolabel.wsl_train` 이 올라오지 않았는가, `sys.platform` 을 `linux` 로 갈아 `check()`·`/api/wsl`·작업 요청이 WSL 을 부르지
+  않는가(`subprocess.run` 을 부르면 실패하는 대역), 작업이 GPU 를 잡지 않는가(`jobs._gpu_owner`), 화면의 `refreshWslButtons`(node —
+  `supported: false` 면 감춤, 옛 서버·오류면 보이되 꺼짐). 다른 OS 에서 실제로 돌려 본 것은 아니다. 고치기 전 코드로는 따로 만든
+  worktree 에서 돌려 다섯 다 실패하는 것을 봤다(작업 트리를 되돌리는 동안 다른 세션의 자동 커밋이 옛 코드를 담지 않게).
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.

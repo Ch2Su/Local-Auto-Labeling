@@ -9,6 +9,10 @@
   docs/portable/m01-survey.md).** `config.ROOT`·`resolve()` 는 사용자 데이터 기준(개발 모드 = 저장소 루트, 전과 같다), 화면 파일은
   `APP.resource_dir`, '저장소 안이면' 은 `APP.source_dir`(배포판에서는 None). **패키지에서 `__file__` 로 자리를 새로 구하지 말 것**
   (`tests/test_paths.py` 가 막는다 — 배포판에서는 소스 자리와 데이터 자리가 다르다). 환경 변수 `LAL_USER_DATA` 로 데이터만 다른 폴더로.
+- **WSL 학습은 Windows 의 선택 기능이다 (2026-11-28, 포터블 앱 2단계).** 서버는 `wsl_train` 을 WSL 요청이 올 때만 불러 온다
+  (`server` 안의 `_wsl`) — **맨 위에서 import 하지 말 것**(`tests/test_wsl_optional.py`). `wsl_train.supported()` 가 서브프로세스 없이
+  Windows·WSL 스크립트를 먼저 보고, 아니면 `/api/wsl` 이 `supported: false`(화면은 버튼을 감춤)·작업 요청은 GPU 를 잡기 전에 400.
+  WSL 스크립트 자리는 `wsl_train.SCRIPTS`(`paths.APP` — 개발 모드는 저장소의 `wsl/`).
 - **이 폴더를 고친 뒤에는 회귀 테스트를 돌릴 것**(2026-11-12, `tests/` — `.venv\Scripts\python.exe -m pytest`, 루트 CLAUDE.md
   '회귀 테스트'). 아래의 '고치면 둘 다' 가운데 `maskCover`·`maskSlabs`·`sameRect`·`applyMaskTemplate`·`capNoTimeName`·`MASK_MAX`·
   `MASK_SAME`·`MASK_MAX_PTS` 는 `tests/test_js_parity.py` 가 화면과 서버를 대조한다.
