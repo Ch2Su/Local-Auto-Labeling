@@ -179,7 +179,10 @@
 - `tests/test_devices.py`(11-28, 포터블 앱 3단계)는 `devices.resolve_device`·`Config.device` 를 본다 — `torch.cuda.is_available`·
   `torch.backends.mps.is_available` 을 갈아 CUDA·MPS 가 있고 없는 PC 를 흉내 낸다(실제 GPU 없는 PC·macOS 는 아니다). 새 프로세스로
   `import autolabel.config, autolabel.server` 뒤 `torch` 가 올라오지 않았는지도. 고치기 전 config.py 로는 worktree 에서 '키가 없으면
-  auto' 테스트가 실패하는 것을 봤다(`devices.py` 만 옮겨 놓고).
+  auto' 테스트가 실패하는 것을 봤다(`devices.py` 만 옮겨 놓고). **같은 날 사용자 결정으로 auto 가 MPS 를 고르지 않게 바꿨다** — MPS 가
+  있어도 CPU 이고 MPS 를 묻지도 않는가(`is_available` 을 세는 대역), `sys.platform` 을 `darwin` 으로 갈면 `MAC_NOTE` 를 한 번만 찍는가,
+  `mps` 를 적으면 그대로인가, `autolabel._set_env_defaults` 가 macOS 에서만 `PYTORCH_ENABLE_MPS_FALLBACK=1` 을 두고 정해 둔 값은 그대로
+  두는가. 규칙 다섯(MPS 고르기·알림 없음·알림 매번·폴백을 모든 OS 에·정해 둔 값 덮기)을 사본에서 하나씩 끄고 돌려 전부 실패하는 것을 봤다.
 - `tests/test_build_vehicle_crops.py`(11-28)는 `tools/build_vehicle_crops.py`(VehicleRefiner 크롭 — docs/vehicle-refiner.md)를
   `main()` 으로 돌린다: 가릴 영역이 반 넘게 덮은 박스는 빼고 세는가(원본 DB 바이트는 그대로), Orientation 6 사진(원시 100×60 → 화면
   60×100, 빨간 자리)을 화면 기준으로 잘라 크롭 평균색이 빨강인가, 넓히기(15%)가 그림 안에서 멈추고 가장자리 표시, 그림 크기가 DB 와

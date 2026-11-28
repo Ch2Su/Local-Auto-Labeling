@@ -166,7 +166,11 @@
 `Config.device` 가 그것을 거치고 **키가 없으면 `auto`**(그 전에는 `0`). 사람이 적은 장치는 그대로 넘긴다. 이 저장소의
 `config.yaml` 은 `0` 그대로라 이 PC 의 동작은 같다(주석에 `auto`·`mps` 를 적었다). torch 는 장치를 쓸 때만 불러 온다.
 화면에 고른 장치를 보여 주는 것은 하지 않았다(`/api/state` 에서 고르면 첫 화면이 torch 를 불러 오느라 느려진다 — Ultralytics 가
-학습·추론 로그에 장치를 찍는다). MPS 에서 SAM·타일 추론이 되는지는 macOS 에서 볼 것.
+학습·추론 로그에 장치를 찍는다). MPS 에서 SAM·타일 추론이 되는지는 macOS 에서 볼 것. → **8단계 뒤 사용자 결정('실제 mac은 없어요' →
+'CPU 로 바꾸기'): auto 는 CUDA → CPU 다 — MPS 는 확인할 Mac 이 없어 auto 가 고르지 않고 `mps` 를 적은 사람만 쓴다.** macOS 에서는
+`PYTORCH_ENABLE_MPS_FALLBACK=1` 을 기본으로 두고(MPS 에 없는 연산은 CPU 로), Mac 에서 auto 가 CPU 를 고르면 `mps` 쓰는 법을 한 번
+알린다. GitHub 의 유료 Mac 러너(M2 Pro, GPU)는 공개 저장소에도 요금이 붙고 MPS 판정이 틀렸다는 PyTorch 이슈가 있어 쓰지 않았다.
+Mac 을 쓸 수 있게 되면(팀원 등) 다시 본다.
 
 **4단계도 했다 (같은 날 사용자 '4단계 시작'):** `trainer.build_dataset` 이 클래스·승인 라벨을 먼저 보고, `<dataset>.building` 에
 만든 뒤 옛 세트를 `.old` 로 비켜 두고 이름을 바꿔 끼운다(실패하면 되돌린다). 옛 세트의 학습 캐시(`.npy`·`.cache`)만 먼저 지워 디스크를
@@ -208,7 +212,7 @@ setup-python v7.1.0), Windows 러너의 `core.autocrlf` 를 체크아웃 전에 
 모두 통과했다**(run 46139301829, 커밋 4e3139a — Python 3.14.10 · torch 2.15.0(+cpu) · Ultralytics 8.4.212, 각 807개 통과·건너뜀 0:
 ubuntu 51초 · macos 61초 · windows 145초, node 24·24·22). **macOS 러너의 GPU 는 가상 장치라 MPS 를 못 쓴다**(torch 가 'Apple Paravirtual
 device … does not support Metal 2.0' 경고 — `auto` 가 CPU 를 골랐다) — MPS 로 추론·학습이 되는지는 실제 Mac 에서만 알 수 있다. **남은 것**:
-MPS 실기 확인 · 다른 OS 에서 서버를 띄워 화면을 본 것은 아니다 · 패키징(PyInstaller)은 이 다음이다(인수인계 문서 14절).
+MPS 실기 확인(Mac 이 없어 auto 에서 뺐다 — 3단계 진행 메모) · 다른 OS 에서 서버를 띄워 화면을 본 것은 아니다 · 패키징(PyInstaller)은 이 다음이다(인수인계 문서 14절).
 
 6번이 유일하게 위험한 단계였다. 1–5번은 동작을 바꾸지 않거나 설정으로 되돌릴 수 있고, 6번은 그 위에서 사본으로 먼저 했다.
 패키징(PyInstaller)은 8번까지 소스 모드로 세 OS 가 도는 것을 본 뒤다(인수인계 문서 14절 8번과 같다).
@@ -220,5 +224,6 @@ MPS 실기 확인 · 다른 OS 에서 서버를 띄워 화면을 본 것은 아�
 1. 이 일과 지금 하던 일(데이터 수집·첫 분할·학습)의 순서.
 2. 배포 대상 Python 버전 — 지금 두 PC 가 3.14·3.15 로 다르다.
 3. macOS·Linux 실기기가 있는지(없으면 GitHub Actions 로 CPU 만 본다 — 그곳에서 MPS 가 되는지는 확인하지 않았다).
+   → 11-28: **Mac 은 없다**(사용자). CI 로 CPU 만 보고, MPS 는 auto 에서 뺐다(3단계 진행 메모).
 4. 개인 작업 흐름(WSL·Runpod·Gemini·자동 커밋)을 이 저장소에 개발 모드로 둘지, 제품과 저장소를 나눌지.
 5. DetectView 가 부르는 경로(`wsl/train_wsl.py`·`weights/`)를 그대로 둘지, 함께 옮길지.

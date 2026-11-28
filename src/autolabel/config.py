@@ -126,7 +126,7 @@ class Config:
 
     @property
     def device(self) -> Any:
-        """Ultralytics 에 넘길 장치. `auto` 면 CUDA → MPS → CPU 로 고른다(devices.py, 2026-11-28). **키가 없으면 `auto`**
+        """Ultralytics 에 넘길 장치. `auto` 면 CUDA → CPU 로 고른다(MPS 는 안 고른다 — devices.py, 2026-11-28). **키가 없으면 `auto`**
         (그 전에는 `0` — CUDA 없는 PC 에서 오류). 숫자·`cpu`·`cuda:1`·`mps` 는 적힌 그대로 넘긴다."""
         return resolve_device(self.get("model.device", AUTO))
 

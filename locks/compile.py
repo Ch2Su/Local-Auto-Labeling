@@ -29,7 +29,7 @@ TORCH = "https://download.pytorch.org/whl/{}"
 TARGETS = {
     "win-cpu-py314.txt": ("Windows x64 · CPU", "3.14", "x86_64-pc-windows-msvc", "cpu"),
     "linux-cpu-py314.txt": ("Linux x86_64 (glibc 2.28+) · CPU", "3.14", "x86_64-manylinux_2_28", "cpu"),
-    "macos-arm64-py314.txt": ("macOS 14+ Apple Silicon · MPS/CPU", "3.14", "aarch64-apple-darwin", None),
+    "macos-arm64-py314.txt": ("macOS 14+ Apple Silicon · CPU (MPS 는 확인 전 — 적은 사람만)", "3.14", "aarch64-apple-darwin", None),
 }
 # torch 2.15.0 의 macOS 휠은 macOS 14 부터다(uv 는 macOS 13 을 기본으로 골라 '휠이 없다' 로 멈췄다 — 2026-11-28)
 MACOS_MIN = "14.0"
@@ -38,7 +38,8 @@ DEV_TARGET = ("Windows x64 · NVIDIA CUDA 13.4 — 데스크탑 개발 환경(.v
 NOTE = {
     DEV: ("# PyYAML 6.0.3 은 cp315 휠이 없어 소스에서 만든다 — MSVC 가 없으면 PYYAML_FORCE_LIBYAML=0 을 두고 깔면 순수 Python 판이 된다.\n"
           "# torch 를 cu134 인덱스에서 받는다(아래 --extra-index-url). 드라이버는 CUDA 13.4 이상(이 PC 는 621.24 — 13.5).\n"),
-    "macos-arm64-py314.txt": "# GPU 는 MPS(Apple Silicon)다 — config.yaml 의 model.device 를 auto 나 mps 로(3단계 devices.py).\n",
+    "macos-arm64-py314.txt": ("# Apple GPU(MPS)는 실제 Mac 으로 확인하지 못해 장치 auto 가 고르지 않는다(CPU 로 돈다 — 2026-11-28 사용자 결정).\n"
+                              "# 쓰려면 config.yaml 의 model.device 를 mps 로(MPS 에 없는 연산은 CPU 로 넘긴다 — devices.py 머리말).\n"),
 }
 
 

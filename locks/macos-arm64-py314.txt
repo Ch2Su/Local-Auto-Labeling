@@ -1,8 +1,9 @@
-# macOS 14+ Apple Silicon · MPS/CPU · Python 3.14
+# macOS 14+ Apple Silicon · CPU (MPS 는 확인 전 — 적은 사람만) · Python 3.14
 # pyproject.toml 의 의존성 + test 묶음을 uv 로 고른 잠금이다 — 손으로 고치지 말고 `python locks/compile.py` 로
 # 다시 만든다(locks/README.md). 깔기(새 가상 환경에서):  python -m pip install -r locks/macos-arm64-py314.txt
 #                                그다음 소스 폴더에서:  python -m pip install -e . --no-deps
-# GPU 는 MPS(Apple Silicon)다 — config.yaml 의 model.device 를 auto 나 mps 로(3단계 devices.py).
+# Apple GPU(MPS)는 실제 Mac 으로 확인하지 못해 장치 auto 가 고르지 않는다(CPU 로 돈다 — 2026-11-28 사용자 결정).
+# 쓰려면 config.yaml 의 model.device 를 mps 로(MPS 에 없는 연산은 CPU 로 넘긴다 — devices.py 머리말).
 
 --index-url https://pypi.org/simple
 

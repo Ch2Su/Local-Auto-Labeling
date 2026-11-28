@@ -13,8 +13,10 @@
   (`server` 안의 `_wsl`) — **맨 위에서 import 하지 말 것**(`tests/test_wsl_optional.py`). `wsl_train.supported()` 가 서브프로세스 없이
   Windows·WSL 스크립트를 먼저 보고, 아니면 `/api/wsl` 이 `supported: false`(화면은 버튼을 감춤)·작업 요청은 GPU 를 잡기 전에 400.
   WSL 스크립트 자리는 `wsl_train.SCRIPTS`(`paths.APP` — 개발 모드는 저장소의 `wsl/`).
-- **장치는 `cfg.device` 하나로 읽는다 (2026-11-28, 포터블 앱 3단계 — `devices.py`).** `auto` 면 CUDA → MPS → CPU 로 고르고, 설정에
-  키가 없으면 `auto`(그 전에는 `0`). 사람이 적은 장치는 CUDA 가 없어도 바꾸지 않는다(몰래 CPU 로 돌리지 않는다). 이 저장소의
+- **장치는 `cfg.device` 하나로 읽는다 (2026-11-28, 포터블 앱 3단계 — `devices.py`).** `auto` 면 CUDA → CPU 로 고르고, 설정에
+  키가 없으면 `auto`(그 전에는 `0`). **Apple GPU(MPS)는 `auto` 가 고르지 않는다**(같은 날 사용자 결정 — 실제 Mac 이 없어 확인할 수
+  없다, `mps` 를 적은 사람만. macOS 에서는 `autolabel._set_env_defaults` 가 `PYTORCH_ENABLE_MPS_FALLBACK=1` 을 기본으로 — torch 보다
+  먼저 import 돼야 먹는다). 사람이 적은 장치는 CUDA 가 없어도 바꾸지 않는다(몰래 CPU 로 돌리지 않는다). 이 저장소의
   config.yaml 은 `0` 그대로다. **`torch.cuda.is_available()` 을 여기저기서 따로 부르지 말 것** — 장치를 정하는 곳은 `devices.py` 하나다.
 - **학습 세트는 검사 → 옆 폴더(`<dataset>.building`)에 만들기 → 바꿔 끼우기로 만든다 (2026-11-28, 포터블 앱 4단계 — `trainer.build_dataset`).**
   도중에 멈추면 옛 세트가 그대로다(그 전에는 먼저 지우고 검사했다). 옛 세트의 학습 캐시(`.npy`·`.cache`)는 만들기 전에 지운다 —
