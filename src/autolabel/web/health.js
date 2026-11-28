@@ -276,7 +276,7 @@ function hcRenderCameras(d) {
   const max = Math.max(1, ...d.cameras.map((r) => r.images));
   const body = d.cameras.map((r) => {
     const key = r.key == null ? d.none_camera : r.key;
-    const split = r.pinned ? `<b class="pin">${esc(r.pinned)} 고정</b> ` : "";
+    const split = r.pinned ? `<b class="pin">${esc(r.pinned)} 고정</b>` : "";
     const period = r.first ? (r.first === r.last ? r.first : `${r.first} ~ ${r.last}`) : "";
     return `<tr class="link" data-act="cam" data-v="${esc(key)}">`
       + `<td class="nm">${r.key == null ? `<span class="dim">출처 없음</span>` : esc(r.key)}${r.key != null && !r.registered ? ` <span class="warn" title="cameras.yaml 에 등록이 없습니다">미등록</span>` : ""}</td>`
@@ -284,7 +284,8 @@ function hcRenderCameras(d) {
       + `<td class="bar"><i style="width:${(100 * r.images / max).toFixed(2)}%"></i></td>`
       + `<td class="num">${hcN(r.images)}</td><td class="num">${hcN(r.boxes)}</td>`
       + `<td class="num">${r.images ? (r.boxes / r.images).toFixed(1) : ""}</td><td class="num">${hcN(r.classes)}</td>`
-      + `<td class="stk">${split}${hcSplitBar(r.splits)}</td>`
+      // 고정 글자와 막대를 한 줄(flex)에 — 전에는 막대가 칸 너비 100% 라 글자가 있는 줄만 다음 칸(가릴 영역)까지 밀려 나갔다(11-28)
+      + `<td class="stk"><div class="hc-stk">${split}${hcSplitBar(r.splits)}</div></td>`
       + `<td class="num dim" title="가릴 영역이 있는 이미지 수 / 그 영역이 학습에서 빼는 박스 수">${r.masked ? `${hcN(r.masked)}장 / ${hcN(r.masked_out)}개` : ""}</td>`
       + `<td class="dim">${esc(period)}</td></tr>`;
   }).join("");

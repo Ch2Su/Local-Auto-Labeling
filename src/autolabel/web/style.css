@@ -945,7 +945,10 @@ body:not(.view-health) #health { display: none; }
 .hc-tbl td.bar i { display: block; height: 10px; min-width: 1px; border-radius: 0 3px 3px 0; background: var(--accent); }
 .hc-tbl tr.zero td { color: var(--fg-dim); }
 .hc-tbl .warn { color: var(--warn); font-weight: 600; }
-.hc-tbl td.stk { min-width: 110px; }
+.hc-tbl td.stk { min-width: 110px; padding-right: 20px; }   /* 다음 칸(가릴 영역)과 사이를 둔다 (11-28) */
+.hc-tbl .hc-stk { display: flex; align-items: center; gap: 8px; }
+.hc-tbl .hc-stk .pin { flex: none; }
+.hc-tbl .hc-stk .hc-stack { flex: 1 1 auto; width: auto; }
 .hc-tbl td.place { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .hc-tbl .pin { color: var(--warn); font-size: 11px; }
 /* 한 줄 쌓은 막대 — 분할별 몫·크기별 몫. 칸 사이는 바탕색 1px 로 가른다 */
