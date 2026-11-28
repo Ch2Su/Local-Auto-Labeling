@@ -6,8 +6,8 @@
 
 | 파일 | 대상 | Python | 확인한 것 |
 |---|---|---|---|
-| `win-cu134-py315.txt` | Windows x64 · NVIDIA (CUDA 13.4 빌드) | 3.15 | **이 데스크탑 `.venv` 의 판 그대로**(그 venv 의 `pip freeze` 를 제약으로 골랐다) — 회귀 테스트 782개가 이 판에서 돈다 |
-| `win-cpu-py314.txt` | Windows x64 · CPU | 3.14 | 새 가상 환경에 이것만 깔고 회귀 테스트를 돌렸다(2026-11-28) |
+| `win-cu134-py315.txt` | Windows x64 · NVIDIA (CUDA 13.4 빌드) | 3.15 | **이 데스크탑 `.venv` 의 판 그대로**(그 venv 의 `pip freeze` 를 제약으로 골랐다) — 회귀 테스트 801개가 이 판에서 돈다 |
+| `win-cpu-py314.txt` | Windows x64 · CPU | 3.14 | 새 가상 환경(3.14.10)에 이것만 깔고 회귀 테스트 801개 통과(2026-11-28, 건너뜀 0) |
 | `linux-cpu-py314.txt` | Linux x86_64 (glibc 2.28+) · CPU | 3.14 | 고르기만 했다 — 깔아 보는 것은 8단계(GitHub Actions) |
 | `macos-arm64-py314.txt` | macOS 14+ · Apple Silicon (MPS) | 3.14 | 고르기만 했다 — 8단계 |
 | `../requirements.txt` | Windows x64 · NVIDIA (CUDA 13.0 빌드) | 3.14 | 노트북의 개발 환경(직접 쓰는 패키지만 고정, 2026-10-31). 그대로 둔다 |
@@ -29,6 +29,7 @@ python -m venv .venv-new            # 그 OS 의 Python 3.14 (데스크탑 잠�
 
 - PyTorch 를 받는 곳은 잠금 파일 머리의 `--extra-index-url` 줄이 정한다(`+cpu`·`+cu134`). macOS 는 PyPI 의 torch 가 MPS 를 쓴다 —
   `config.yaml` 의 `model.device` 를 `auto` 나 `mps` 로(3단계 `devices.py`). 이 저장소의 config.yaml 은 `0`(첫 CUDA GPU)이다.
+- 편집 설치는 `src/local_auto_labeling.egg-info/` 를 만든다(git 은 무시한다 — `.gitignore`).
 - **설치는 편집 모드(`-e`)만 된다** — `pip install .` 로 site-packages 에 넣으면 `paths.APP` 이 소스 폴더를 못 찾는다(pyproject.toml 머리말).
 - 데스크탑 잠금의 PyYAML 6.0.3 은 Python 3.15 휠이 없어 소스에서 만든다 — MSVC 가 없으면 `PYYAML_FORCE_LIBYAML=0` 을 두고 깐다.
 - WSL·Runpod 학습은 이 잠금이 아니라 conda 환경 `yolo_final` 이다(CLAUDE.md 'WSL 학습', docs/runpod.md).

@@ -7,6 +7,10 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+# pip install -e . 가 src/ 에 만드는 꾸러미 정보·빌드 결과 (2026-11-28 — 포터블 앱 7단계, 새 venv 시험에서 생겨 자동 커밋에 들어갔다)
+*.egg-info/
+/build/
+/dist/
 
 # 데이터·가중치·내보내기
 /data/
