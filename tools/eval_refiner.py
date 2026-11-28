@@ -364,6 +364,10 @@ def cmd_a0(args) -> int:
         raise SystemExit(f"[중단] 가중치가 없습니다: {weights}")
     with open(crops / "manifest.csv", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
+    if args.only_fold is not None:
+        rows = [r for r in rows if r["fold"] == args.only_fold]
+        if not rows:
+            raise SystemExit(f"[중단] fold {args.only_fold} 의 크롭이 없습니다")
     by_img = collections.defaultdict(list)
     for r in rows:
         by_img[int(r["image_id"])].append(r)
@@ -397,7 +401,7 @@ def cmd_a0(args) -> int:
                              "det_conf": round(preds[pi][1], 4) if pi is not None else "", "iou": round(v, 4)})
         if k % 50 == 0:
             print(f"  {k}/{len(by_img)} 장", flush=True)
-    tag = f"a0_{weights.stem}_{args.imgsz}"
+    tag = args.tag or f"a0_{weights.stem}_{args.imgsz}" + (f"_f{args.only_fold}" if args.only_fold is not None else "")
     out = crops / "runs" / tag
     out.mkdir(parents=True, exist_ok=True)
     with open(out / "a0.csv", "w", encoding="utf-8", newline="") as f:
@@ -408,7 +412,8 @@ def cmd_a0(args) -> int:
     model_classes = [names[i] for i in sorted(names)]
     compared = [c for c in VEHICLES if c in model_classes]
     (out / "config.json").write_text(json.dumps({
-        "weights": str(weights), "sha256": sha, "imgsz": args.imgsz, "conf": args.conf, "iou": args.iou,
+        "weights": str(weights), "sha256": sha, "only_fold": args.only_fold, "imgsz": args.imgsz, "conf": args.conf,
+        "iou": args.iou,
         "class_iou": args.class_iou, "match_iou": MATCH_IOU, "model_classes": model_classes, "compared_classes": compared,
         "crops_made_at": info.get("made_at"), "skipped": skipped, "made_at": datetime.now().isoformat(timespec="seconds")},
         ensure_ascii=False, indent=1), encoding="utf-8")
@@ -419,6 +424,35 @@ def cmd_a0(args) -> int:
     for s in skipped:
         print(f"[건너뜀] {s}")
     print(f"썼습니다: {out / 'a0.csv'}")
+    return 0
+
+
+def cmd_merge(args) -> int:
+    """fold 마다 다른 검출기로 짝지은 a0 결과(A0b)를 하나로 — 같은 크롭이 두 번 나오면 멈춘다. 견줄 클래스는 모든 조각이 아는 것."""
+    crops = Path(args.crops).resolve()
+    rows, configs, seen = [], [], set()
+    for part in args.parts:
+        pdir = crops / "runs" / part
+        configs.append(json.loads((pdir / "config.json").read_text(encoding="utf-8")))
+        for r in read_a0(pdir / "a0.csv").values():
+            if r["crop"] in seen:
+                raise SystemExit(f"[중단] {r['crop']} 이 두 조각에 있습니다 — fold 가 겹치지 않게 줄 것")
+            seen.add(r["crop"])
+            rows.append(r)
+    compared = [c for c in VEHICLES if all(c in cf["compared_classes"] for cf in configs)]
+    out = crops / "runs" / args.tag
+    out.mkdir(parents=True, exist_ok=True)
+    with open(out / "a0.csv", "w", encoding="utf-8", newline="") as f:
+        wr = csv.DictWriter(f, fieldnames=["crop", "cls", "det_cls", "det_conf", "iou"])
+        wr.writeheader()
+        wr.writerows(rows)
+    (out / "config.json").write_text(json.dumps({
+        "merged_from": args.parts, "parts": [{k: cf.get(k) for k in ("weights", "sha256", "only_fold", "imgsz")} for cf in configs],
+        "compared_classes": compared, "skipped": [s for cf in configs for s in cf.get("skipped", [])],
+        "made_at": datetime.now().isoformat(timespec="seconds")}, ensure_ascii=False, indent=1), encoding="utf-8")
+    found = sum(1 for r in rows if r["det_cls"])
+    print(f"합쳤습니다: {out} (크롭 {len(rows)}개, 짝 {found}, 클래스 맞음 {sum(1 for r in rows if r['det_cls'] == r['cls'])}, "
+          f"견줄 클래스 {','.join(compared)})")
     return 0
 
 
@@ -434,6 +468,12 @@ def main() -> int:
     a.add_argument("--iou", type=float, default=0.6)
     a.add_argument("--class-iou", type=float, default=0.6)
     a.add_argument("--device", default="0")
+    a.add_argument("--only-fold", default=None, help="이 fold 의 크롭만(A0b — fold 마다 그 fold 를 안 본 검출기로)")
+    a.add_argument("--tag", default=None, help="결과 폴더 이름(기본 a0_<가중치>_<입력>[_f<fold>])")
+    g = sub.add_parser("merge", help="fold 마다의 a0 결과를 하나로(A0b)")
+    g.add_argument("--crops", required=True, type=Path)
+    g.add_argument("--parts", nargs="+", required=True)
+    g.add_argument("--tag", required=True)
     r = sub.add_parser("report", help="OOF 지표·A0 대비·두 실행 비교")
     r.add_argument("--crops", required=True, type=Path)
     r.add_argument("--runs", nargs="+", required=True)
@@ -443,7 +483,7 @@ def main() -> int:
     r.add_argument("--boot", type=int, default=2000)
     r.add_argument("--jsonl", default="runs/refiner/results.jsonl")
     args = ap.parse_args()
-    return cmd_a0(args) if args.cmd == "a0" else cmd_report(args)
+    return {"a0": cmd_a0, "merge": cmd_merge, "report": cmd_report}[args.cmd](args)
 
 
 if __name__ == "__main__":

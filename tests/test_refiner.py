@@ -281,6 +281,53 @@ def test_a0_with_a_fake_detector(tmp_path, monkeypatch, cfg):
     assert info["compared_classes"] == ["car", "pickup", "truck"] and len(info["skipped"]) == 1
 
 
+def test_a0_only_fold_and_merge(tmp_path, monkeypatch, cfg):
+    """A0b — fold 마다 다른 가중치로 그 fold 의 크롭만 짝짓고(`--only-fold`·`--tag`), 합칠 때 같은 크롭이 두 번이면 멈춘다.
+    견줄 클래스는 모든 조각이 아는 것(한 조각이 pickup 을 모르면 빠진다)."""
+    crops = make_crops(tmp_path / "c", n_per=1, folds=1)
+    rows = list(csv.DictReader(open(crops / "manifest.csv", encoding="utf-8", newline="")))
+    con = sqlite3.connect(crops / "db.sqlite")
+    con.execute("CREATE TABLE images (id INTEGER PRIMARY KEY, path TEXT)")
+    for r in rows:
+        p = tmp_path / "img" / f"{r['image_id']}.jpg"
+        p.parent.mkdir(exist_ok=True)
+        p.write_bytes(b"")
+        con.execute("INSERT INTO images VALUES (?, ?)", (int(r["image_id"]), str(p)))
+    con.commit()
+    con.close()
+    _FakeYOLO.plan = {int(r["image_id"]): ((1440, 2560), []) for r in rows}
+    monkeypatch.setitem(sys.modules, "ultralytics", types.SimpleNamespace(YOLO=_FakeYOLO))
+    w = tmp_path / "w.pt"
+    w.write_bytes(b"weights")
+    cfg.path.write_text(json.dumps(cfg.raw), encoding="utf-8")
+
+    def a0(*extra):
+        monkeypatch.setattr(sys, "argv", ["eval_refiner.py", "a0", "--crops", str(crops), "--weights", str(w),
+                                          "--config", str(cfg.path), "--device", "cpu", *extra])
+        return ev.main()
+
+    assert a0("--only-fold", "0", "--tag", "p0") == 0
+    assert a0("--only-fold", "test") == 0
+    with pytest.raises(SystemExit, match="크롭이 없습니다"):
+        a0("--only-fold", "7")
+    p0 = ev.read_a0(crops / "runs" / "p0" / "a0.csv")
+    assert {r["crop"] for r in p0.values()} == {r["crop"] for r in rows if r["fold"] == "0"}
+    part2 = crops / "runs" / "a0_w_1280_ftest"
+    cfg2 = json.loads((part2 / "config.json").read_text(encoding="utf-8"))
+    assert cfg2["only_fold"] == "test"
+    cfg2["compared_classes"] = ["car", "truck"]
+    (part2 / "config.json").write_text(json.dumps(cfg2), encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["eval_refiner.py", "merge", "--crops", str(crops), "--parts", "p0", part2.name,
+                                      "--tag", "a0b"])
+    assert ev.main() == 0
+    merged = ev.read_a0(crops / "runs" / "a0b" / "a0.csv")
+    assert len(merged) == len(rows)
+    assert json.loads((crops / "runs" / "a0b" / "config.json").read_text(encoding="utf-8"))["compared_classes"] == ["car", "truck"]
+    monkeypatch.setattr(sys, "argv", ["eval_refiner.py", "merge", "--crops", str(crops), "--parts", "p0", "p0", "--tag", "x"])
+    with pytest.raises(SystemExit, match="두 조각"):
+        ev.main()
+
+
 def test_report_end_to_end(tmp_path, monkeypatch, capsys):
     crops = make_crops(tmp_path / "c")
     run_dir = crops / "runs" / "r1"

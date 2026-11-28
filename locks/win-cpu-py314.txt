@@ -1,0 +1,213 @@
+# Windows x64 · CPU · Python 3.14
+# pyproject.toml 의 의존성 + test 묶음을 uv 로 고른 잠금이다 — 손으로 고치지 말고 `python locks/compile.py` 로
+# 다시 만든다(locks/README.md). 깔기(새 가상 환경에서):  python -m pip install -r locks/win-cpu-py314.txt
+#                                그다음 소스 폴더에서:  python -m pip install -e . --no-deps
+
+--index-url https://pypi.org/simple
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+annotated-doc==0.0.6
+    # via
+    #   fastapi
+annotated-types==0.8.0
+    # via
+    #   pydantic
+anyio==4.16.0
+    # via
+    #   httpx
+    #   starlette
+    #   watchfiles
+certifi==2026.10.23
+    # via
+    #   httpcore
+    #   httpx
+    #   requests
+charset-normalizer==3.5.2
+    # via
+    #   requests
+click==8.5.1
+    # via
+    #   uvicorn
+colorama==0.4.6
+    # via
+    #   pytest
+contourpy==1.4.0
+    # via
+    #   matplotlib
+cycler==0.12.1
+    # via
+    #   matplotlib
+fastapi==0.141.1
+    # via
+    #   local-auto-labeling (pyproject.toml)
+filelock==4.2.4
+    # via
+    #   torch
+fonttools==4.68.0
+    # via
+    #   matplotlib
+fsspec==2026.9.0
+    # via
+    #   torch
+h11==0.16.0
+    # via
+    #   httpcore
+    #   uvicorn
+httpcore==1.0.9
+    # via
+    #   httpx
+httptools==0.9.0
+    # via
+    #   uvicorn
+httpx==0.28.1
+    # via
+    #   local-auto-labeling (pyproject.toml)
+    #   ultralytics-platform
+idna==3.20
+    # via
+    #   anyio
+    #   httpx
+    #   requests
+iniconfig==2.3.1
+    # via
+    #   pytest
+jinja2==3.1.6
+    # via
+    #   torch
+kiwisolver==1.5.1
+    # via
+    #   matplotlib
+markupsafe==2.1.5
+    # via
+    #   jinja2
+matplotlib==3.11.2
+    # via
+    #   ultralytics
+mpmath==1.3.0
+    # via
+    #   sympy
+networkx==3.7
+    # via
+    #   torch
+numpy==2.5.2
+    # via
+    #   local-auto-labeling (pyproject.toml)
+    #   contourpy
+    #   matplotlib
+    #   opencv-python
+    #   torchvision
+    #   ultralytics
+    #   ultralytics-thop
+nvidia-ml-py==13.615.71
+    # via
+    #   ultralytics
+opencv-python==5.0.0.93
+    # via
+    #   local-auto-labeling (pyproject.toml)
+    #   ultralytics
+packaging==26.3
+    # via
+    #   matplotlib
+    #   pytest
+pillow==12.3.0
+    # via
+    #   local-auto-labeling (pyproject.toml)
+    #   matplotlib
+    #   torchvision
+    #   ultralytics
+pluggy==1.7.0
+    # via
+    #   pytest
+polars==2.1.0
+    # via
+    #   ultralytics
+polars-runtime-32==2.1.0
+    # via
+    #   polars
+psutil==7.2.2
+    # via
+    #   ultralytics
+pydantic==2.14.3
+    # via
+    #   local-auto-labeling (pyproject.toml)
+    #   fastapi
+pydantic-core==2.50.4
+    # via
+    #   pydantic
+pygments==2.21.0
+    # via
+    #   pytest
+pyparsing==3.3.3
+    # via
+    #   matplotlib
+pytest==9.2.0
+    # via
+    #   local-auto-labeling (pyproject.toml)
+python-dateutil==4.0.0
+    # via
+    #   matplotlib
+python-dotenv==1.2.4
+    # via
+    #   uvicorn
+pyyaml==6.0.3
+    # via
+    #   local-auto-labeling (pyproject.toml)
+    #   uvicorn
+requests==2.34.2
+    # via
+    #   ultralytics
+setuptools==78.1.0
+    # via
+    #   torch
+starlette==1.10.0
+    # via
+    #   fastapi
+sympy==1.14.0
+    # via
+    #   torch
+torch==2.15.0+cpu
+    # via
+    #   local-auto-labeling (pyproject.toml)
+    #   torchvision
+    #   ultralytics
+    #   ultralytics-thop
+torchvision==0.29.2+cpu
+    # via
+    #   local-auto-labeling (pyproject.toml)
+    #   ultralytics
+typing-extensions==4.16.0
+    # via
+    #   anyio
+    #   fastapi
+    #   pydantic
+    #   pydantic-core
+    #   torch
+    #   typing-inspection
+typing-inspection==0.4.5
+    # via
+    #   fastapi
+    #   pydantic
+tzdata==2026.6
+    # via
+    #   python-dateutil
+ultralytics==8.4.212
+    # via
+    #   local-auto-labeling (pyproject.toml)
+ultralytics-platform==0.1.111
+    # via
+    #   ultralytics
+ultralytics-thop==2.2.5
+    # via
+    #   ultralytics
+urllib3==2.8.0
+    # via
+    #   requests
+uvicorn==0.52.4
+    # via
+    #   local-auto-labeling (pyproject.toml)
+watchfiles==1.3.0
+    # via
+    #   uvicorn
+websockets==17.4
+    # via
+    #   uvicorn

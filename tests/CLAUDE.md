@@ -215,6 +215,7 @@
   A0 놓침은 안 견줌)·`a0` 를 가짜 YOLO(`sys.modules['ultralytics']` 를 갈아 끼움)로 — 크기 다른 그림 건너뛰기, 겹친 car·pickup 을 차량 정리로
   car 하나만(정리를 끄면 앞의 pickup 과 짝이 되게 순서를 두었다)·`report` 끝까지(jsonl 한 줄). 그날 규칙 아홉(test 새기·내려받기 막기·pad
   막기·cross-fit·McNemar 양쪽·1:1·차량 정리·크기 확인·car 기준)을 메모리에서만 끄고 돌려 전부 실패하는 것을 봤다. 두 도구는 YOLO 를
-  올리므로 `tests/test_yolo_io.py` 의 모델 도구 목록에 넣었다.
+  올리므로 `tests/test_yolo_io.py` 의 모델 도구 목록에 넣었다. 같은 날 A0b 용 `a0 --only-fold`·`--tag`·`merge` 도 본다(그 fold 의 크롭만,
+  없는 fold 는 멈춤, 합칠 때 같은 크롭 두 번이면 멈춤, 견줄 클래스는 조각들의 교집합).
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.
