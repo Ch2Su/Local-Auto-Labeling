@@ -119,17 +119,54 @@ def _link_or_copy(src: Path, dst: Path, *, hardlink: bool = False) -> None:
     shutil.copy2(src, dst)
 
 
-def build_dataset(cfg: Config, store: Store) -> BuildReport:
-    root = cfg.dataset
+def _beside(root: Path, tag: str) -> Path:
+    """데이터셋 폴더 옆의 작업 폴더 — 같은 디스크라 이름 바꾸기로 바꿔 끼울 수 있다(`dataset.building`·`dataset.old`)."""
+    return root.with_name(f"{root.name}.{tag}")
+
+
+# 학습이 데이터셋 안에 남기는 캐시 — 지워도 다음 학습이 다시 만든다(.npy 는 Windows `cache: disk` 의 이미지 캐시로 수 GB,
+# .cache 는 Ultralytics 의 라벨 캐시). 새 세트를 옆에 만드는 동안 옛 세트의 이것까지 두면 디스크를 그만큼 더 쓴다.
+_CACHE_SUFFIXES = (".npy", ".cache")
+
+
+def _drop_caches(root: Path) -> None:
+    if not root.is_dir():
+        return
+    for p in root.rglob("*"):
+        if p.suffix in _CACHE_SUFFIXES and p.is_file():
+            p.unlink(missing_ok=True)
+
+
+def _swap_in(work: Path, root: Path) -> None:
+    """다 만든 `work` 를 `root` 자리에 바꿔 끼운다 — 옛 세트는 `root.old` 로 비켜 두었다가 끝나면 지운다. 바꿔 끼우다 실패하면
+    옛 세트를 제자리로 돌린다(두 번의 이름 바꾸기 사이만 빈다)."""
+    old = _beside(root, "old")
+    if old.exists():
+        shutil.rmtree(old)                  # 지난번에 못 지운 것 — 못 지우면 아무것도 바꾸기 전에 멈춘다
     if root.exists():
-        shutil.rmtree(root)
+        root.rename(old)
+    try:
+        work.rename(root)
+    except BaseException:
+        if old.exists() and not root.exists():
+            old.rename(root)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def build_dataset(cfg: Config, store: Store) -> BuildReport:
+    """DB 의 승인 라벨로 학습 세트(`cfg.dataset`)를 새로 만든다.
+
+    **검사 → 옆 폴더(`<이름>.building`)에 만들기 → 바꿔 끼우기 (2026-11-28, 포터블 앱 4단계).** 그 전에는 옛 세트를 먼저 지우고
+    검사했다 — 클래스·승인 라벨이 없거나 그림을 못 읽어 멈추면 세트가 없는 채로 남았다(DB·원본은 그대로라 데이터를 잃지는 않았다).
+    이제는 도중에 멈추면 옛 세트가 그대로다. 옛 세트의 학습 캐시(`.npy`·`.cache`)만 만들기 전에 지운다 — 디스크를 두 벌만큼 쓰지
+    않게(다음 학습이 다시 만든다). `data.yaml` 의 `path` 는 처음부터 최종 자리(`cfg.dataset`)로 적는다. 분할 배정(`ensure_splits`)은
+    전처럼 DB 에 남는다."""
+    root = cfg.dataset
 
     classes = store.get_classes()
     if not classes:
         raise RuntimeError("클래스 목록이 비어 있습니다. 먼저 'scan'을 실행하세요.")
-
-    hardlink = bool(cfg.get("train.hardlink_images", False))
-    report = BuildReport(classes=list(classes))
 
     records = store.approved_with_boxes()
     if not records:
@@ -138,10 +175,29 @@ def build_dataset(cfg: Config, store: Store) -> BuildReport:
             "검수 UI에서 이미지를 승인하세요."
         )
 
+    work = _beside(root, "building")
+    if work.exists():
+        shutil.rmtree(work)                 # 지난번에 멈춘 만들기의 잔재
+    _drop_caches(root)
+    try:
+        report = _write_dataset(cfg, store, work, root, classes, records)
+        _swap_in(work, root)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)       # 바꿔 끼우기 전에 멈췄으면 옛 세트는 그대로다(_swap_in 이 되돌린다)
+        raise
+    return report
+
+
+def _write_dataset(cfg: Config, store: Store, root: Path, final: Path, classes: list[str], records) -> BuildReport:
+    """`root`(옆 작업 폴더)에 세트를 쓴다. `final` 은 바꿔 끼운 뒤의 자리 — `data.yaml` 과 보고의 경로에 쓴다."""
+    hardlink = bool(cfg.get("train.hardlink_images", False))
+    report = BuildReport(classes=list(classes))
+
     # train/val 배정은 DB 에 고정돼 있다. 새로 승인된 것만 계층화로 채운다(split.py).
     assign, split_report = ensure_splits(cfg, store)
     report.split = split_report
     masks = store.masks_by_image()          # 가릴 영역이 있는 이미지만 (masks.py)
+    root.mkdir(parents=True, exist_ok=True)
 
     for row, boxes in records:
         src = Path(row["path"])
@@ -206,12 +262,11 @@ def build_dataset(cfg: Config, store: Store) -> BuildReport:
             report.val += 1
             break
 
-    spec = {"path": str(root), "train": "images/train", "val": "images/val"}
+    spec = {"path": str(final), "train": "images/train", "val": "images/val"}     # 바꿔 끼운 뒤의 자리
     if report.test:
         # 학습은 train/val 만 본다. test 는 `YOLO(w).val(split="test")` 로 따로 잰다.
         spec["test"] = "images/test"
-    data_yaml = root / "data.yaml"
-    data_yaml.write_text(
+    (root / "data.yaml").write_text(
         yaml.safe_dump(
             {**spec, "names": {i: n for i, n in enumerate(classes)}},
             allow_unicode=True,
@@ -219,7 +274,7 @@ def build_dataset(cfg: Config, store: Store) -> BuildReport:
         ),
         encoding="utf-8",
     )
-    report.data_yaml = data_yaml
+    report.data_yaml = final / "data.yaml"
     return report
 
 
