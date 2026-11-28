@@ -27,6 +27,9 @@
   .venv\\Scripts\\python.exe tools\\build_vehicle_crops.py --out C:\\datasets\\vehicle_crops_20261128 \\
       --ref-dataset \\\\wsl.localhost\\Ubuntu\\home\\<사용자>\\datasets\\n1280 \\
       --same-place runs\\aihub_split_1127\\ah_pairs.json [--sheet 60] [--apply]
+
+Git Bash 에서는 `\\\\wsl.localhost\\…` 의 앞 백슬래시 하나가 사라진다(11-28 에 겪음) — `MSYS_NO_PATHCONV=1` 을 붙이고
+`//wsl.localhost/Ubuntu/…` 처럼 슬래시로 줄 것. PowerShell 에서는 위 모양 그대로 된다.
 """
 
 from __future__ import annotations

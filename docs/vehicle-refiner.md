@@ -4,6 +4,23 @@
 **자동 라벨링 정확도 + 연구·공부**(DetectView 실시간 배포는 아니다). **아직 코드는 없다** — 단계마다 사용자 확인을 받고 만든다.
 이 문서의 수치는 2026-11-28 DB 사본(승인 383장)으로 쟀다. 측정 방법은 각 줄에 적었다.
 
+**진행.**
+- **11-28 — 0단계(크롭 만들기) 끝.** `tools/build_vehicle_crops.py`(사용자 '크롭 도구 만들기'), 결과는
+  `C:\datasets\vehicle_crops_20261128\`(크롭 1,169개·25MB, `manifest.csv`, 클래스마다 60개 대조 시트 `sheets/`). 기준 세트는 WSL
+  `~/datasets/n1280`(11-27 첫 분할 사본), 같은 자리 짝은 `runs/aihub_split_1127/ah_pairs.json`. 카메라째 5-fold 와 test:
+
+  | 클래스 | f0 | f1 | f2 | f3 | f4 | test |
+  |---|---|---|---|---|---|---|
+  | car | 143 | 146 | 146 | 145 | 146 | 119 |
+  | pickup | 15 | 15 | 15 | 16 | 16 | 13 |
+  | truck | 23 | 24 | 23 | 24 | 23 | 20 |
+  | bus | 10 | 10 | 10 | 10 | 10 | 6 |
+  | responder | 14 | 5 | 4 | 5 | 5 | 8 |
+
+  responder 의 f0 14개는 카메라 한 대(쪼갤 수 없는 그룹)다. **크롭은 셈으로만 확인했다**(Claude 는 AI Hub 크롭을 열지 않는다 — 대조
+  시트는 사용자가 본다): 1,169개 모두 목록의 자르기 사각형과 크기가 같고, 원본(EXIF 적용)의 같은 자리와 픽셀 평균 차가 최대 2.3/255
+  (JPEG 다시 쓰기 수준)다. 그림 가장자리에 닿은 박스(`edge=1`)가 127개, 사람이 고치지 않은 채 승인된 자동 박스(`origin=auto`)가 9개다.
+
 ## 1. 풀려는 문제와 기대치
 
 - 검출기는 `car / pickup / truck / bus / responder` 를 클래스마다 따로 시그모이드(BCE)로 내고, 분류 헤드는 DWConv 두 층이다
@@ -194,7 +211,7 @@ pickup 13 · bus 6 · responder 8 이라** pickup 한 개가 8%p 다 — 맞는 
 
 | 파일 | 하는 일 | 단계 |
 |---|---|---|
-| `tools/build_vehicle_crops.py` | DB 사본 → 크롭 + `manifest.csv`(2.3) — 가릴 영역·EXIF·test 카메라 빼기 | 0 |
+| `tools/build_vehicle_crops.py` | DB 사본 → 크롭 + `manifest.csv`(2.3) — 가릴 영역·EXIF·test 카메라 빼기 (11-28 만듦) | 0 |
 | `tools/train_refiner.py` | 카메라째 5-fold 학습·OOF 예측 저장, 비교 인자(R1–R9) | 1 |
 | `tools/eval_refiner.py` | A0 짝짓기, 지표·McNemar·부트스트랩, 2단계 검증기 | 1–2 |
 | `runs/refiner_<날짜>/` | 돌린 명령·지표 jsonl(그림·크롭은 두지 않는다) | 1–2 |

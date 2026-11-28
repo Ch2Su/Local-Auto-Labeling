@@ -180,5 +180,12 @@
   `torch.backends.mps.is_available` 을 갈아 CUDA·MPS 가 있고 없는 PC 를 흉내 낸다(실제 GPU 없는 PC·macOS 는 아니다). 새 프로세스로
   `import autolabel.config, autolabel.server` 뒤 `torch` 가 올라오지 않았는지도. 고치기 전 config.py 로는 worktree 에서 '키가 없으면
   auto' 테스트가 실패하는 것을 봤다(`devices.py` 만 옮겨 놓고).
+- `tests/test_build_vehicle_crops.py`(11-28)는 `tools/build_vehicle_crops.py`(VehicleRefiner 크롭 — docs/vehicle-refiner.md)를
+  `main()` 으로 돌린다: 가릴 영역이 반 넘게 덮은 박스는 빼고 세는가(원본 DB 바이트는 그대로), Orientation 6 사진(원시 100×60 → 화면
+  60×100, 빨간 자리)을 화면 기준으로 잘라 크롭 평균색이 빨강인가, 넓히기(15%)가 그림 안에서 멈추고 가장자리 표시, 그림 크기가 DB 와
+  다르면 건너뛰기, 기준 세트(`images/<분할>/<이름>__<해시>.jpg`)의 test 에 든 카메라의 다른 장까지 `fold=test`, 같은 자리 짝은 한
+  그룹·한 fold·`local_only=1`, `assign_folds` 가 그룹을 쪼개지 않고 responder 하나짜리 그룹 다섯을 fold 다섯에 하나씩, 표식 없는
+  폴더는 안 쓰고 표식 있는 폴더는 지난 크롭을 지움, 보기만이면 폴더를 안 만듦. 그날 규칙 여덟(가려짐 빼기·EXIF·test 빼기·짝·
+  local_only·드문 클래스 먼저·표식·크기 확인)을 메모리에서만 끄고 돌려 전부 실패하는 것을 봤다.
 - `tools/test_baseline.py`·`test_tiles.py` 는 테스트가 아니다(`pytest.ini` 가 `tests/` 만 모은다). 테스트가 못 보는 것: 화면 조작(이벤트 처리기의 연결·그림),
   학습·추론, `trainer.py`·`train_wsl.py` 에 따로 있는 이어하기 로직(함정 8), WSL·Runpod, `tools/`.
