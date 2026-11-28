@@ -4,6 +4,10 @@
 검수분을 합쳐 다시 학습, 이 사이클을 반복하는 로컬 전용 파이프라인입니다.
 인터넷으로 이미지를 보내지 않고 전부 이 PC에서 처리합니다.
 
+Windows + NVIDIA GPU 에서 쓰고 있습니다. 2026-11-28 부터 macOS·Linux 에도 설치 목록(`locks/`)이 있고, push 할 때마다
+GitHub Actions 가 세 OS 에서 회귀 테스트를 돌립니다 — 다만 그 OS 들은 CPU 로 돌고, 실제 학습·검수를 거기서 해 본 적은
+없습니다([새 PC 에서 시작하기](#새-pc-에서-시작하기) 3).
+
 ```
    시드 라벨(수동)
         │
@@ -44,14 +48,18 @@
 
 ## 환경
 
-이 PC 에는 이미 구성되어 있습니다. 다른 PC 에서는 아래 [새 PC 에서 시작하기](#새-pc-에서-시작하기)를 따르세요.
+두 PC 에 구성되어 있습니다. 다른 PC 에서는 아래 [새 PC 에서 시작하기](#새-pc-에서-시작하기)를 따르세요.
 
-| 항목 | 값 |
+| 항목 | 노트북 (`E:\local_auto_labeling`) | 집 데스크탑 (`C:\local_auto_labeling`, 2026-11-15 부터) |
+|---|---|---|
+| Python | 3.14.3 | 3.15.2 |
+| PyTorch | 2.14.0+cu130 (CUDA 13.0) | 2.15.0+cu134 (CUDA 13.4) |
+| Ultralytics | 8.4.142 (WSL 학습 환경도 같은 판) | 8.4.212 (WSL 학습 환경도 같은 판) |
+| GPU | RTX 5060 Laptop 8GB | RTX 5060 Ti 16GB × 2 (화면은 GPU 0) — 둘 다 sm_120 |
+| 설치 목록 | `requirements.txt` | `locks/win-cu134-py315.txt` |
+
+| 모델 | |
 |---|---|
-| Python | 3.14.3 |
-| PyTorch | 2.14.0+cu130 (CUDA 13.0) |
-| Ultralytics | 8.4.142 (WSL 학습 환경도 같은 버전) |
-| GPU | RTX 5060 Laptop 8GB, sm_120 네이티브 지원 |
 | 검출 모델 | Ultralytics YOLO26 — DFL-free (`yolo26m`, 2026-11-08 전에는 `yolo26s`) |
 | 보조 모델 | SAM 2.1 tiny (검수 UI 의 클릭 한 번 박스) |
 
@@ -73,8 +81,9 @@ git config user.name "<이름>"
 git config user.email "<메일>"
 ```
 
-**2. 가상환경.** Python 3.14 로 저장소 폴더 안에 `.venv` 를 만듭니다 — 3.14.3 에서 검증했고, **3.14.1 은
-안 됩니다**(torchvision 0.29.0 이 그 버전만 받지 않습니다). 이 문서의 python 명령은 모두 이 `.venv` 의 것
+**2. 가상환경.** 저장소 폴더 안에 `.venv` 를 만듭니다 — Python 은 아래 3 의 표에서 고른 줄의 판(3.14 또는 3.15)입니다.
+노트북 방식(`requirements.txt`)은 3.14.3 에서 검증했고 **3.14.1 은 안 됩니다**(torchvision 0.29.0 이 그 버전만 받지 않습니다).
+이 문서의 python 명령은 모두 이 `.venv` 의 것
 (`.venv\Scripts\python.exe`)으로 돌립니다 — 시스템 Python 에는 아무것도 깔지 않습니다. 명령은 PowerShell
 (또는 cmd)에서 저장소 폴더를 기준으로 적었습니다. Git Bash 에서는 역슬래시가 지워지니
 `.venv/Scripts/python.exe` 처럼 `/` 로 바꿔 쓰세요.
@@ -83,7 +92,31 @@ git config user.email "<메일>"
 py -3.14 -m venv .venv
 ```
 
-**3. 패키지 — PyTorch 를 먼저, cu130 인덱스에서.** 이 저장소는 PyTorch 의 CUDA 13.0(cu130) 빌드로
+데스크탑과 같게 하려면 `py -3.15`, macOS·Linux 는 `python3.14 -m venv .venv` 입니다(Ubuntu 는 `python3.14-venv` 패키지가
+있어야 합니다 — 없으면 pip 없이 만들어지다 멈춥니다). macOS·Linux 의 python 은 `.venv/bin/python` 입니다.
+
+**3. 패키지.** OS·GPU 에 맞는 설치 목록 하나를 고릅니다(2026-11-28 — 의존성 범위는 `pyproject.toml`, OS·GPU 마다
+실제로 깔 판은 `locks/` 의 잠금 파일. 무엇을 어디서 확인했는지는 [locks/README.md](locks/README.md)).
+
+| PC | Python | 까는 것 |
+|---|---|---|
+| Windows + NVIDIA GPU — 노트북과 같게 | 3.14 | 아래의 cu130 두 줄 (`requirements.txt`) |
+| Windows + NVIDIA GPU — 데스크탑과 같게 | 3.15 | `.venv\Scripts\python.exe -m pip install -r locks/win-cu134-py315.txt` |
+| Windows, NVIDIA GPU 없음 | 3.14 | `.venv\Scripts\python.exe -m pip install -r locks/win-cpu-py314.txt` |
+| Linux x86_64 (CPU) | 3.14 | `.venv/bin/python -m pip install -r locks/linux-cpu-py314.txt` |
+| macOS 14+ Apple Silicon (CPU) | 3.14 | `.venv/bin/python -m pip install -r locks/macos-arm64-py314.txt` |
+
+- 잠금 파일은 PyTorch 를 받는 곳(`+cpu`·`+cu134` 인덱스)까지 적어 두어 그 한 줄로 끝납니다. 데스크탑 잠금의 PyYAML 은
+  Python 3.15 휠이 없어 소스에서 만듭니다 — MSVC 가 없으면 `PYYAML_FORCE_LIBYAML=0` 을 두고 까세요.
+- **NVIDIA GPU 가 없으면 `config.yaml` 의 `model.device` 를 `auto` 로 바꾸세요** — 지금 값 `0` 은 첫 번째 NVIDIA GPU 라
+  없으면 학습·자동 라벨링이 오류로 멈춥니다. `auto` 는 CUDA 가 있으면 그것, 없으면 CPU 입니다(GPU 없이 학습하면 많이 느립니다).
+- **Mac 은 CPU 로 돕니다.** Apple GPU(MPS)는 확인할 실제 Mac 이 없어 `auto` 가 고르지 않습니다(2026-11-28). 쓰려면
+  `model.device` 를 `mps` 로 적으세요 — 확인되지 않은 길이고, MPS 에 없는 연산은 CPU 로 넘깁니다.
+- `labeler.py <명령>` 대신 `labeler <명령>` 으로 부르고 싶으면 저장소 폴더에서 `pip install -e . --no-deps` 를 더 합니다
+  (편집 설치만 됩니다 — 그냥 `pip install .` 로 넣으면 설정·데이터 자리를 못 찾습니다).
+- **WSL 학습 버튼은 Windows 에서만 보입니다** — 다른 OS 에서는 검수 화면의 '학습' 버튼으로 학습합니다.
+
+노트북 방식 — **PyTorch 를 먼저, cu130 인덱스에서.** 이 저장소는 PyTorch 의 CUDA 13.0(cu130) 빌드로
 검증했습니다. PyPI 의 Windows 빌드(torch 2.14.0 은 124MB 짜리 CPU 빌드)로는 GPU 를 못 쓰기 때문에
 `requirements.txt` 는 `torch==2.14.0+cu130` 처럼 cu130 빌드를 콕 집어 고정해 두었습니다 — 순서를 바꿔
 `requirements.txt` 부터 깔면 CPU 빌드가 조용히 들어오는 대신 'No matching distribution' 으로 멈춥니다. 버전도
@@ -101,7 +134,8 @@ py -3.14 -m venv .venv
 .venv\Scripts\python.exe -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-`2.14.0+cu130 True` 가 나오면 됩니다. `2.14.0 False` 처럼 `+cu130` 이 없으면 CPU 빌드가 깔린 것이니 첫 명령을
+`2.14.0+cu130 True` 가 나오면 됩니다(데스크탑 잠금은 `2.15.0+cu134 True`, CPU 잠금은 `2.15.0+cpu False` 가 맞습니다).
+노트북 방식에서 `2.14.0 False` 처럼 `+cu130` 이 없으면 CPU 빌드가 깔린 것이니 첫 명령을
 다시 돌리세요 — 버전을 `+cu130` 까지 적었기 때문에 깔려 있던 CPU 빌드를 cu130 빌드로 바꿉니다.
 `tools/label_qa_claude.py`(Claude API 파일럿)를 돌릴 때만 `anthropic==1.6.0` 을 더 받습니다. WSL 학습 버튼을 쓰려면 WSL 안의
 conda 환경이 따로 있어야 합니다(만드는 순서는 [docs/desktop-setup.md](docs/desktop-setup.md) 5절, 지킬 것은
@@ -116,6 +150,9 @@ conda 환경이 따로 있어야 합니다(만드는 순서는 [docs/desktop-set
 데이터만 담고 있고, 그 뒤에 새로 모은 데이터는 아직 백업에 없습니다** — 새 데이터는 쓰던 PC 에서 직접 옮겨야 합니다. 옛
 데이터는 노트북의 보관 폴더 `E:\local_auto_labeling_archive\20261110\` 에도 있습니다.
 백업 폴더를 통째로 덮으면 그 안의 `.git` 과 옛 문서까지 덮여 저장소가 백업 시점으로 돌아갑니다.
+**DB 를 옮기기 전에 두 PC 의 코드를 같게(`git pull`) 맞추세요** — 새 코드는 DB 를 처음 열 때 열을 더하고 스키마 번호
+(`PRAGMA user_version`, 지금 2)를 올리며(그 전에 `backups/labeling_before_*.db` 로 사본), 자기보다 새 번호의 DB 는 열지
+않습니다(2026-11-28).
 **되살리기 전에는 `labeler.py` 명령과 검수 UI 를 띄우지 마세요** — 빈 `labeling.db` 를 새로 만듭니다(UI 는 그
 빈 DB 의 사본까지 `backups/` 에 남깁니다). Claude Code 도 끈 채 복사하세요 — 켜 두면 턴이 끝날 때 자동 커밋
 훅이 덮인 `runs/` 기록을 커밋합니다.
@@ -131,9 +168,8 @@ conda 환경이 따로 있어야 합니다(만드는 순서는 [docs/desktop-set
 그 옛 내용을 커밋하니, 덮었다면 `git checkout -- runs` 로 되돌리세요.
 
 **5. 경로 맞추기.** `labeling.db` 는 이미지를 **절대경로**로 들고 있습니다 — `images.path` 가
-`E:\local_auto_labeling\data\visible\…` 꼴입니다(2026-10-31 기준 7,067장 전부). 그래서 저장소를 **같은
-경로 `E:\local_auto_labeling`** 에 두면 그대로 동작하고, 다른 경로에 두면 모든 이미지가 '파일 없음' 이
-됩니다(`config.yaml` 의 경로는 저장소 기준 상대경로라 고칠 것이 없습니다).
+`E:\local_auto_labeling\data\visible\…` 꼴입니다. 저장소를 같은 경로에 두면 그대로 동작하고, 다른 경로에 두면 그 전에는
+모든 이미지가 '파일 없음' 이 됐습니다(`config.yaml` 의 경로는 저장소 기준 상대경로라 고칠 것이 없습니다).
 
 **2026-11-28 부터는 대개 저절로 맞춰집니다.** 그날 코드(스키마 2)는 경로 옆에 **DB 폴더 기준 상대경로**(`images.rel`)를
 함께 적고, DB 를 열 때 '적힌 경로에 파일이 없고 DB 폴더 기준 같은 자리에 파일이 있는' 이미지만 그 자리로 고칩니다(고치기
@@ -330,7 +366,7 @@ http://127.0.0.1:7860 에서 검수합니다(`--host`·`--port` 로 바꿀 수 �
 검수를 마친 이미지를 `data/visible/unlabeled` 밖으로 옮겨 정리합니다. UI의 **정리**(상단 `데이터` 메뉴)는 이것에 더해
 원본이 사라진 DB 항목을 걷어내는 `prune` 까지 함께 합니다([파일을 탐색기에서 직접 지웠다면](#파일을-탐색기에서-직접-지웠다면)).
 
-`run.bat` 을 더블클릭하면 검수 UI가 바로 뜹니다.
+`run.bat` 을 더블클릭하면 검수 UI가 바로 뜹니다(Windows — 다른 OS 에서는 `labeler.py review`).
 
 ## 학습 — 버튼 세 개
 
@@ -338,12 +374,17 @@ http://127.0.0.1:7860 에서 검수합니다(`--host`·`--port` 로 바꿀 수 �
 
 | 버튼 | 하는 일 |
 |---|---|
-| **학습** | Windows 에서 학습합니다. 승인 라벨로 `data/visible/dataset` 을 새로 만듭니다 |
-| **WSL 학습** | WSL(Linux)에서 학습합니다. 같은 설정에서 **약 4배 빠릅니다**(yolo26s 기준 epoch 258초 → 62초). 걸리는 시간은 데이터 양에 달렸습니다 — 옛 데이터(학습 3,725장)로는 yolo26m·100 epoch 이 약 2.8시간이었습니다 |
+| **학습** | 검수 서버가 도는 PC 에서 바로 학습합니다(Windows 에서는 WSL 이 아니라 Windows 에서). 승인 라벨로 `data/visible/dataset` 을 새로 만듭니다 |
+| **WSL 학습** | WSL(Linux)에서 학습합니다 — **Windows 에서만 보입니다**(2026-11-28). 같은 설정에서 **약 4배 빠릅니다**(노트북 yolo26s 기준 epoch 258초 → 62초). 걸리는 시간은 데이터 양에 달렸습니다 — 옛 데이터(학습 3,725장)로는 yolo26m·100 epoch 이 약 2.8시간이었습니다 |
 | **이어서 학습** / **WSL 이어하기** | 중단한 학습이 있을 때만 나타납니다 |
 
 어느 쪽이든 **끝까지 가면**(조기 종료 포함) 결과가 `models/best.pt` 로 올라가고, 직전 것은
 `models/best.prev.pt` 로 남습니다. 되돌리려면 그 파일을 `best.pt` 로 복사하세요.
+
+학습 세트(`data/visible/dataset`)는 **옆 폴더 `dataset.building` 에 다 만든 뒤 바꿔 끼웁니다**(2026-11-28) — 그림을 못 읽거나
+승인 라벨이 없어 도중에 멈춰도 지난번 세트가 그대로 남습니다. 옆에 `dataset.building`·`dataset.old` 가 남아 있으면 지난번
+만들기가 멈춘 것이고, 다음 학습이 치웁니다. 만드는 동안은 디스크를 옛 그림·라벨 + 새 세트만큼 씁니다(옛 세트의 캐시
+`.npy` 는 먼저 지웁니다).
 
 **중단한 학습은 운영 가중치를 바꾸지 않습니다**(2026-11-16). 중단 버튼·정지 파일로 멈추면 `models/best.pt` 와
 `best.prev.pt` 는 그대로이고, 로그 끝에 그 학습의 `best.pt` 경로가 나옵니다 — 중간 결과를 써 보려면 그 파일을 직접
@@ -1190,8 +1231,9 @@ CCTV = 그 밖의 seed). 뜻이 바뀌었으므로 `cctv`·`drone`·`noncctv`·`
 
 | 키 | 설명 |
 |---|---|
+| `model.device` | `0`(첫 번째 NVIDIA GPU — 지금) · `cpu` · `auto`(CUDA 가 있으면 그것, 없으면 CPU — 키를 빼도 `auto`) · `mps`(Apple GPU — 확인되지 않아 적은 사람만, 2026-11-28). NVIDIA GPU 가 없는 PC 에서는 `auto` 로 |
 | `model.base` | `weights/yolo26m.pt`(지금, 2026-11-08 부터) / `yolo26s.pt`·`yolo26n.pt` 등. 바꿔도 `dfl` 은 1.5 유지 ([아래 주의](#주의-dfl-을-0-으로-두지-마세요)) |
-| `train.batch` | 10 (yolo26m·640 — 8GB 에서 들어가는 최대치). s 는 20 이었고, 넘치면 에러 없이 몇 배 느려집니다 |
+| `train.batch` | 10 (yolo26m·640 — 8GB 에서 들어가는 최대치). s 는 20 이었고, 넘치면 에러 없이 몇 배 느려집니다. 16GB 에서 들어가는 값은 [CLAUDE.md](CLAUDE.md) 'WSL 학습' |
 | `train.epochs` | 100, 마지막 10 epoch 은 mosaic 끔(`close_mosaic`) — 운영 m 과 같은 설정(2026-11-08, 그 전 s 는 300·30). `patience` 120 이라 조기 종료는 걸리지 않습니다 |
 | `train.val_ratio` / `test_ratio` | 0.15 / 0.15. 바꿔도 이미 배정된 이미지는 움직이지 않습니다 |
 | `wsl.*` | WSL 학습 버튼의 WSL 쪽 경로·워커·캐시. 학습 인자는 위 `train` 값을 그대로 씁니다 |
@@ -1212,7 +1254,7 @@ ltrb 거리의 L1 손실에 곱해집니다. 0 으로 두면 에러 없이 학�
 ## 회귀 테스트
 
 `tests/` 에 자동 테스트가 있습니다(2026-11-12). 코드를 고친 뒤 돌리면, 전에 고친 버그와 문서에 적어 둔 규칙이 다시 깨졌는지
-1분 남짓에 알려 줍니다(2026-11-28 기준 809개·110초쯤). **실제 데이터는 건드리지 않습니다** — DB·설정·카메라 등록 파일을 임시 폴더에
+2분 남짓에 알려 줍니다(2026-11-28 기준 809개·110초쯤). **실제 데이터는 건드리지 않습니다** — DB·설정·카메라 등록 파일을 임시 폴더에
 만들어 쓰고, GPU·모델·학습은 쓰지 않습니다.
 
 화면 코드(JS)를 돌리는 테스트(`test_js_*.py`)는 node 가 필요합니다. 차례로 찾습니다 — 환경 변수 `NODE_BIN`, PATH 의 `node`,
@@ -1224,7 +1266,12 @@ PC 에서도 돕니다). 하나도 없으면 그 테스트들만 건너뜁니다
 .venv\Scripts\python.exe -m pytest
 ```
 
-pytest 는 기본 설치에 없어서 처음 한 번만 깝니다.
+pytest 는 `requirements.txt` 에 없어서 처음 한 번만 깝니다(`locks/` 의 잠금으로 깔았으면 이미 들어 있습니다).
+
+**push 하면 GitHub Actions 가 Windows·macOS·Linux 에서 돌립니다**(2026-11-28 — `.github/workflows/tests.yml`). OS 마다
+`locks/` 의 잠금을 새 가상환경(Python 3.14, CPU)에 깔고 이 테스트를 돌리고, **건너뛴 테스트가 있어도 실패로 칩니다**(그 OS
+에서 확인하지 않은 것이라서). 저장소가 공개라 결과도 저장소의 Actions 탭에 공개됩니다. 처음 두 번은 세 OS 모두 통과했습니다
+(807개·809개).
 
 | 파일 | 지키는 것 |
 |---|---|
@@ -1298,7 +1345,10 @@ pytest 는 기본 설치에 없어서 처음 한 번만 깝니다.
 README.md              사용자 문서 (이 파일)
 CLAUDE.md              작업자 인수인계 — 실제로 겪은 함정, 라벨 판정 기준, 결정 기록
 LICENSE                GNU AGPL-3.0 (아래 '라이선스')
-requirements.txt       Windows .venv 패키지 (torch 는 cu130 인덱스에서 먼저 — '새 PC 에서 시작하기')
+pyproject.toml         패키지 정보와 의존성 범위 (2026-11-28 — 실제로 깔 판은 locks/)
+requirements.txt       노트북의 설치 목록 (Windows · Python 3.14 · torch 는 cu130 인덱스에서 먼저 — '새 PC 에서 시작하기')
+locks/                 OS·GPU 마다 깔 판을 정한 잠금 (locks/README.md — 다시 만들기는 locks/compile.py)
+.github/workflows/     tests.yml — push 마다 Windows·macOS·Linux 에서 회귀 테스트
 projects.yaml          검수 UI 에 띄울 프로젝트 목록 (지금은 가시광 하나)
 config.yaml            설정 (가시광)
 labeler.py             진입점
@@ -1315,9 +1365,10 @@ data/
     labeled/             '정리'로 옮겨진 검수 완료 이미지 + 라벨 (images/<카메라>/ · labels/<카메라>/)
     seed/seed1, seed2…   손라벨 시드 (Roboflow COCO 내보내기, 회차별) — 지금은 없다. 없으면 시드 없이 돈다
     classes.txt          클래스 목록 (검수 UI 에서 클래스를 추가하면 여기 적힌다)
-    dataset/             학습용으로 자동 빌드 (건드리지 않아도 됨)
+    dataset/             학습용으로 자동 빌드 (건드리지 않아도 됨 — 만드는 동안은 옆의 dataset.building)
     labeling.db          라벨·검수 상태 (SQLite) — 작업물 그 자체. 박스 변경 이력도 여기 있다
     backups/             검수 서버가 하루 한 번 뜨는 DB 사본 (켤 때·날이 바뀐 뒤 첫 변경 앞, 최근 14개) + 카메라 등록·키를 바꾸기 전 사본
+                         + DB 에 열을 더하거나 옮긴 DB 의 경로를 고치기 전 사본 (labeling_before_*.db)
     thumbs/              이미지 보기의 썸네일 캐시 (지워도 다시 만들어진다 — 백업할 필요 없음)
     capture/             영상 캡처 탭의 임시 세션 (올린 영상 사본·뽑은 프레임 — 넣거나 닫으면 지운다, 백업할 필요 없음)
     upload/              작업 배치 탭 '이미지 넣기' 의 임시 묶음 (넣거나 버리면·서버를 다시 켜면 지운다, 백업할 필요 없음)
@@ -1395,6 +1446,9 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
 | [docs/backup.md](docs/backup.md) | 다른 디스크 백업 — 담긴 것·다시 뜨기·되살리기 |
 | [docs/desktop-setup.md](docs/desktop-setup.md) | 집 데스크탑에서 직접 세팅·학습하기 (WSL2 환경, 원격 검수) |
 | [docs/runpod.md](docs/runpod.md) | Runpod(클라우드 GPU 대여) 절차·함정 |
+| [locks/README.md](locks/README.md) | OS·GPU 별 설치 잠금 — 어디서 무엇을 확인했는지, 깔기·다시 만들기 |
+| [docs/portable/m01-survey.md](docs/portable/m01-survey.md) | 포터블 앱(Windows·macOS·Linux) 조사, 8단계 계획과 단계마다 한 것 |
+| [docs/vehicle-refiner.md](docs/vehicle-refiner.md) | VehicleRefiner — 차량 5종을 원본 크롭으로 다시 가르는 2단 분류기 설계 |
 
 ## 알아둘 점
 
@@ -1405,7 +1459,9 @@ tools/                 보조 도구 — 저장소 루트에서 `.venv\Scripts\p
 - 라벨 .txt가 없는 시드 이미지는 "객체가 없는 배경 샘플"로 학습에 포함됩니다. 라벨을 빠뜨린
   것이라면 `scan` 출력의 경고를 확인하세요.
 - 학습(WSL 학습 포함)과 자동 라벨링은 동시에 실행되지 않습니다. 작업은 한 번에 하나씩
-  돕니다. 8GB VRAM 을 나눠 쓰면 Windows 에서는 에러 없이 몇 배 느려지기 때문입니다.
+  돕니다. VRAM 을 나눠 쓰면(노트북은 8GB) Windows 에서는 에러 없이 몇 배 느려지기 때문입니다.
+- **macOS·Linux 는 CPU 로 돕니다.** 설치와 회귀 테스트는 세 OS 에서 확인했지만(GitHub Actions), 그 OS 에서 서버를 띄워 검수하거나
+  학습해 본 적은 없습니다. Apple GPU(MPS)는 `model.device: mps` 로 쓸 수 있지만 확인되지 않았습니다.
 - **라벨링 화면(가운데 캔버스)만 검게 나오고 이미지·박스가 안 보이면 브라우저를 완전히 껐다 켜 보세요.**
   2026-11-09 Firefox 159 에서 겪었는데 다시 켜니 나왔습니다. 같은 Firefox 를 새 프로필로 띄워 재현해 보니 코드·설정·확장
   문제는 아니었습니다. 그 브라우저 세션의 GPU 합성 상태로 보입니다(이 노트북은 GPU 가 둘이고 모니터가 둘).
